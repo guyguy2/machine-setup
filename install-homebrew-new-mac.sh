@@ -27,7 +27,7 @@ CONFIG_FILE=""
 # Package arrays organized by theme/group
 
 # Development Tools - Core
-DEV_CORE_TOOLS=("git" "gh" "node" "python")
+DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
 DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg")
