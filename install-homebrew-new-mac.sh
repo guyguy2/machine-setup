@@ -45,7 +45,7 @@ TERMINAL_APPS=("warp")
 DEV_GUI_APPS=("visual-studio-code" "docker-desktop")
 
 # GUI Applications - Productivity
-PRODUCTIVITY_APPS=("rectangle" "todoist" "dropbox")
+PRODUCTIVITY_APPS=("rectangle" "todoist" "dropbox" "macwhisper")
 
 # GUI Applications - Communication
 COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome")
