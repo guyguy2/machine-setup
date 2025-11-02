@@ -42,7 +42,7 @@ NETWORK_TOOLS=("telnet")
 TERMINAL_APPS=("warp")
 
 # GUI Applications - Development
-DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox")
+DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode")
 
 # GUI Applications - Productivity
 PRODUCTIVITY_APPS=("rectangle" "todoist" "dropbox" "macwhisper" "iina")
