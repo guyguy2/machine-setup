@@ -117,6 +117,34 @@ Version-aware updater for Google's Gemini CLI tool.
 - Logging functions: `log_info()`, `log_verbose()`, `log_error()`, `log_warning()`
 - Command-line parsing with GNU-style options (`--help`, `--verbose`, `--dry-run`)
 
+### Shell Configuration (.zshrc)
+Personal Zsh configuration file with oh-my-zsh setup and custom aliases.
+
+**Key configuration:**
+- oh-my-zsh framework with "eastwood" theme
+- Git plugin enabled for enhanced git command completion
+- Python 3.13 from Homebrew (`/opt/homebrew/opt/python@3.13/bin/python3.13`)
+- Node.js 16 from Homebrew
+- Android SDK platform-tools in PATH
+- JAVA_HOME points to Android Studio's JBR
+
+**Useful aliases:**
+- `c` - clear terminal
+- `ni` - npm install
+- `ns` - npm start
+- `python` - Python 3.13 from Homebrew
+- `py` - python3
+- `gacp` - git add, commit with "progress" message, and push
+- `cld` - claude CLI shortcut
+- `clda` - claude --dangerously-skip-permissions
+- `upd` - Update Homebrew packages and Gemini CLI (uses update-gemini-cli.sh:112)
+- `gemini` - Gemini CLI with auto-yes flag
+
+**Integrations:**
+- Docker CLI completions
+- Kiro terminal shell integration
+- Local bin directory (`~/.local/bin`) in PATH
+
 ## Common Development Patterns
 
 ### Exit Codes
