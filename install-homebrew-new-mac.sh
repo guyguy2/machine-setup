@@ -30,7 +30,7 @@ CONFIG_FILE=""
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli")
 
 # Development Tools - Containers
 CONTAINER_TOOLS=("docker")
