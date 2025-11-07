@@ -109,7 +109,7 @@ alias py="python3"
 alias gacp="git add . && git commit -m "progress" && git push"
 alias cld="claude"
 alias clda="cld --dangerously-skip-permissions"
-alias upd="brew update && brew upgrade && brew cleanup && ~/dev/tools/scripts/update-gemini-cli.sh"
+alias upd="brew update && brew upgrade && brew cleanup
 
 alias gemini="gemini -y"
 
