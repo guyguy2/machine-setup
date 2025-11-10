@@ -109,7 +109,31 @@ alias py="python3"
 alias gacp="git add . && git commit -m "progress" && git push"
 alias cld="claude"
 alias clda="cld --dangerously-skip-permissions"
-alias upd="brew update && brew upgrade && brew cleanup
+
+upd() {
+    local counter_file="$HOME/.upd_counter"
+    
+    # Run update and upgrade
+    brew update && brew upgrade
+    
+    # Track cleanup runs
+    local count=0
+    if [[ -f "$counter_file" ]]; then
+        count=$(cat "$counter_file")
+    fi
+    
+    count=$((count + 1))
+    
+    if [[ $count -ge 5 ]]; then
+        echo "Running brew cleanup (run $count/5)..."
+        brew cleanup
+        count=0
+    else
+        echo "Skipping brew cleanup (run $count/5)"
+    fi
+    
+    echo "$count" > "$counter_file"
+}
 
 alias gemini="gemini -y"
 
