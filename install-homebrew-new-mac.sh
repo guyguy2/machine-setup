@@ -19,6 +19,7 @@ EXIT_DISK_SPACE_ERROR=5
 VERBOSE=false
 DRY_RUN=false
 SKIP_HOMEBREW=false
+SKIP_OH_MY_ZSH=false
 SKIP_TERMINAL=false
 SKIP_CLI_TOOLS=false
 SKIP_GUI_APPS=false
@@ -102,6 +103,7 @@ OPTIONS:
     -d, --dry-run           Show what would be installed without executing
     -c, --config FILE       Load configuration from file
     --skip-homebrew         Skip Homebrew installation
+    --skip-oh-my-zsh        Skip Oh My Zsh installation
     --skip-terminal         Skip terminal applications (Warp)
     --skip-cli-tools        Skip command line tools
     --skip-gui-apps         Skip GUI applications
@@ -118,6 +120,7 @@ CONFIGURATION FILE FORMAT:
     DEV_GUI_APPS="visual-studio-code docker-desktop"
     PRODUCTIVITY_APPS="rectangle todoist"
     COMMUNICATION_APPS="google-chrome zoom"
+    SKIP_OH_MY_ZSH=true
     SKIP_TERMINAL=true
 
 EXIT CODES:
@@ -240,6 +243,45 @@ install_homebrew() {
         log_success "Homebrew installed and configured successfully"
     else
         log_error "Homebrew installation failed - executable not found"
+        exit $EXIT_INSTALL_FAILED
+    fi
+}
+
+# Install Oh My Zsh
+install_oh_my_zsh() {
+    if [[ "$SKIP_OH_MY_ZSH" == true ]]; then
+        log_verbose "Skipping Oh My Zsh installation"
+        return
+    fi
+
+    log_info "💻 Installing Oh My Zsh..."
+
+    # Check if Oh My Zsh is already installed
+    if [[ -d "$HOME/.oh-my-zsh" ]]; then
+        log_success "Oh My Zsh is already installed"
+        return
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY RUN] Would install Oh My Zsh"
+        return
+    fi
+
+    # Install Oh My Zsh
+    log_verbose "Downloading and installing Oh My Zsh..."
+
+    # Download and run the installer in unattended mode
+    if ! sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended; then
+        log_error "Failed to install Oh My Zsh"
+        exit $EXIT_INSTALL_FAILED
+    fi
+
+    # Verify installation
+    if [[ -d "$HOME/.oh-my-zsh" ]]; then
+        log_success "Oh My Zsh installed successfully"
+        log_info "You can customize your Oh My Zsh configuration in ~/.zshrc"
+    else
+        log_error "Oh My Zsh installation failed - directory not found"
         exit $EXIT_INSTALL_FAILED
     fi
 }
@@ -411,6 +453,10 @@ parse_args() {
                 SKIP_HOMEBREW=true
                 shift
                 ;;
+            --skip-oh-my-zsh)
+                SKIP_OH_MY_ZSH=true
+                shift
+                ;;
             --skip-terminal)
                 SKIP_TERMINAL=true
                 shift
@@ -451,6 +497,7 @@ main() {
 
     # Installation phases
     install_homebrew
+    install_oh_my_zsh
     install_terminal_apps
     install_cli_tools
     install_gui_apps
