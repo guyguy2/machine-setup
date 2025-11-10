@@ -280,6 +280,24 @@ install_oh_my_zsh() {
     if [[ -d "$HOME/.oh-my-zsh" ]]; then
         log_success "Oh My Zsh installed successfully"
         log_info "You can customize your Oh My Zsh configuration in ~/.zshrc"
+
+        # Copy custom .zshrc if it exists in the current directory
+        if [[ -f ".zshrc" ]]; then
+            log_info "Found .zshrc in current directory, copying to home directory..."
+
+            if [[ "$DRY_RUN" == true ]]; then
+                log_info "[DRY RUN] Would copy .zshrc to ~/.zshrc"
+            else
+                log_verbose "Copying .zshrc to $HOME/.zshrc"
+                if cp ".zshrc" "$HOME/.zshrc"; then
+                    log_success "Custom .zshrc copied successfully"
+                else
+                    log_warning "Failed to copy .zshrc, you may need to do this manually"
+                fi
+            fi
+        else
+            log_verbose "No .zshrc found in current directory, skipping custom configuration"
+        fi
     else
         log_error "Oh My Zsh installation failed - directory not found"
         exit $EXIT_INSTALL_FAILED
