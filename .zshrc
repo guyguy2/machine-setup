@@ -112,18 +112,27 @@ alias clda="cld --dangerously-skip-permissions"
 
 upd() {
     local counter_file="$HOME/.upd_counter"
-    
+
+    # Check latest Claude Code version
+    local claude_version=$(curl -s "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/stable")
+    if [[ -n "$claude_version" ]]; then
+        echo "Latest Claude Code version: $claude_version"
+    else
+        echo "Could not fetch Claude Code version"
+    fi
+    echo ""
+
     # Run update and upgrade
     brew update && brew upgrade
-    
+
     # Track cleanup runs
     local count=0
     if [[ -f "$counter_file" ]]; then
         count=$(cat "$counter_file")
     fi
-    
+
     count=$((count + 1))
-    
+
     if [[ $count -ge 5 ]]; then
         echo "Running brew cleanup (run $count/5)..."
         brew cleanup
@@ -131,7 +140,7 @@ upd() {
     else
         echo "Skipping brew cleanup (run $count/5)"
     fi
-    
+
     echo "$count" > "$counter_file"
 }
 

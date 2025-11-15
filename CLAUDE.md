@@ -4,9 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is a collection of utility scripts for macOS automation and development tasks. The scripts are primarily written in Bash, Zsh, and Python, focusing on system setup, browser automation, and communication tools.
+This is a collection of utility scripts for macOS automation and development tasks. The scripts are written in Bash and Zsh, focusing on system setup, Claude Code backup, and communication tools.
 
 ## Core Scripts
+
+### backup-claude-settings.zsh
+Backs up essential Claude Code settings to a timestamped zip file for easy restoration on a new Mac.
+
+**Key features:**
+- Backs up settings.json, .claude.json, statusline scripts, custom agents, and slash commands
+- Creates timestamped zip files (e.g., claude-settings-20251114-211800.zip)
+- Supports custom output filenames with `--output` option
+- Verbose mode for detailed output
+- Structured exit codes (0=success, 1=general error, 2=missing settings, 3=zip creation failed)
+
+**Files backed up:**
+- `~/.claude/settings.json` - Hooks, statusline, preferences
+- `~/.claude.json` - Main config file with MCP servers
+- `~/.claude/statusline-*.sh` - Custom statusline scripts
+- `~/.claude/.agents/` - Custom agents (if present)
+- `~/.claude/.commands/` - Custom slash commands (if present)
+
+**Usage:**
+```bash
+./backup-claude-settings.zsh                    # Create timestamped backup
+./backup-claude-settings.zsh -o my-backup.zip   # Custom filename
+./backup-claude-settings.zsh --verbose          # Show detailed output
+```
+
+**Restoring from backup:**
+```bash
+unzip claude-settings-20251114-211800.zip -d ~
+# Restart Claude Code to load restored settings
+```
 
 ### install-homebrew-new-mac.sh
 Comprehensive Mac setup script that automates Homebrew installation and configuration of development environment.
@@ -36,33 +66,6 @@ Comprehensive Mac setup script that automates Homebrew installation and configur
 ./install-homebrew-new-mac.sh --config setup.conf  # Use custom config
 ```
 
-### walmart_add_to_cart.py
-Browser automation script using Playwright to search for and add water to Walmart cart.
-
-**Key architecture:**
-- Uses Chrome remote debugging (port 9222) to connect to existing browser sessions
-- Chrome 136+ requires non-default profile for debugging (uses `~/.walmart-chrome-debug`)
-- Handles login detection and waits for user authentication
-- Implements multiple selector strategies for robust element detection
-- Prioritizes "Great Value water 24 count" in product search
-
-**Requirements:**
-```bash
-pip install playwright
-playwright install chromium
-```
-
-**Usage:**
-```bash
-./run_walmart.sh  # Uses uv to run with Playwright dependency
-```
-
-**Important notes:**
-- Automatically launches Chrome with debugging if not already running
-- Pauses for 60 seconds if user not logged into Walmart
-- Saves debug screenshots to script directory on failures
-- Keeps browser tab open after adding to cart for user review
-
 ### google-voice-call.zsh
 Enhanced Google Voice call launcher with multi-browser support, contacts, and call history.
 
@@ -88,28 +91,7 @@ Enhanced Google Voice call launcher with multi-browser support, contacts, and ca
 ./google-voice-call.zsh --list-contacts                     # List contacts
 ```
 
-### update-gemini-cli.sh
-Version-aware updater for Google's Gemini CLI tool.
-
-**Key features:**
-- Semantic version comparison (major.minor.patch)
-- Network connectivity validation
-- Support for force updates and dry-run mode
-- Verification of successful updates
-
-**Usage:**
-```bash
-./update-gemini-cli.sh                    # Update if newer version available
-./update-gemini-cli.sh --dry-run          # Preview update
-./update-gemini-cli.sh --force --verbose  # Force update with details
-```
-
 ## Development Environment
-
-### Python Scripts
-- Use Python 3.11+ (virtual environment in `.venv/`)
-- Playwright for browser automation
-- Uses `uv` for dependency management
 
 ### Shell Scripts
 - All shell scripts use `set -euo pipefail` for strict error handling
@@ -137,7 +119,7 @@ Personal Zsh configuration file with oh-my-zsh setup and custom aliases.
 - `gacp` - git add, commit with "progress" message, and push
 - `cld` - claude CLI shortcut
 - `clda` - claude --dangerously-skip-permissions
-- `upd` - Update Homebrew packages and Gemini CLI (uses update-gemini-cli.sh:112)
+- `upd` - Update Homebrew packages and Gemini CLI
 - `gemini` - Gemini CLI with auto-yes flag
 
 **Integrations:**
@@ -162,14 +144,7 @@ All enhanced scripts use standardized logging:
 - `log_verbose()` - Debug output (enabled with `-v` or `--verbose`)
 - `log_error()` - Error messages (stderr)
 - `log_warning()` - Warning messages (stderr)
-
-### Browser Automation Best Practices
-When working with Playwright scripts:
-1. Use remote debugging for Chrome (port 9222) to maintain user sessions
-2. Implement multiple selector strategies for resilience
-3. Take screenshots on failures for debugging
-4. Handle login states gracefully with user prompts
-5. Keep tabs open for user verification after operations
+- `log_success()` - Success messages (used in backup-claude-settings.zsh)
 
 ## Testing Scripts
 
@@ -183,4 +158,4 @@ To test scripts safely:
 - Scripts are tailored for macOS environment
 - Apple Silicon (M1/M2) vs Intel chip detection for Homebrew paths
 - Uses `open` command for launching applications
-- AppleScript integration in some utilities (walmart_add_to_cart.sh)
+- Zsh is the default shell on macOS (all .zsh scripts)
