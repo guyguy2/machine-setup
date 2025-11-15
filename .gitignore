@@ -21,6 +21,9 @@ build/
 *.swo
 *~
 
+# Claude settings backups
+claude-settings-*.zip
+
 # OS
 .DS_Store
 Thumbs.db
