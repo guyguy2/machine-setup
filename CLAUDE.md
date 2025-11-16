@@ -214,9 +214,23 @@ To test scripts safely:
 
 ## Additional Resources
 
-### Claude Code Agent Marketplace
-- **wshobson/agents** - Production-ready marketplace of 63 focused plugins containing 85 specialized AI agents, 47 agent skills, and 44 development tools for intelligent automation and multi-agent orchestration
-- GitHub: https://github.com/wshobson/agents/tree/main
+### Claude Code Plugin Marketplaces
+
+#### wshobson/agents
+Production-ready marketplace of 63 focused plugins containing 85 specialized AI agents, 47 agent skills, and 44 development tools for intelligent automation and multi-agent orchestration.
+
+- GitHub: https://github.com/wshobson/agents
 - Offers domain expertise across 23 categories (development, infrastructure, security, AI/ML, business operations)
 - Emphasizes modularity and token efficiency with granular, focused plugins
 - Agents strategically assigned to Claude Haiku (fast tasks) or Claude Sonnet (complex reasoning)
+
+#### jeremylongshore/claude-code-plugins-plus
+Comprehensive marketplace with 253 production-ready Claude Code plugins for automation, development, and AI workflows.
+
+- GitHub: https://github.com/jeremylongshore/claude-code-plugins-plus
+- Web: https://claudecodeplugins.io
+- 185 plugins with Agent Skills v1.2.0 support
+- 100% compliant with Anthropic's 2025 Skills schema
+- Categories include DevOps, Security, AI/ML, Database, Testing, and Business Tools
+- One-command installation: `/plugin install [plugin-name]@claude-code-plugins-plus`
+- Tool permission system and comprehensive activation guides
