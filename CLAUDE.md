@@ -8,8 +8,57 @@ This is a collection of utility scripts for macOS automation and development tas
 
 ## Core Scripts
 
+### backup-dev-environment.zsh
+Orchestrates comprehensive backup of development environment settings including Claude Code configuration and dotfiles.
+
+**Key features:**
+- Orchestrates backup of Claude Code settings and essential dotfiles in one operation
+- Creates a timestamped directory containing all backup files
+- Backs up .zshrc, .gitconfig, and .ssh/config alongside Claude settings
+- Supports `--skip-claude` and `--skip-dotfiles` flags for selective backups
+- Verbose mode for detailed output
+- Structured exit codes (0=success, 1=general error, 2=missing files, 3=backup failed)
+
+**What gets backed up:**
+- Claude Code settings (via backup-claude-settings.zsh)
+- `~/.zshrc` - Shell configuration
+- `~/.gitconfig` - Git configuration
+- `~/.ssh/config` - SSH configuration (if present)
+
+**Usage:**
+```bash
+./backup-dev-environment.zsh                    # Create full backup
+./backup-dev-environment.zsh -o my-backup       # Custom directory name
+./backup-dev-environment.zsh --verbose          # Show detailed output
+./backup-dev-environment.zsh --skip-dotfiles    # Only backup Claude settings
+```
+
+**Directory structure created:**
+```
+dev-backup-20251116-120000/
+├── claude-settings-20251116-120000.zip
+├── .zshrc
+├── .gitconfig
+└── .ssh-config (if ~/.ssh/config exists)
+```
+
+**Restoring from backup:**
+```bash
+# Extract Claude settings
+unzip dev-backup-*/claude-settings-*.zip -d ~
+
+# Restore dotfiles
+cp dev-backup-*/.zshrc ~
+cp dev-backup-*/.gitconfig ~
+cp dev-backup-*/.ssh-config ~/.ssh/config  # if present
+
+# Restart terminal and Claude Code
+```
+
 ### backup-claude-settings.zsh
 Backs up essential Claude Code settings to a timestamped zip file for easy restoration on a new Mac.
+
+**Note:** This script is also used by `backup-dev-environment.zsh` for orchestrated backups.
 
 **Key features:**
 - Backs up settings.json, .claude.json, statusline scripts, custom agents, and slash commands
@@ -20,10 +69,13 @@ Backs up essential Claude Code settings to a timestamped zip file for easy resto
 
 **Files backed up:**
 - `~/.claude/settings.json` - Hooks, statusline, preferences
+- `~/.claude/CLAUDE.md` - Global instructions for Claude Code
 - `~/.claude.json` - Main config file with MCP servers
 - `~/.claude/statusline-*.sh` - Custom statusline scripts
-- `~/.claude/.agents/` - Custom agents (if present)
-- `~/.claude/.commands/` - Custom slash commands (if present)
+- `~/.claude/commands/` - Personal slash commands (if present)
+- `~/.claude/skills/` - Personal skills (if present)
+- `~/.claude/agents/` - Custom agents (if present)
+- `~/.claude/plugins/` - Installed plugins and marketplaces (if present)
 
 **Usage:**
 ```bash
@@ -159,3 +211,12 @@ To test scripts safely:
 - Apple Silicon (M1/M2) vs Intel chip detection for Homebrew paths
 - Uses `open` command for launching applications
 - Zsh is the default shell on macOS (all .zsh scripts)
+
+## Additional Resources
+
+### Claude Code Agent Marketplace
+- **wshobson/agents** - Production-ready marketplace of 63 focused plugins containing 85 specialized AI agents, 47 agent skills, and 44 development tools for intelligent automation and multi-agent orchestration
+- GitHub: https://github.com/wshobson/agents/tree/main
+- Offers domain expertise across 23 categories (development, infrastructure, security, AI/ML, business operations)
+- Emphasizes modularity and token efficiency with granular, focused plugins
+- Agents strategically assigned to Claude Haiku (fast tasks) or Claude Sonnet (complex reasoning)

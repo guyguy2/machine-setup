@@ -23,30 +23,33 @@ show_help() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Backs up Claude Code global settings to a zip file in the current directory.
+Backs up Claude Code global settings to a zip file in the data/ directory.
 
 Backs up essential settings for Claude Code on a new Mac:
   - ~/.claude/settings.json     (hooks, statusline, preferences)
+  - ~/.claude/CLAUDE.md         (global instructions for Claude Code)
   - ~/.claude/statusline-*.sh   (custom statusline scripts)
-  - ~/.claude/.agents/          (custom agents, if present)
-  - ~/.claude/.commands/        (custom slash commands, if present)
+  - ~/.claude/commands/         (personal slash commands, if present)
+  - ~/.claude/skills/           (personal skills, if present)
+  - ~/.claude/agents/           (custom agents, if present)
+  - ~/.claude/plugins/          (installed plugins and marketplaces, if present)
   - ~/.claude.json              (main config file - MCP servers, settings)
 
 Options:
-  -o, --output FILE     Custom output filename (default: claude-settings-TIMESTAMP.zip)
+  -o, --output FILE     Custom output filename in current directory (default: data/claude-settings-TIMESTAMP.zip)
   -v, --verbose         Verbose output
   -h, --help            Show this help message
 
 Examples:
-  $(basename "$0")                                   # Create timestamped backup
-  $(basename "$0") -o my-claude-backup.zip           # Custom filename
+  $(basename "$0")                                   # Create timestamped backup in data/
+  $(basename "$0") -o my-claude-backup.zip           # Custom filename in current directory
   $(basename "$0") --verbose                         # Show detailed output
 
 Restoring from backup:
   To restore Claude Code settings from a backup zip file on a new Mac:
 
   1. Extract the backup to your home directory:
-     unzip claude-settings-20251114-211800.zip -d ~
+     unzip data/claude-settings-20251114-211800.zip -d ~
 
   2. Verify the files were extracted:
      ls -la ~/.claude/
@@ -103,6 +106,7 @@ log_verbose() {
 
 # Define paths to essential Claude Code settings
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 CLAUDE_JSON="$HOME/.claude.json"
 CLAUDE_DIR="$HOME/.claude"
 
@@ -114,6 +118,11 @@ if [[ -f "$CLAUDE_SETTINGS" ]]; then
     FOUND_SETTINGS=true
 fi
 
+if [[ -f "$CLAUDE_MD" ]]; then
+    log_verbose "Found global CLAUDE.md: $CLAUDE_MD"
+    FOUND_SETTINGS=true
+fi
+
 if [[ -f "$CLAUDE_JSON" ]]; then
     log_verbose "Found Claude config: $CLAUDE_JSON"
     FOUND_SETTINGS=true
@@ -121,7 +130,7 @@ fi
 
 if [[ "$FOUND_SETTINGS" == false ]]; then
     log_error "No essential Claude Code settings found"
-    log_error "Expected to find: ~/.claude/settings.json or ~/.claude.json"
+    log_error "Expected to find: ~/.claude/settings.json, ~/.claude/CLAUDE.md, or ~/.claude.json"
     exit 2
 fi
 
@@ -129,15 +138,30 @@ fi
 if [[ -z "$OUTPUT_FILE" ]]; then
     TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     OUTPUT_FILE="claude-settings-${TIMESTAMP}.zip"
-fi
 
-# Ensure .zip extension
-if [[ "$OUTPUT_FILE" != *.zip ]]; then
-    OUTPUT_FILE="${OUTPUT_FILE}.zip"
-fi
+    # When using default filename, create and use data/ directory
+    DATA_DIR="$(pwd)/data"
+    if [[ ! -d "$DATA_DIR" ]]; then
+        log_verbose "Creating data directory: $DATA_DIR"
+        mkdir -p "$DATA_DIR"
+    fi
+    OUTPUT_PATH="$DATA_DIR/$OUTPUT_FILE"
+else
+    # User provided custom filename
+    # Ensure .zip extension
+    if [[ "$OUTPUT_FILE" != *.zip ]]; then
+        OUTPUT_FILE="${OUTPUT_FILE}.zip"
+    fi
 
-# Get absolute path for output file in current directory
-OUTPUT_PATH="$(pwd)/${OUTPUT_FILE}"
+    # Check if OUTPUT_FILE is already an absolute path
+    if [[ "$OUTPUT_FILE" == /* ]]; then
+        # Absolute path provided, use as-is
+        OUTPUT_PATH="$OUTPUT_FILE"
+    else
+        # Relative path provided, prepend current directory
+        OUTPUT_PATH="$(pwd)/${OUTPUT_FILE}"
+    fi
+fi
 
 log_info "Backing up Claude Code settings..."
 log_verbose "Output file: $OUTPUT_PATH"
@@ -157,6 +181,11 @@ if [[ -f "$CLAUDE_SETTINGS" ]]; then
     cp "$CLAUDE_SETTINGS" "$TEMP_DIR/.claude/settings.json"
 fi
 
+if [[ -f "$CLAUDE_MD" ]]; then
+    log_verbose "Copying CLAUDE.md"
+    cp "$CLAUDE_MD" "$TEMP_DIR/.claude/CLAUDE.md"
+fi
+
 if [[ -f "$CLAUDE_JSON" ]]; then
     log_verbose "Copying .claude.json"
     cp "$CLAUDE_JSON" "$TEMP_DIR/.claude.json"
@@ -169,16 +198,28 @@ if [[ -e "${STATUSLINE_SCRIPTS[1]}" ]]; then
     cp "$CLAUDE_DIR"/statusline-*.sh "$TEMP_DIR/.claude/"
 fi
 
-# Copy custom agents directory if it exists
-if [[ -d "$CLAUDE_DIR/.agents" ]]; then
-    log_verbose "Copying custom agents"
-    cp -R "$CLAUDE_DIR/.agents" "$TEMP_DIR/.claude/.agents"
+# Copy personal slash commands directory if it exists
+if [[ -d "$CLAUDE_DIR/commands" ]]; then
+    log_verbose "Copying personal slash commands"
+    cp -R "$CLAUDE_DIR/commands" "$TEMP_DIR/.claude/commands"
 fi
 
-# Copy custom commands directory if it exists
-if [[ -d "$CLAUDE_DIR/.commands" ]]; then
-    log_verbose "Copying custom slash commands"
-    cp -R "$CLAUDE_DIR/.commands" "$TEMP_DIR/.claude/.commands"
+# Copy personal skills directory if it exists
+if [[ -d "$CLAUDE_DIR/skills" ]]; then
+    log_verbose "Copying personal skills"
+    cp -R "$CLAUDE_DIR/skills" "$TEMP_DIR/.claude/skills"
+fi
+
+# Copy custom agents directory if it exists
+if [[ -d "$CLAUDE_DIR/agents" ]]; then
+    log_verbose "Copying custom agents"
+    cp -R "$CLAUDE_DIR/agents" "$TEMP_DIR/.claude/agents"
+fi
+
+# Copy plugins directory if it exists
+if [[ -d "$CLAUDE_DIR/plugins" ]]; then
+    log_verbose "Copying installed plugins and marketplaces"
+    cp -R "$CLAUDE_DIR/plugins" "$TEMP_DIR/.claude/plugins"
 fi
 
 # Create zip file

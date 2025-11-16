@@ -21,8 +21,8 @@ build/
 *.swo
 *~
 
-# Claude settings backups
-claude-settings-*.zip
+# Data directory is tracked
+!/data/
 
 # OS
 .DS_Store
