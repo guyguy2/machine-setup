@@ -33,6 +33,9 @@ DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 # Development Tools - CLI Utilities
 DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd")
 
+# Cloud Tools
+CLOUD_TOOLS=()
+
 # Development Tools - Containers
 CONTAINER_TOOLS=("docker")
 
@@ -43,7 +46,7 @@ NETWORK_TOOLS=("telnet")
 TERMINAL_APPS=("warp")
 
 # GUI Applications - Development
-DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code")
+DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code" "gcloud-cli")
 
 # GUI Applications - Productivity
 PRODUCTIVITY_APPS=("rectangle" "todoist" "dropbox" "macwhisper" "iina")
@@ -52,7 +55,7 @@ PRODUCTIVITY_APPS=("rectangle" "todoist" "dropbox" "macwhisper" "iina")
 COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome")
 
 # Legacy arrays for backward compatibility (combined from groups)
-CLI_TOOLS=("${DEV_CORE_TOOLS[@]}" "${DEV_CLI_UTILS[@]}" "${CONTAINER_TOOLS[@]}" "${NETWORK_TOOLS[@]}")
+CLI_TOOLS=("${DEV_CORE_TOOLS[@]}" "${DEV_CLI_UTILS[@]}" "${CLOUD_TOOLS[@]}" "${CONTAINER_TOOLS[@]}" "${NETWORK_TOOLS[@]}")
 GUI_APPS=("${DEV_GUI_APPS[@]}" "${PRODUCTIVITY_APPS[@]}" "${COMMUNICATION_APPS[@]}")
 
 # Minimum disk space required (in GB)
@@ -351,7 +354,7 @@ install_cli_tools() {
     fi
 
     log_info "🛠️ Installing command line tools (latest versions)..."
-    log_verbose "Package groups: Development Core, CLI Utilities, Containers, Network Tools"
+    log_verbose "Package groups: Development Core, CLI Utilities, Cloud Tools, Containers, Network Tools"
 
     local total=${#CLI_TOOLS[@]}
     local current=0
