@@ -227,6 +227,29 @@ if [[ ${#BACKED_UP_FILES[@]} -eq 0 ]]; then
     exit 2
 fi
 
+# Clean up old backups (keep only 2 most recent of each type)
+log_verbose "Cleaning up old backups in $DATA_DIR"
+
+# Clean up old claude-settings-*.zip files (keep 2 most recent)
+OLD_CLAUDE_BACKUPS=($(ls -t "$DATA_DIR"/claude-settings-*.zip 2>/dev/null | tail -n +3))
+if [[ ${#OLD_CLAUDE_BACKUPS[@]} -gt 0 ]]; then
+    log_verbose "Removing ${#OLD_CLAUDE_BACKUPS[@]} old claude-settings backup(s)"
+    for old_backup in "${OLD_CLAUDE_BACKUPS[@]}"; do
+        log_verbose "Deleting: $(basename "$old_backup")"
+        rm -f "$old_backup"
+    done
+fi
+
+# Clean up old dotfiles-*.zip files (keep 2 most recent)
+OLD_DOTFILES_BACKUPS=($(ls -t "$DATA_DIR"/dotfiles-*.zip 2>/dev/null | tail -n +3))
+if [[ ${#OLD_DOTFILES_BACKUPS[@]} -gt 0 ]]; then
+    log_verbose "Removing ${#OLD_DOTFILES_BACKUPS[@]} old dotfiles backup(s)"
+    for old_backup in "${OLD_DOTFILES_BACKUPS[@]}"; do
+        log_verbose "Deleting: $(basename "$old_backup")"
+        rm -f "$old_backup"
+    done
+fi
+
 # Get directory size for display
 DIR_SIZE=$(du -sh "$DATA_DIR" | cut -f1)
 

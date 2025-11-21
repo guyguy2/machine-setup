@@ -238,6 +238,26 @@ fi
 # Get file size for display
 FILE_SIZE=$(du -h "$OUTPUT_PATH" | cut -f1)
 
+# Clean up old backups in data directory (keep only 2 most recent)
+if [[ "$OUTPUT_PATH" == *"/data/"* ]]; then
+    DATA_DIR="$(dirname "$OUTPUT_PATH")"
+    log_verbose "Cleaning up old backups in $DATA_DIR"
+
+    # Find all claude-settings-*.zip files sorted by modification time (newest first)
+    # Keep the 2 most recent, delete the rest
+    OLD_BACKUPS=($(ls -t "$DATA_DIR"/claude-settings-*.zip 2>/dev/null | tail -n +3))
+
+    if [[ ${#OLD_BACKUPS[@]} -gt 0 ]]; then
+        log_verbose "Removing ${#OLD_BACKUPS[@]} old backup(s)"
+        for old_backup in "${OLD_BACKUPS[@]}"; do
+            log_verbose "Deleting: $(basename "$old_backup")"
+            rm -f "$old_backup"
+        done
+    else
+        log_verbose "No old backups to clean up"
+    fi
+fi
+
 log_success "Claude Code settings backed up successfully"
 log_info "Output: $OUTPUT_FILE ($FILE_SIZE)"
 

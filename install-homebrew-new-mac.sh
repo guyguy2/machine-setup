@@ -19,7 +19,8 @@ EXIT_DISK_SPACE_ERROR=5
 VERBOSE=false
 DRY_RUN=false
 SKIP_HOMEBREW=false
-SKIP_OH_MY_ZSH=false
+SKIP_SHELL_FRAMEWORK=false
+USE_OH_MY_ZSH=false
 SKIP_TERMINAL=false
 SKIP_CLI_TOOLS=false
 SKIP_GUI_APPS=false
@@ -31,7 +32,7 @@ CONFIG_FILE=""
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zimfw")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -106,7 +107,8 @@ OPTIONS:
     -d, --dry-run           Show what would be installed without executing
     -c, --config FILE       Load configuration from file
     --skip-homebrew         Skip Homebrew installation
-    --skip-oh-my-zsh        Skip Oh My Zsh installation
+    --skip-shell-framework  Skip shell framework (zimfw/Oh My Zsh) installation
+    --use-oh-my-zsh         Install Oh My Zsh instead of zimfw (default: zimfw)
     --skip-terminal         Skip terminal applications (Warp)
     --skip-cli-tools        Skip command line tools
     --skip-gui-apps         Skip GUI applications
@@ -123,7 +125,8 @@ CONFIGURATION FILE FORMAT:
     DEV_GUI_APPS="visual-studio-code docker-desktop"
     PRODUCTIVITY_APPS="rectangle todoist"
     COMMUNICATION_APPS="google-chrome zoom"
-    SKIP_OH_MY_ZSH=true
+    USE_OH_MY_ZSH=true
+    SKIP_SHELL_FRAMEWORK=true
     SKIP_TERMINAL=true
 
 EXIT CODES:
@@ -250,9 +253,49 @@ install_homebrew() {
     fi
 }
 
+# Install zimfw
+install_zimfw() {
+    if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
+        log_verbose "Skipping zimfw installation"
+        return
+    fi
+
+    log_info "💻 Installing zimfw (Zsh IMproved FrameWork)..."
+
+    # Check if zimfw is already installed
+    if [[ -d "$HOME/.zim" ]]; then
+        log_success "zimfw is already installed"
+        return
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY RUN] Would install zimfw"
+        return
+    fi
+
+    # Install zimfw
+    log_verbose "Downloading and installing zimfw..."
+
+    # Download and run the installer
+    if ! curl -fsSL https://raw.githubusercontent.com/zimfw/install/master/install.zsh | zsh; then
+        log_error "Failed to install zimfw"
+        exit $EXIT_INSTALL_FAILED
+    fi
+
+    # Verify installation
+    if [[ -d "$HOME/.zim" ]]; then
+        log_success "zimfw installed successfully"
+        log_info "You can customize your zimfw configuration in ~/.zimrc"
+        log_info "Run 'zimfw install' to install modules defined in ~/.zimrc"
+    else
+        log_error "zimfw installation failed - directory not found"
+        exit $EXIT_INSTALL_FAILED
+    fi
+}
+
 # Install Oh My Zsh
 install_oh_my_zsh() {
-    if [[ "$SKIP_OH_MY_ZSH" == true ]]; then
+    if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
         log_verbose "Skipping Oh My Zsh installation"
         return
     fi
@@ -304,6 +347,20 @@ install_oh_my_zsh() {
     else
         log_error "Oh My Zsh installation failed - directory not found"
         exit $EXIT_INSTALL_FAILED
+    fi
+}
+
+# Install shell framework (zimfw or Oh My Zsh)
+install_shell_framework() {
+    if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
+        log_verbose "Skipping shell framework installation"
+        return
+    fi
+
+    if [[ "$USE_OH_MY_ZSH" == true ]]; then
+        install_oh_my_zsh
+    else
+        install_zimfw
     fi
 }
 
@@ -474,8 +531,12 @@ parse_args() {
                 SKIP_HOMEBREW=true
                 shift
                 ;;
-            --skip-oh-my-zsh)
-                SKIP_OH_MY_ZSH=true
+            --skip-shell-framework)
+                SKIP_SHELL_FRAMEWORK=true
+                shift
+                ;;
+            --use-oh-my-zsh)
+                USE_OH_MY_ZSH=true
                 shift
                 ;;
             --skip-terminal)
@@ -518,7 +579,7 @@ main() {
 
     # Installation phases
     install_homebrew
-    install_oh_my_zsh
+    install_shell_framework
     install_terminal_apps
     install_cli_tools
     install_gui_apps
