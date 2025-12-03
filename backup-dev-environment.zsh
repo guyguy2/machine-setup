@@ -138,8 +138,6 @@ BACKED_UP_FILES=()
 
 # Backup Claude Code settings
 if [[ "$SKIP_CLAUDE" == false ]]; then
-    log_info "Backing up Claude Code settings..."
-
     CLAUDE_ZIP_NAME="claude-settings-${TIMESTAMP}.zip"
 
     if "$CLAUDE_BACKUP_SCRIPT" -o "$DATA_DIR/$CLAUDE_ZIP_NAME" $VERBOSE_FLAG; then
