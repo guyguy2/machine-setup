@@ -16,7 +16,6 @@ EXIT_NETWORK_ERROR=4
 
 # Configuration
 DEFAULT_BROWSER="chrome"
-CONFIG_FILE="$HOME/.google-voice-call.conf"
 CONTACTS_FILE="$HOME/.google-voice-contacts.txt"
 HISTORY_FILE="$HOME/.google-voice-history.txt"
 MAX_HISTORY_ENTRIES=50
@@ -99,10 +98,6 @@ BROWSERS:
     edge        Microsoft Edge
     default     System default browser
 
-CONFIGURATION FILE: ~/.google-voice-call.conf
-    DEFAULT_BROWSER=safari
-    VERBOSE=true
-
 EXIT CODES:
     0  Success
     1  General error
@@ -110,15 +105,6 @@ EXIT CODES:
     3  No browser available
     4  Network error
 EOF
-}
-
-# Load configuration file
-load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        log_verbose "Loading configuration from $CONFIG_FILE"
-        source "$CONFIG_FILE"
-        log_verbose "Configuration loaded"
-    fi
 }
 
 # Validate phone number format
@@ -451,9 +437,6 @@ parse_args() {
 # Main function
 main() {
     log_verbose "Google Voice Call Script v2.0.0"
-
-    # Load configuration
-    load_config
 
     # Handle history display
     if [[ "$SHOW_HISTORY" == true ]]; then

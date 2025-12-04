@@ -24,7 +24,6 @@ USE_OH_MY_ZSH=false
 SKIP_TERMINAL=false
 SKIP_CLI_TOOLS=false
 SKIP_GUI_APPS=false
-CONFIG_FILE=""
 
 # Package arrays organized by theme/group
 
@@ -105,7 +104,6 @@ OPTIONS:
     -h, --help              Show this help message
     -v, --verbose           Enable verbose output
     -d, --dry-run           Show what would be installed without executing
-    -c, --config FILE       Load configuration from file
     --skip-homebrew         Skip Homebrew installation
     --skip-shell-framework  Skip shell framework (zimfw/Oh My Zsh) installation
     --use-oh-my-zsh         Install Oh My Zsh instead of zimfw (default: zimfw)
@@ -117,17 +115,6 @@ EXAMPLES:
     $0                              # Install everything
     $0 --dry-run                    # Show what would be installed
     $0 --skip-gui-apps --verbose    # Skip GUI apps with verbose output
-    $0 --config ./setup.conf        # Use custom configuration file
-
-CONFIGURATION FILE FORMAT:
-    DEV_CORE_TOOLS="git gh node python"
-    DEV_CLI_UTILS="eza ripgrep tree"
-    DEV_GUI_APPS="visual-studio-code docker-desktop"
-    PRODUCTIVITY_APPS="rectangle todoist"
-    COMMUNICATION_APPS="google-chrome zoom"
-    USE_OH_MY_ZSH=true
-    SKIP_SHELL_FRAMEWORK=true
-    SKIP_TERMINAL=true
 
 EXIT CODES:
     0  Success
@@ -180,32 +167,6 @@ check_network() {
     fi
 
     log_verbose "Network connectivity confirmed"
-}
-
-# Load configuration file
-load_config() {
-    local config_file=$1
-
-    if [[ ! -f "$config_file" ]]; then
-        log_error "Configuration file not found: $config_file"
-        exit $EXIT_GENERAL_ERROR
-    fi
-
-    log_verbose "Loading configuration from $config_file"
-
-    # Source the config file safely
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Skip comments and empty lines
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-
-        # Validate and source the line
-        if [[ "$line" =~ ^[A-Z_]+= ]]; then
-            eval "$line"
-        fi
-    done < "$config_file"
-
-    log_verbose "Configuration loaded successfully"
 }
 
 # Install Homebrew
@@ -518,15 +479,6 @@ parse_args() {
                 DRY_RUN=true
                 shift
                 ;;
-            -c|--config)
-                if [[ -n "$2" ]]; then
-                    CONFIG_FILE="$2"
-                    shift 2
-                else
-                    log_error "Config file path required"
-                    exit $EXIT_GENERAL_ERROR
-                fi
-                ;;
             --skip-homebrew)
                 SKIP_HOMEBREW=true
                 shift
@@ -563,11 +515,6 @@ parse_args() {
 # Main function
 main() {
     log_info "Mac Setup Script v2.0.0"
-
-    # Load configuration if specified
-    if [[ -n "$CONFIG_FILE" ]]; then
-        load_config "$CONFIG_FILE"
-    fi
 
     # System checks
     check_system_requirements

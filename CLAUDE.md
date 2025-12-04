@@ -90,13 +90,12 @@ unzip claude-settings-20251114-211800.zip -d ~
 # Restart Claude Code to load restored settings
 ```
 
-### install-homebrew-new-mac.sh
+### install-homebrew-new-mac.zsh
 Comprehensive Mac setup script that automates Homebrew installation and configuration of development environment.
 
 **Key features:**
 - Modular package organization (development core tools, CLI utilities, containers, network tools, GUI apps)
 - Supports command-line options: `--verbose`, `--dry-run`, `--skip-homebrew`, `--skip-terminal`, `--skip-cli-tools`, `--skip-gui-apps`
-- Configuration file support via `--config FILE`
 - Structured exit codes (0=success, 1=general error, 2=missing dependency, 3=network error, 4=install failed, 5=disk space error)
 - Progress indicators and comprehensive validation
 
@@ -112,10 +111,9 @@ Comprehensive Mac setup script that automates Homebrew installation and configur
 
 **Usage:**
 ```bash
-./install-homebrew-new-mac.sh                      # Install everything
-./install-homebrew-new-mac.sh --dry-run            # Preview changes
-./install-homebrew-new-mac.sh --skip-gui-apps      # Skip GUI applications
-./install-homebrew-new-mac.sh --config setup.conf  # Use custom config
+./install-homebrew-new-mac.zsh                      # Install everything
+./install-homebrew-new-mac.zsh --dry-run            # Preview changes
+./install-homebrew-new-mac.zsh --skip-gui-apps      # Skip GUI applications
 ```
 
 ### google-voice-call.zsh

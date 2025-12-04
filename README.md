@@ -6,7 +6,7 @@ Collection of utility scripts for various tasks.
 
 - **backup-claude-settings.zsh** - Backs up Claude Code settings to a timestamped zip file
 - **google-voice-call.zsh** - Enhanced Google Voice call launcher with contacts and call history
-- **install-homebrew-new-mac.sh** - Comprehensive Mac setup script with Homebrew installation and app configuration
+- **install-homebrew-new-mac.zsh** - Comprehensive Mac setup script with Homebrew installation and app configuration
 
 ## Usage
 
@@ -26,7 +26,7 @@ Example usage:
 ./google-voice-call.zsh 8558701311
 
 # Set up a new Mac with Homebrew
-./install-homebrew-new-mac.sh
+./install-homebrew-new-mac.zsh
 ```
 
 Make sure scripts have execution permissions:
@@ -40,7 +40,7 @@ chmod +x script-name.sh
 - macOS (scripts are tailored for Mac environment)
 - Zsh shell (default on macOS)
 - Individual scripts may require:
-  - Homebrew (install-homebrew-new-mac.sh installs it automatically)
+  - Homebrew (install-homebrew-new-mac.zsh installs it automatically)
   - Chrome browser (google-voice-call.zsh)
   - Claude Code installed (backup-claude-settings.zsh)
 
