@@ -31,7 +31,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zoxide" "procs" "ncdu")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zoxide" "procs" "ncdu" "lazydocker" "lazygit")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -49,7 +49,7 @@ TERMINAL_APPS=("warp")
 DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code" "gcloud-cli")
 
 # GUI Applications - Productivity
-PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote")
+PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend")
 
 # GUI Applications - Communication
 COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome")

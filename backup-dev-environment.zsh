@@ -32,6 +32,7 @@ Orchestrates comprehensive backup of development environment settings including:
   - Shell configuration (.zshrc)
   - Git configuration (.gitconfig)
   - SSH configuration (.ssh/config)
+  - Gemini CLI settings (.gemini, .geminirc)
 
 Creates two timestamped zip files in a data/ directory for easy restoration.
 
@@ -193,6 +194,30 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
         fi
     else
         log_verbose ".ssh/config not found, skipping"
+    fi
+
+    # Backup .gemini directory (Gemini CLI settings)
+    if [[ -d "$HOME/.gemini" ]]; then
+        log_verbose "Copying .gemini directory"
+        if cp -r "$HOME/.gemini" "$TEMP_DOTFILES_DIR/.gemini"; then
+            DOTFILES_COLLECTED=true
+        else
+            log_warning "Failed to copy .gemini directory"
+        fi
+    else
+        log_verbose ".gemini directory not found, skipping"
+    fi
+
+    # Backup .geminirc file (alternative Gemini CLI config)
+    if [[ -f "$HOME/.geminirc" ]]; then
+        log_verbose "Copying .geminirc"
+        if cp "$HOME/.geminirc" "$TEMP_DOTFILES_DIR/.geminirc"; then
+            DOTFILES_COLLECTED=true
+        else
+            log_warning "Failed to copy .geminirc"
+        fi
+    else
+        log_verbose ".geminirc not found, skipping"
     fi
 
     # Create zip file if we collected any dotfiles
