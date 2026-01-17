@@ -153,10 +153,10 @@ Enhanced Google Voice call launcher with multi-browser support, contacts, and ca
 Personal Zsh configuration file with oh-my-zsh setup and custom aliases.
 
 **Key configuration:**
-- oh-my-zsh framework with "eastwood" theme
+- oh-my-zsh framework with "robbyrussell" theme (default)
 - Git plugin enabled for enhanced git command completion
-- Python 3.13 from Homebrew (`/opt/homebrew/opt/python@3.13/bin/python3.13`)
-- Node.js 16 from Homebrew
+- zoxide for smarter directory navigation
+- Python 3 from Homebrew
 - Android SDK platform-tools in PATH
 - JAVA_HOME points to Android Studio's JBR
 
@@ -164,17 +164,21 @@ Personal Zsh configuration file with oh-my-zsh setup and custom aliases.
 - `c` - clear terminal
 - `ni` - npm install
 - `ns` - npm start
-- `python` - Python 3.13 from Homebrew
+- `python` - Python 3 from Homebrew
 - `py` - python3
 - `gacp` - git add, commit with "progress" message, and push
 - `cld` - claude CLI shortcut
 - `clda` - claude --dangerously-skip-permissions
-- `upd` - Update Homebrew packages and Gemini CLI
+- `clds` - claude with sonnet model
+- `cldo` - claude with opus model
+- `upd` - Update Homebrew packages and docker-compose services
 - `gemini` - Gemini CLI with auto-yes flag
+- `fabric` - fabric-ai alias
 
 **Integrations:**
 - Docker CLI completions
 - Kiro terminal shell integration
+- zoxide for smarter cd command
 - Local bin directory (`~/.local/bin`) in PATH
 
 ## Common Development Patterns

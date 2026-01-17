@@ -20,7 +20,6 @@ VERBOSE=false
 DRY_RUN=false
 SKIP_HOMEBREW=false
 SKIP_SHELL_FRAMEWORK=false
-USE_OH_MY_ZSH=false
 SKIP_TERMINAL=false
 SKIP_CLI_TOOLS=false
 SKIP_GUI_APPS=false
@@ -105,8 +104,7 @@ OPTIONS:
     -v, --verbose           Enable verbose output
     -d, --dry-run           Show what would be installed without executing
     --skip-homebrew         Skip Homebrew installation
-    --skip-shell-framework  Skip shell framework (zimfw/Oh My Zsh) installation
-    --use-oh-my-zsh         Install Oh My Zsh instead of zimfw (default: zimfw)
+    --skip-shell-framework  Skip Oh My Zsh installation
     --skip-terminal         Skip terminal applications (Warp)
     --skip-cli-tools        Skip command line tools
     --skip-gui-apps         Skip GUI applications
@@ -214,46 +212,6 @@ install_homebrew() {
     fi
 }
 
-# Install zimfw
-install_zimfw() {
-    if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
-        log_verbose "Skipping zimfw installation"
-        return
-    fi
-
-    log_info "💻 Installing zimfw (Zsh IMproved FrameWork)..."
-
-    # Check if zimfw is already installed
-    if [[ -d "$HOME/.zim" ]]; then
-        log_success "zimfw is already installed"
-        return
-    fi
-
-    if [[ "$DRY_RUN" == true ]]; then
-        log_info "[DRY RUN] Would install zimfw"
-        return
-    fi
-
-    # Install zimfw
-    log_verbose "Downloading and installing zimfw..."
-
-    # Download and run the installer
-    if ! curl -fsSL https://raw.githubusercontent.com/zimfw/install/master/install.zsh | zsh; then
-        log_error "Failed to install zimfw"
-        exit $EXIT_INSTALL_FAILED
-    fi
-
-    # Verify installation
-    if [[ -d "$HOME/.zim" ]]; then
-        log_success "zimfw installed successfully"
-        log_info "You can customize your zimfw configuration in ~/.zimrc"
-        log_info "Run 'zimfw install' to install modules defined in ~/.zimrc"
-    else
-        log_error "zimfw installation failed - directory not found"
-        exit $EXIT_INSTALL_FAILED
-    fi
-}
-
 # Install Oh My Zsh
 install_oh_my_zsh() {
     if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
@@ -311,18 +269,14 @@ install_oh_my_zsh() {
     fi
 }
 
-# Install shell framework (zimfw or Oh My Zsh)
+# Install shell framework (Oh My Zsh)
 install_shell_framework() {
     if [[ "$SKIP_SHELL_FRAMEWORK" == true ]]; then
         log_verbose "Skipping shell framework installation"
         return
     fi
 
-    if [[ "$USE_OH_MY_ZSH" == true ]]; then
-        install_oh_my_zsh
-    else
-        install_zimfw
-    fi
+    install_oh_my_zsh
 }
 
 # Install terminal applications
@@ -485,10 +439,6 @@ parse_args() {
                 ;;
             --skip-shell-framework)
                 SKIP_SHELL_FRAMEWORK=true
-                shift
-                ;;
-            --use-oh-my-zsh)
-                USE_OH_MY_ZSH=true
                 shift
                 ;;
             --skip-terminal)
