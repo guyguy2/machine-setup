@@ -33,6 +33,7 @@ Orchestrates comprehensive backup of development environment settings including:
   - Git configuration (.gitconfig)
   - SSH configuration (.ssh/config)
   - Gemini CLI settings (.gemini, .geminirc)
+  - Homebrew installed packages list (formulae and casks)
 
 Creates two timestamped zip files in a data/ directory for easy restoration.
 
@@ -50,7 +51,7 @@ Examples:
 Directory structure:
   data/
     ├── claude-settings-20251116-120000.zip    # Claude Code backup
-    └── dotfiles-20251116-120000.zip           # Dotfiles backup (.zshrc, .gitconfig, .ssh/config)
+    └── dotfiles-20251116-120000.zip           # Dotfiles backup (.zshrc, .gitconfig, .ssh/config, homebrew-packages.txt)
 
 Restoring from backup:
   1. Extract Claude settings:
@@ -218,6 +219,27 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
         fi
     else
         log_verbose ".geminirc not found, skipping"
+    fi
+
+    # Capture Homebrew installed packages
+    if command -v brew &>/dev/null; then
+        log_verbose "Capturing Homebrew package list"
+        BREW_FILE="$TEMP_DOTFILES_DIR/homebrew-packages.txt"
+        {
+            echo "Homebrew Installed Packages"
+            echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "Homebrew: $(brew --version | head -1)"
+            echo ""
+            echo "=== Formulae ==="
+            brew list --formula 2>/dev/null || echo "(none)"
+            echo ""
+            echo "=== Casks ==="
+            brew list --cask 2>/dev/null || echo "(none)"
+        } > "$BREW_FILE"
+        DOTFILES_COLLECTED=true
+        log_verbose "Homebrew package list saved"
+    else
+        log_verbose "Homebrew not found, skipping package list"
     fi
 
     # Create zip file if we collected any dotfiles

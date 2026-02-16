@@ -24,6 +24,7 @@ Orchestrates comprehensive backup of development environment settings including 
 - `~/.zshrc` - Shell configuration
 - `~/.gitconfig` - Git configuration
 - `~/.ssh/config` - SSH configuration (if present)
+- Homebrew installed packages list (formulae and casks)
 
 **Usage:**
 ```bash
