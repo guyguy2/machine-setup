@@ -397,6 +397,36 @@ install_gui_apps() {
     log_success "GUI applications installation completed"
 }
 
+# Install tools not available via Homebrew
+install_extra_tools() {
+    if [[ "$SKIP_CLI_TOOLS" == true ]]; then
+        log_verbose "Skipping extra tools"
+        return
+    fi
+
+    log_info "Installing extra tools (non-Homebrew)..."
+
+    # todoist-cli - official Todoist CLI by Doist
+    # https://github.com/Doist/todoist-cli
+    # Not on Homebrew; requires Go
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY RUN] Would install todoist-cli via go install"
+    else
+        if ! command -v go &> /dev/null; then
+            log_warning "go not found - skipping todoist-cli (install Go first)"
+        else
+            log_verbose "Installing todoist-cli..."
+            if go install github.com/Doist/todoist-cli@latest; then
+                log_verbose "todoist-cli installed successfully"
+            else
+                log_warning "Failed to install todoist-cli, continuing..."
+            fi
+        fi
+    fi
+
+    log_success "Extra tools installation completed"
+}
+
 # Run cleanup and final steps
 cleanup_and_finalize() {
     log_info "🧹 Running cleanup and finalization..."
@@ -479,6 +509,7 @@ main() {
     install_shell_framework
     install_terminal_apps
     install_cli_tools
+    install_extra_tools
     install_gui_apps
     cleanup_and_finalize
 
