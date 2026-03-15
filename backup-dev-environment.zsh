@@ -35,7 +35,7 @@ Orchestrates comprehensive backup of development environment settings including:
   - Gemini CLI settings (.gemini, .geminirc)
   - Homebrew installed packages list (formulae and casks)
 
-Creates two timestamped zip files in a data/ directory for easy restoration.
+Creates a timestamped zip for Claude settings and a plain directory for dotfiles in data/.
 
 Options:
   -v, --verbose         Verbose output (passed to backup-claude-settings.zsh)
@@ -51,14 +51,16 @@ Examples:
 Directory structure:
   data/
     ├── claude-settings-20251116-120000.zip    # Claude Code backup
-    └── dotfiles-20251116-120000.zip           # Dotfiles backup (.zshrc, .gitconfig, .ssh/config, homebrew-packages.txt)
+    └── dotfiles-20251116-120000/              # Dotfiles (.zshrc, .gitconfig, .ssh-config, .gemini/, homebrew-packages.txt)
 
 Restoring from backup:
   1. Extract Claude settings:
      unzip data/claude-settings-*.zip -d ~
 
-  2. Extract dotfiles:
-     unzip data/dotfiles-*.zip -d ~
+  2. Restore dotfiles:
+     cp data/dotfiles-*/.zshrc ~
+     cp data/dotfiles-*/.gitconfig ~
+     cp data/dotfiles-*/.ssh-config ~/.ssh/config  # if present
 
   3. Restart terminal and Claude Code
 
@@ -157,14 +159,15 @@ fi
 if [[ "$SKIP_DOTFILES" == false ]]; then
     log_info "Backing up dotfiles..."
 
-    # Create temporary directory for dotfiles
-    TEMP_DOTFILES_DIR=$(mktemp -d)
+    # Create dotfiles output directory directly in data/
+    DOTFILES_DIR="$DATA_DIR/dotfiles-${TIMESTAMP}"
+    mkdir -p "$DOTFILES_DIR"
     DOTFILES_COLLECTED=false
 
     # Backup .zshrc
     if [[ -f "$HOME/.zshrc" ]]; then
         log_verbose "Copying .zshrc"
-        if cp "$HOME/.zshrc" "$TEMP_DOTFILES_DIR/.zshrc"; then
+        if cp "$HOME/.zshrc" "$DOTFILES_DIR/.zshrc"; then
             DOTFILES_COLLECTED=true
         else
             log_warning "Failed to copy .zshrc"
@@ -176,7 +179,7 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
     # Backup .gitconfig
     if [[ -f "$HOME/.gitconfig" ]]; then
         log_verbose "Copying .gitconfig"
-        if cp "$HOME/.gitconfig" "$TEMP_DOTFILES_DIR/.gitconfig"; then
+        if cp "$HOME/.gitconfig" "$DOTFILES_DIR/.gitconfig"; then
             DOTFILES_COLLECTED=true
         else
             log_warning "Failed to copy .gitconfig"
@@ -188,7 +191,7 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
     # Backup .ssh/config
     if [[ -f "$HOME/.ssh/config" ]]; then
         log_verbose "Copying .ssh/config"
-        if cp "$HOME/.ssh/config" "$TEMP_DOTFILES_DIR/.ssh-config"; then
+        if cp "$HOME/.ssh/config" "$DOTFILES_DIR/.ssh-config"; then
             DOTFILES_COLLECTED=true
         else
             log_warning "Failed to copy .ssh/config"
@@ -197,10 +200,21 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
         log_verbose ".ssh/config not found, skipping"
     fi
 
-    # Backup .gemini directory (Gemini CLI settings)
+    # Backup .gemini directory (Gemini CLI settings), excluding sensitive auth files and session data
     if [[ -d "$HOME/.gemini" ]]; then
-        log_verbose "Copying .gemini directory"
-        if cp -r "$HOME/.gemini" "$TEMP_DOTFILES_DIR/.gemini"; then
+        log_verbose "Copying .gemini directory (excluding sensitive files)"
+        mkdir -p "$DOTFILES_DIR/.gemini"
+        if rsync -a \
+            --exclude='oauth_creds.json' \
+            --exclude='google_accounts.json' \
+            --exclude='google_account_id' \
+            --exclude='user_id' \
+            --exclude='installation_id' \
+            --exclude='tmp/' \
+            --exclude='antigravity/implicit/' \
+            --exclude='antigravity/installation_id' \
+            --exclude='antigravity/code_tracker/' \
+            "$HOME/.gemini/" "$DOTFILES_DIR/.gemini/"; then
             DOTFILES_COLLECTED=true
         else
             log_warning "Failed to copy .gemini directory"
@@ -212,7 +226,7 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
     # Backup .geminirc file (alternative Gemini CLI config)
     if [[ -f "$HOME/.geminirc" ]]; then
         log_verbose "Copying .geminirc"
-        if cp "$HOME/.geminirc" "$TEMP_DOTFILES_DIR/.geminirc"; then
+        if cp "$HOME/.geminirc" "$DOTFILES_DIR/.geminirc"; then
             DOTFILES_COLLECTED=true
         else
             log_warning "Failed to copy .geminirc"
@@ -224,7 +238,7 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
     # Capture Homebrew installed packages
     if command -v brew &>/dev/null; then
         log_verbose "Capturing Homebrew package list"
-        BREW_FILE="$TEMP_DOTFILES_DIR/homebrew-packages.txt"
+        BREW_FILE="$DOTFILES_DIR/homebrew-packages.txt"
         {
             echo "Homebrew Installed Packages"
             echo "Generated: $(date '+%Y-%m-%d %H:%M:%S')"
@@ -242,25 +256,13 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
         log_verbose "Homebrew not found, skipping package list"
     fi
 
-    # Create zip file if we collected any dotfiles
     if [[ "$DOTFILES_COLLECTED" == true ]]; then
-        DOTFILES_ZIP_NAME="dotfiles-${TIMESTAMP}.zip"
-        log_verbose "Creating dotfiles zip: $DOTFILES_ZIP_NAME"
-
-        if (cd "$TEMP_DOTFILES_DIR" && zip -q -r "$DATA_DIR/$DOTFILES_ZIP_NAME" .); then
-            log_verbose "Dotfiles backed up to data/$DOTFILES_ZIP_NAME"
-            BACKED_UP_FILES+=("$DOTFILES_ZIP_NAME")
-        else
-            log_error "Failed to create dotfiles zip"
-            rm -rf "$TEMP_DOTFILES_DIR"
-            exit 3
-        fi
+        log_verbose "Dotfiles backed up to data/dotfiles-${TIMESTAMP}/"
+        BACKED_UP_FILES+=("dotfiles-${TIMESTAMP}/")
     else
         log_warning "No dotfiles found to backup"
+        rm -rf "$DOTFILES_DIR"
     fi
-
-    # Clean up temporary directory
-    rm -rf "$TEMP_DOTFILES_DIR"
 else
     log_verbose "Skipping dotfiles backup"
 fi
@@ -285,13 +287,13 @@ if [[ ${#OLD_CLAUDE_BACKUPS[@]} -gt 0 ]]; then
     done
 fi
 
-# Clean up old dotfiles-*.zip files (keep 1 most recent)
-OLD_DOTFILES_BACKUPS=($(ls -t "$DATA_DIR"/dotfiles-*.zip 2>/dev/null | tail -n +2))
+# Clean up old dotfiles-* directories (keep 1 most recent)
+OLD_DOTFILES_BACKUPS=($(ls -dt "$DATA_DIR"/dotfiles-*/ 2>/dev/null | tail -n +2))
 if [[ ${#OLD_DOTFILES_BACKUPS[@]} -gt 0 ]]; then
     log_verbose "Removing ${#OLD_DOTFILES_BACKUPS[@]} old dotfiles backup(s)"
     for old_backup in "${OLD_DOTFILES_BACKUPS[@]}"; do
         log_verbose "Deleting: $(basename "$old_backup")"
-        rm -f "$old_backup"
+        rm -rf "$old_backup"
     done
 fi
 
@@ -300,7 +302,7 @@ DIR_SIZE=$(du -sh "$DATA_DIR" | cut -f1)
 
 log_success "Development environment backup completed successfully"
 log_info "Output directory: data/ ($DIR_SIZE)"
-log_info "Zip files created: ${#BACKED_UP_FILES[@]}"
+log_info "Items backed up: ${#BACKED_UP_FILES[@]}"
 
 # Show contents if verbose
 if [[ "$VERBOSE" == true ]]; then
