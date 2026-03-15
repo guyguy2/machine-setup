@@ -30,7 +30,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zoxide" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zoxide" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -42,16 +42,19 @@ CONTAINER_TOOLS=("docker")
 NETWORK_TOOLS=("telnet")
 
 # Terminal Applications
-TERMINAL_APPS=("warp")
+TERMINAL_APPS=("warp" "ghostty")
+
+# Third-party Homebrew taps required before installation
+BREW_TAPS=("manaflow-ai/cmux")
 
 # GUI Applications - Development
-DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code" "gcloud-cli")
+DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code" "gcloud-cli" "cmux")
 
 # GUI Applications - Productivity
 PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend")
 
 # GUI Applications - Communication
-COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome")
+COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome" "googleworkspace-cli")
 
 # Legacy arrays for backward compatibility (combined from groups)
 CLI_TOOLS=("${DEV_CORE_TOOLS[@]}" "${DEV_CLI_UTILS[@]}" "${CLOUD_TOOLS[@]}" "${CONTAINER_TOOLS[@]}" "${NETWORK_TOOLS[@]}")
@@ -357,6 +360,28 @@ install_cli_tools() {
     log_success "Command line tools installation completed"
 }
 
+# Add third-party Homebrew taps
+setup_taps() {
+    if [[ "$SKIP_GUI_APPS" == true ]]; then
+        log_verbose "Skipping taps (GUI apps skipped)"
+        return
+    fi
+
+    log_info "Adding Homebrew taps..."
+
+    for tap in "${BREW_TAPS[@]}"; do
+        if [[ "$DRY_RUN" == true ]]; then
+            log_info "[DRY RUN] Would tap: $tap"
+            continue
+        fi
+
+        log_verbose "Tapping $tap..."
+        if ! brew tap "$tap"; then
+            log_warning "Failed to tap $tap, continuing..."
+        fi
+    done
+}
+
 # Install GUI applications
 # Note: Homebrew Cask installs the latest stable version by default
 install_gui_apps() {
@@ -510,6 +535,7 @@ main() {
     install_terminal_apps
     install_cli_tools
     install_extra_tools
+    setup_taps
     install_gui_apps
     cleanup_and_finalize
 
