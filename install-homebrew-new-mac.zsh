@@ -30,7 +30,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "fd" "zoxide" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent")
 
 # Cloud Tools
 CLOUD_TOOLS=()
