@@ -216,6 +216,47 @@ To test scripts safely:
 - Uses `open` command for launching applications
 - Zsh is the default shell on macOS (all .zsh scripts)
 
+## The Library (Skills & Agents Catalog)
+
+A meta-skill for managing and distributing skills, agents, and prompts across devices and projects.
+
+**Locations:**
+- Source: `/Users/guy/dev/tools/the-library`
+- Installed (global slash command): `~/.claude/skills/library/`
+- Catalog: `~/.claude/skills/library/library.yaml`
+
+**Where skills are stored:**
+- Global skills: `~/.claude/skills/<skill-name>/`
+- Project-local skills: `.claude/skills/<skill-name>/`
+- Global agents: `~/.claude/agents/`
+- Global prompts/commands: `~/.claude/commands/`
+
+**Usage in any Claude Code session:**
+```
+/library list                    # Show all catalog entries with install status
+/library use <name>              # Pull a skill from source into local directory
+/library use <name> install globally  # Install to ~/.claude/skills/
+/library add <details>           # Register a new skill/agent/prompt in the catalog
+/library push <name>             # Push local changes back to source repo
+/library sync                    # Re-pull all installed items from source
+/library search <keyword>        # Find entries by name or description
+```
+
+**Current catalog entries** (see `~/.claude/skills/library/library.yaml`):
+- `gws` - Gmail, Google Drive, Google Calendar via gws CLI
+- `skill-creator` - Create, modify, and evaluate skills
+- `todoist` - Todoist task management via td CLI
+- `walmart-cart` - Add items to Walmart cart via browser automation
+
+**Terminal shortcuts** (from `/Users/guy/dev/tools/the-library/justfile`):
+```bash
+just list          # List catalog
+just use <name>    # Pull a skill
+just push <name>   # Push changes back to source
+just sync          # Re-pull all installed items
+just search <kw>   # Find by name or description
+```
+
 ## Additional Resources
 
 ### Claude Code Plugin Marketplaces
