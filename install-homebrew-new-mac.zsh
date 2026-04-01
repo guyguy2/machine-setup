@@ -30,7 +30,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt" "opencode")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -48,7 +48,7 @@ TERMINAL_APPS=("warp" "ghostty")
 BREW_TAPS=("manaflow-ai/cmux")
 
 # GUI Applications - Development
-DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "opencode" "claude" "claude-code" "gcloud-cli" "cmux")
+DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "claude" "claude-code@latest" "gcloud-cli" "cmux")
 
 # GUI Applications - Productivity
 PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend")
