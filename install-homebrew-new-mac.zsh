@@ -449,6 +449,23 @@ install_extra_tools() {
         fi
     fi
 
+    # claude-mem - persistent cross-session memory for Claude Code
+    # https://github.com/claude-mem/claude-mem
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[DRY RUN] Would install claude-mem via npx claude-mem@latest install"
+    else
+        if ! command -v npx &> /dev/null; then
+            log_warning "npx not found - skipping claude-mem (install Node.js first)"
+        else
+            log_verbose "Installing claude-mem..."
+            if npx claude-mem@latest install; then
+                log_verbose "claude-mem installed successfully"
+            else
+                log_warning "Failed to install claude-mem, continuing..."
+            fi
+        fi
+    fi
+
     log_success "Extra tools installation completed"
 }
 

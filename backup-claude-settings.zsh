@@ -216,11 +216,18 @@ if [[ -d "$CLAUDE_DIR/agents" ]]; then
     cp -R "$CLAUDE_DIR/agents" "$TEMP_DIR/.claude/agents"
 fi
 
-# Copy plugins directory if it exists (excluding cache - re-downloaded automatically)
+# Copy plugins directory if it exists (excluding cache, git history, build artifacts)
 if [[ -d "$CLAUDE_DIR/plugins" ]]; then
-    log_verbose "Copying installed plugins and marketplaces (excluding cache)"
+    log_verbose "Copying installed plugins and marketplaces (excluding cache and bulk artifacts)"
     mkdir -p "$TEMP_DIR/.claude/plugins"
-    rsync -a --exclude='cache/' "$CLAUDE_DIR/plugins/" "$TEMP_DIR/.claude/plugins/"
+    rsync -a \
+        --exclude='cache/' \
+        --exclude='.git/' \
+        --exclude='backups/*.db' \
+        --exclude='marketplace/public/fonts/' \
+        --exclude='archive/releases/' \
+        --exclude='pnpm-lock.yaml' \
+        "$CLAUDE_DIR/plugins/" "$TEMP_DIR/.claude/plugins/"
 fi
 
 # Create zip file
