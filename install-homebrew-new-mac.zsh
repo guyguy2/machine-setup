@@ -30,7 +30,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt" "opencode" "zellij" "macmon")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt" "opencode" "zellij" "macmon" "todoist-cli")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -51,7 +51,7 @@ BREW_TAPS=("manaflow-ai/cmux")
 DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "claude" "claude-code@latest" "gcloud-cli" "cmux")
 
 # GUI Applications - Productivity
-PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend" "mole")
+PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend" "mole" "antigravity")
 
 # GUI Applications - Communication
 COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome" "googleworkspace-cli")
@@ -430,24 +430,6 @@ install_extra_tools() {
     fi
 
     log_info "Installing extra tools (non-Homebrew)..."
-
-    # todoist-cli - official Todoist CLI by Doist
-    # https://github.com/Doist/todoist-cli
-    # Not on Homebrew; requires Go
-    if [[ "$DRY_RUN" == true ]]; then
-        log_info "[DRY RUN] Would install todoist-cli via go install"
-    else
-        if ! command -v go &> /dev/null; then
-            log_warning "go not found - skipping todoist-cli (install Go first)"
-        else
-            log_verbose "Installing todoist-cli..."
-            if go install github.com/Doist/todoist-cli@latest; then
-                log_verbose "todoist-cli installed successfully"
-            else
-                log_warning "Failed to install todoist-cli, continuing..."
-            fi
-        fi
-    fi
 
     # claude-mem - persistent cross-session memory for Claude Code
     # https://github.com/claude-mem/claude-mem
