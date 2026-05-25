@@ -223,6 +223,7 @@ if [[ -d "$CLAUDE_DIR/plugins" ]]; then
     rsync -a \
         --exclude='cache/' \
         --exclude='.git/' \
+        --exclude='node_modules/' \
         --exclude='backups/*.db' \
         --exclude='marketplace/public/fonts/' \
         --exclude='archive/releases/' \
