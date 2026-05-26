@@ -109,7 +109,7 @@ Comprehensive Mac setup script that automates Homebrew installation and configur
 - DEV_GUI_APPS: visual-studio-code, docker-desktop, jetbrains-toolbox, opencode, claude, cmux (via manaflow-ai/cmux tap)
 - PRODUCTIVITY_APPS: rectangle, todoist, dropbox, macwhisper, iina
 - COMMUNICATION_APPS: whatsapp, zoom, google-chrome
-- DEV_CLI_UTILS includes todoist-cli (now on Homebrew core)
+- DEV_CLI_UTILS includes todoist-cli (now on Homebrew core), whatsapp-cli
 
 **Usage:**
 ```bash
