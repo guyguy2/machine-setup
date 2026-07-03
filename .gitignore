@@ -21,8 +21,11 @@ build/
 *.swo
 *~
 
-# Data directory is tracked
+# Data directory is tracked, but ignore generated backups
 !/data/
+/data/ai-settings-*.zip
+/data/claude-settings-*.zip
+/data/dotfiles-*/
 
 # OS
 .DS_Store
