@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 
 # backup-dev-environment.zsh
-# Orchestrates backup of development environment settings including Claude Code and dotfiles
+# Orchestrates backup of development environment settings including AI CLI settings and dotfiles
 
 set -euo pipefail
 
@@ -28,41 +28,42 @@ show_help() {
 Usage: $(basename "$0") [OPTIONS]
 
 Orchestrates comprehensive backup of development environment settings including:
-  - Claude Code settings (via backup-claude-settings.zsh)
+  - Claude & Antigravity settings (via backup-ai-settings.zsh)
   - Shell configuration (.zshrc)
   - Git configuration (.gitconfig)
   - SSH configuration (.ssh/config)
   - Gemini CLI settings (.gemini, .geminirc)
   - Homebrew installed packages list (formulae and casks)
 
-Creates a timestamped zip for Claude settings and a plain directory for dotfiles in data/.
+Creates a timestamped zip for AI settings and a plain directory for dotfiles in data/.
 
 Options:
-  -v, --verbose         Verbose output (passed to backup-claude-settings.zsh)
+  -v, --verbose         Verbose output (passed to backup-ai-settings.zsh)
   -h, --help            Show this help message
-  --skip-claude         Skip Claude Code settings backup
+  --skip-settings       Skip Claude & Antigravity settings backup
+  --skip-claude         Alias for --skip-settings
   --skip-dotfiles       Skip dotfiles backup
 
 Examples:
   $(basename "$0")                              # Create timestamped backups
   $(basename "$0") --verbose                    # Show detailed output
-  $(basename "$0") --skip-dotfiles              # Only backup Claude settings
+  $(basename "$0") --skip-dotfiles              # Only backup settings
 
 Directory structure:
   data/
-    ├── claude-settings-20251116-120000.zip    # Claude Code backup
-    └── dotfiles-20251116-120000/              # Dotfiles (.zshrc, .gitconfig, .ssh-config, .gemini/, homebrew-packages.txt)
+    ├── ai-settings-20260703-120000.zip        # Claude & Antigravity settings backup
+    └── dotfiles-20260703-120000/              # Dotfiles (.zshrc, .gitconfig, .ssh-config, .gemini/, homebrew-packages.txt)
 
 Restoring from backup:
-  1. Extract Claude settings:
-     unzip data/claude-settings-*.zip -d ~
+  1. Extract AI settings:
+     unzip data/ai-settings-*.zip -d ~
 
   2. Restore dotfiles:
      cp data/dotfiles-*/.zshrc ~
      cp data/dotfiles-*/.gitconfig ~
      cp data/dotfiles-*/.ssh-config ~/.ssh/config  # if present
 
-  3. Restart terminal and Claude Code
+  3. Restart terminal and CLI tools
 
 Exit codes:
   0 - Success
@@ -76,7 +77,7 @@ EOF
 # Parse command-line arguments
 VERBOSE=false
 VERBOSE_FLAG=""
-SKIP_CLAUDE=false
+SKIP_SETTINGS=false
 SKIP_DOTFILES=false
 
 while [[ $# -gt 0 ]]; do
@@ -90,8 +91,8 @@ while [[ $# -gt 0 ]]; do
             VERBOSE_FLAG="--verbose"
             shift
             ;;
-        --skip-claude)
-            SKIP_CLAUDE=true
+        --skip-settings|--skip-claude)
+            SKIP_SETTINGS=true
             shift
             ;;
         --skip-dotfiles)
@@ -113,14 +114,14 @@ log_verbose() {
     fi
 }
 
-# Get script directory (where backup-claude-settings.zsh should be)
+# Get script directory (where backup-ai-settings.zsh should be)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CLAUDE_BACKUP_SCRIPT="$SCRIPT_DIR/backup-claude-settings.zsh"
+SETTINGS_BACKUP_SCRIPT="$SCRIPT_DIR/backup-ai-settings.zsh"
 
-# Verify backup-claude-settings.zsh exists
-if [[ "$SKIP_CLAUDE" == false ]] && [[ ! -f "$CLAUDE_BACKUP_SCRIPT" ]]; then
-    log_error "Cannot find backup-claude-settings.zsh in $SCRIPT_DIR"
-    log_error "Please ensure backup-claude-settings.zsh is in the same directory as this script"
+# Verify backup-ai-settings.zsh exists
+if [[ "$SKIP_SETTINGS" == false ]] && [[ ! -f "$SETTINGS_BACKUP_SCRIPT" ]]; then
+    log_error "Cannot find backup-ai-settings.zsh in $SCRIPT_DIR"
+    log_error "Please ensure backup-ai-settings.zsh is in the same directory as this script"
     exit 2
 fi
 
@@ -140,19 +141,19 @@ fi
 # Track what was backed up
 BACKED_UP_FILES=()
 
-# Backup Claude Code settings
-if [[ "$SKIP_CLAUDE" == false ]]; then
-    CLAUDE_ZIP_NAME="claude-settings-${TIMESTAMP}.zip"
+# Backup settings
+if [[ "$SKIP_SETTINGS" == false ]]; then
+    SETTINGS_ZIP_NAME="ai-settings-${TIMESTAMP}.zip"
 
-    if "$CLAUDE_BACKUP_SCRIPT" -o "$DATA_DIR/$CLAUDE_ZIP_NAME" $VERBOSE_FLAG; then
-        log_verbose "Claude settings backed up to data/$CLAUDE_ZIP_NAME"
-        BACKED_UP_FILES+=("$CLAUDE_ZIP_NAME")
+    if "$SETTINGS_BACKUP_SCRIPT" -o "$DATA_DIR/$SETTINGS_ZIP_NAME" $VERBOSE_FLAG; then
+        log_verbose "Settings backed up to data/$SETTINGS_ZIP_NAME"
+        BACKED_UP_FILES+=("$SETTINGS_ZIP_NAME")
     else
-        log_error "Failed to backup Claude Code settings"
+        log_error "Failed to backup settings"
         exit 3
     fi
 else
-    log_verbose "Skipping Claude Code settings backup"
+    log_verbose "Skipping settings backup"
 fi
 
 # Backup dotfiles
@@ -200,9 +201,9 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
         log_verbose ".ssh/config not found, skipping"
     fi
 
-    # Backup .gemini directory (Gemini CLI settings), excluding sensitive auth files and session data
+    # Backup .gemini directory (excluding sensitive auth files, session data, and the antigravity-cli settings directory backed up separately)
     if [[ -d "$HOME/.gemini" ]]; then
-        log_verbose "Copying .gemini directory (excluding sensitive files)"
+        log_verbose "Copying .gemini directory (excluding sensitive files and antigravity-cli)"
         mkdir -p "$DOTFILES_DIR/.gemini"
         if rsync -a \
             --exclude='oauth_creds.json' \
@@ -214,6 +215,7 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
             --exclude='antigravity/implicit/' \
             --exclude='antigravity/installation_id' \
             --exclude='antigravity/code_tracker/' \
+            --exclude='antigravity-cli/' \
             "$HOME/.gemini/" "$DOTFILES_DIR/.gemini/"; then
             DOTFILES_COLLECTED=true
         else
@@ -277,11 +279,11 @@ fi
 # Clean up old backups (keep only 1 most recent of each type)
 log_verbose "Cleaning up old backups in $DATA_DIR"
 
-# Clean up old claude-settings-*.zip files (keep 1 most recent)
-OLD_CLAUDE_BACKUPS=($(ls -t "$DATA_DIR"/claude-settings-*.zip 2>/dev/null | tail -n +2))
-if [[ ${#OLD_CLAUDE_BACKUPS[@]} -gt 0 ]]; then
-    log_verbose "Removing ${#OLD_CLAUDE_BACKUPS[@]} old claude-settings backup(s)"
-    for old_backup in "${OLD_CLAUDE_BACKUPS[@]}"; do
+# Clean up old settings backup files (keep 1 most recent)
+OLD_SETTINGS_BACKUPS=($(ls -t "$DATA_DIR"/ai-settings-*.zip "$DATA_DIR"/claude-settings-*.zip 2>/dev/null | tail -n +2))
+if [[ ${#OLD_SETTINGS_BACKUPS[@]} -gt 0 ]]; then
+    log_verbose "Removing ${#OLD_SETTINGS_BACKUPS[@]} old settings backup(s)"
+    for old_backup in "${OLD_SETTINGS_BACKUPS[@]}"; do
         log_verbose "Deleting: $(basename "$old_backup")"
         rm -f "$old_backup"
     done

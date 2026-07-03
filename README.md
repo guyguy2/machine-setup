@@ -4,7 +4,7 @@ Collection of utility scripts for various tasks.
 
 ## Contents
 
-- **backup-claude-settings.zsh** - Backs up Claude Code settings to a timestamped zip file
+- **backup-ai-settings.zsh** - Backs up Claude Code and Gemini Antigravity CLI settings to a timestamped zip file
 - **google-voice-call.zsh** - Enhanced Google Voice call launcher with contacts and call history
 - **install-homebrew-new-mac.zsh** - Comprehensive Mac setup script with Homebrew installation and app configuration
 
@@ -19,8 +19,8 @@ Each script is executable and includes a `--help` option for detailed usage info
 Example usage:
 
 ```bash
-# Backup Claude Code settings
-./backup-claude-settings.zsh
+# Backup Claude Code and Gemini Antigravity settings
+./backup-ai-settings.zsh
 
 # Make a Google Voice call
 ./google-voice-call.zsh 8558701311
@@ -42,7 +42,7 @@ chmod +x script-name.sh
 - Individual scripts may require:
   - Homebrew (install-homebrew-new-mac.zsh installs it automatically)
   - Chrome browser (google-voice-call.zsh)
-  - Claude Code installed (backup-claude-settings.zsh)
+  - Claude Code or Gemini Antigravity CLI installed (backup-ai-settings.zsh)
 
 ## License
 

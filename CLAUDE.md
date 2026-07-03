@@ -9,18 +9,18 @@ This is a collection of utility scripts for macOS automation and development tas
 ## Core Scripts
 
 ### backup-dev-environment.zsh
-Orchestrates comprehensive backup of development environment settings including Claude Code configuration and dotfiles.
+Orchestrates comprehensive backup of development environment settings including AI CLI configurations (Claude Code and Gemini Antigravity) and dotfiles.
 
 **Key features:**
-- Orchestrates backup of Claude Code settings and essential dotfiles in one operation
+- Orchestrates backup of AI settings and essential dotfiles in one operation
 - Creates a timestamped directory containing all backup files
-- Backs up .zshrc, .gitconfig, and .ssh/config alongside Claude settings
-- Supports `--skip-claude` and `--skip-dotfiles` flags for selective backups
+- Backs up .zshrc, .gitconfig, and .ssh/config alongside AI settings
+- Supports `--skip-settings` (and `--skip-claude` alias) and `--skip-dotfiles` flags
 - Verbose mode for detailed output
 - Structured exit codes (0=success, 1=general error, 2=missing files, 3=backup failed)
 
 **What gets backed up:**
-- Claude Code settings (via backup-claude-settings.zsh)
+- Claude Code and Gemini Antigravity CLI settings (via [backup-ai-settings.zsh](file:///Users/guy/dev/automation/scripts/backup-ai-settings.zsh))
 - `~/.zshrc` - Shell configuration
 - `~/.gitconfig` - Git configuration
 - `~/.ssh/config` - SSH configuration (if present)
@@ -31,13 +31,13 @@ Orchestrates comprehensive backup of development environment settings including 
 ./backup-dev-environment.zsh                    # Create full backup
 ./backup-dev-environment.zsh -o my-backup       # Custom directory name
 ./backup-dev-environment.zsh --verbose          # Show detailed output
-./backup-dev-environment.zsh --skip-dotfiles    # Only backup Claude settings
+./backup-dev-environment.zsh --skip-dotfiles    # Only backup AI settings
 ```
 
 **Directory structure created:**
 ```
 dev-backup-20251116-120000/
-├── claude-settings-20251116-120000.zip
+├── ai-settings-20251116-120000.zip
 ├── .zshrc
 ├── .gitconfig
 └── .ssh-config (if ~/.ssh/config exists)
@@ -45,50 +45,59 @@ dev-backup-20251116-120000/
 
 **Restoring from backup:**
 ```bash
-# Extract Claude settings
-unzip dev-backup-*/claude-settings-*.zip -d ~
+# Extract AI settings
+unzip dev-backup-*/ai-settings-*.zip -d ~
 
 # Restore dotfiles
 cp dev-backup-*/.zshrc ~
 cp dev-backup-*/.gitconfig ~
 cp dev-backup-*/.ssh-config ~/.ssh/config  # if present
 
-# Restart terminal and Claude Code
+# Restart terminal and AI CLI tools
 ```
 
-### backup-claude-settings.zsh
-Backs up essential Claude Code settings to a timestamped zip file for easy restoration on a new Mac.
+### backup-ai-settings.zsh
+Backs up essential Claude Code and Gemini Antigravity CLI settings to a timestamped zip file for easy restoration on a new Mac.
 
 **Note:** This script is also used by `backup-dev-environment.zsh` for orchestrated backups.
 
 **Key features:**
-- Backs up settings.json, .claude.json, statusline scripts, custom agents, and slash commands
-- Creates timestamped zip files (e.g., claude-settings-20251114-211800.zip)
+- Backs up settings.json, .claude.json, statusline scripts, custom agents, slash commands, keybindings, and plugins for both tools
+- Creates timestamped zip files (e.g., ai-settings-20260703-120000.zip)
 - Supports custom output filenames with `--output` option
 - Verbose mode for detailed output
 - Structured exit codes (0=success, 1=general error, 2=missing settings, 3=zip creation failed)
 
 **Files backed up:**
-- `~/.claude/settings.json` - Hooks, statusline, preferences
-- `~/.claude/CLAUDE.md` - Global instructions for Claude Code
-- `~/.claude.json` - Main config file with MCP servers
-- `~/.claude/statusline-*.sh` - Custom statusline scripts
-- `~/.claude/commands/` - Personal slash commands (if present)
-- `~/.claude/skills/` - Personal skills (if present)
-- `~/.claude/agents/` - Custom agents (if present)
-- `~/.claude/plugins/` - Installed plugins and marketplaces (if present)
+- **Claude Code:**
+  - `~/.claude/settings.json` - Hooks, statusline, preferences
+  - `~/.claude/CLAUDE.md` - Global instructions for Claude Code
+  - `~/.claude.json` - Main config file with MCP servers
+  - `~/.claude/statusline-*.sh` - Custom statusline scripts
+  - `~/.claude/commands/` - Personal slash commands (if present)
+  - `~/.claude/skills/` - Personal skills (if present)
+  - `~/.claude/agents/` - Custom agents (if present)
+  - `~/.claude/plugins/` - Installed plugins and marketplaces (if present)
+- **Gemini Antigravity CLI:**
+  - `~/.gemini/antigravity-cli/settings.json` - Main configuration
+  - `~/.gemini/antigravity-cli/keybindings.json` - Custom shortcut keybindings (if present)
+  - `~/.gemini/antigravity-cli/bin/` - Custom scripts including statusline.py
+  - `~/.gemini/antigravity-cli/commands/` - Personal slash commands (if present)
+  - `~/.gemini/antigravity-cli/skills/` - Personal skills (if present)
+  - `~/.gemini/antigravity-cli/agents/` - Custom agents (if present)
+  - `~/.gemini/antigravity-cli/plugins/` - Installed plugins (if present)
 
 **Usage:**
 ```bash
-./backup-claude-settings.zsh                    # Create timestamped backup
-./backup-claude-settings.zsh -o my-backup.zip   # Custom filename
-./backup-claude-settings.zsh --verbose          # Show detailed output
+./backup-ai-settings.zsh                    # Create timestamped backup
+./backup-ai-settings.zsh -o my-backup.zip   # Custom filename
+./backup-ai-settings.zsh --verbose          # Show detailed output
 ```
 
 **Restoring from backup:**
 ```bash
-unzip claude-settings-20251114-211800.zip -d ~
-# Restart Claude Code to load restored settings
+unzip ai-settings-20260703-120000.zip -d ~
+# Restart terminal or CLI tools to load restored settings
 ```
 
 ### install-homebrew-new-mac.zsh
@@ -200,7 +209,7 @@ All enhanced scripts use standardized logging:
 - `log_verbose()` - Debug output (enabled with `-v` or `--verbose`)
 - `log_error()` - Error messages (stderr)
 - `log_warning()` - Warning messages (stderr)
-- `log_success()` - Success messages (used in backup-claude-settings.zsh)
+- `log_success()` - Success messages (used in backup-ai-settings.zsh)
 
 ## Testing Scripts
 
