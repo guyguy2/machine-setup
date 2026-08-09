@@ -30,7 +30,7 @@ SKIP_GUI_APPS=false
 DEV_CORE_TOOLS=("git" "gh" "node" "python" "uv" "bun")
 
 # Development Tools - CLI Utilities
-DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "gemini-cli" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt" "opencode" "zellij" "macmon" "todoist-cli" "whatsapp-cli" "glow" "herdr")
+DEV_CLI_UTILS=("eza" "ripgrep" "tree" "ffmpeg" "bat" "fzf" "ast-grep" "jq" "yq" "fd" "zoxide" "sd" "dust" "parallel" "procs" "mprocs" "ncdu" "lazydocker" "lazygit" "fabric-ai" "btop" "ekphos" "yazi" "pi-coding-agent" "git-crypt" "opencode" "zellij" "macmon" "todoist-cli" "whatsapp-cli" "glow" "herdr")
 
 # Cloud Tools
 CLOUD_TOOLS=()
@@ -48,7 +48,7 @@ TERMINAL_APPS=("warp" "ghostty")
 BREW_TAPS=("manaflow-ai/cmux" "alielsokary/tap")
 
 # GUI Applications - Development
-DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "claude" "claude-code@latest" "gcloud-cli" "cmux")
+DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "claude" "claude-code@latest" "gcloud-cli" "cmux" "antigravity-cli")
 
 # GUI Applications - Productivity
 PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend" "mole" "antigravity" "bettercmdtab" "caskhub")
