@@ -219,10 +219,10 @@ if [[ -f "$CLAUDE_JSON" ]]; then
 fi
 
 # Copy statusline scripts if they exist
-STATUSLINE_SCRIPTS=("$CLAUDE_DIR"/statusline-*.sh)
-if [[ -e "${STATUSLINE_SCRIPTS[1]:-}" ]]; then
+STATUSLINE_SCRIPTS=("$CLAUDE_DIR"/statusline-*.sh(N))
+if [[ ${#STATUSLINE_SCRIPTS[@]} -gt 0 ]]; then
     log_verbose "Copying Claude statusline scripts"
-    cp "$CLAUDE_DIR"/statusline-*.sh "$TEMP_DIR/.claude/"
+    cp "${STATUSLINE_SCRIPTS[@]}" "$TEMP_DIR/.claude/"
 fi
 
 # Copy personal slash commands directory if it exists
@@ -231,10 +231,11 @@ if [[ -d "$CLAUDE_DIR/commands" ]]; then
     cp -R "$CLAUDE_DIR/commands" "$TEMP_DIR/.claude/commands"
 fi
 
-# Copy personal skills directory if it exists
+# Copy personal skills directory if it exists (excluding embedded git history)
 if [[ -d "$CLAUDE_DIR/skills" ]]; then
     log_verbose "Copying Claude personal skills"
-    cp -R "$CLAUDE_DIR/skills" "$TEMP_DIR/.claude/skills"
+    mkdir -p "$TEMP_DIR/.claude/skills"
+    rsync -a --exclude='.git/' "$CLAUDE_DIR/skills/" "$TEMP_DIR/.claude/skills/"
 fi
 
 # Copy custom agents directory if it exists
@@ -285,7 +286,8 @@ fi
 
 if [[ -d "$ANTIGRAVITY_DIR/skills" ]]; then
     log_verbose "Copying Antigravity personal skills"
-    cp -R "$ANTIGRAVITY_DIR/skills" "$TEMP_DIR/.gemini/antigravity-cli/skills"
+    mkdir -p "$TEMP_DIR/.gemini/antigravity-cli/skills"
+    rsync -a --exclude='.git/' "$ANTIGRAVITY_DIR/skills/" "$TEMP_DIR/.gemini/antigravity-cli/skills/"
 fi
 
 if [[ -d "$ANTIGRAVITY_DIR/agents" ]]; then
@@ -307,8 +309,9 @@ if [[ -d "$ANTIGRAVITY_DIR/plugins" ]]; then
         "$ANTIGRAVITY_DIR/plugins/" "$TEMP_DIR/.gemini/antigravity-cli/plugins/"
 fi
 
-# Create zip file
+# Create zip file (remove any stale archive first so old entries can't linger)
 log_verbose "Creating zip archive..."
+rm -f "$OUTPUT_PATH"
 if ! (cd "$TEMP_DIR" && zip -r "$OUTPUT_PATH" . > /dev/null 2>&1); then
     log_error "Failed to create zip archive"
     exit 3

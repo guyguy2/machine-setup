@@ -290,7 +290,7 @@ if [[ ${#OLD_SETTINGS_BACKUPS[@]} -gt 0 ]]; then
 fi
 
 # Clean up old dotfiles-* directories (keep 1 most recent)
-OLD_DOTFILES_BACKUPS=($(ls -dt "$DATA_DIR"/dotfiles-*/ 2>/dev/null | tail -n +2))
+OLD_DOTFILES_BACKUPS=($(ls -dt "$DATA_DIR"/dotfiles-*/(N) 2>/dev/null | tail -n +2))
 if [[ ${#OLD_DOTFILES_BACKUPS[@]} -gt 0 ]]; then
     log_verbose "Removing ${#OLD_DOTFILES_BACKUPS[@]} old dotfiles backup(s)"
     for old_backup in "${OLD_DOTFILES_BACKUPS[@]}"; do

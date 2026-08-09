@@ -180,19 +180,19 @@ if [[ "$DRY_RUN" == false ]]; then
     mkdir -p "$HOME/.gemini"
 
     if [[ -d "$TEMP_DIR/.claude" ]]; then
-        mkdir -p "$HOME/.claude"
-        cp -R "$TEMP_DIR/.claude/"* "$HOME/.claude/"
+        rm -rf "$HOME/.claude"
+        cp -R "$TEMP_DIR/.claude" "$HOME/.claude"
         log_verbose "Restored ~/.claude/"
     fi
-    
+
     if [[ -f "$TEMP_DIR/.claude.json" ]]; then
         cp "$TEMP_DIR/.claude.json" "$HOME/.claude.json"
         log_verbose "Restored ~/.claude.json"
     fi
-    
+
     if [[ -d "$TEMP_DIR/.gemini/antigravity-cli" ]]; then
-        mkdir -p "$HOME/.gemini/antigravity-cli"
-        cp -R "$TEMP_DIR/.gemini/antigravity-cli/"* "$HOME/.gemini/antigravity-cli/"
+        rm -rf "$HOME/.gemini/antigravity-cli"
+        cp -R "$TEMP_DIR/.gemini/antigravity-cli" "$HOME/.gemini/antigravity-cli"
         log_verbose "Restored ~/.gemini/antigravity-cli/"
     fi
 
