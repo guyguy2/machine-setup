@@ -280,7 +280,7 @@ fi
 log_verbose "Cleaning up old backups in $DATA_DIR"
 
 # Clean up old settings backup files (keep 1 most recent)
-OLD_SETTINGS_BACKUPS=($(ls -t "$DATA_DIR"/ai-settings-*.zip "$DATA_DIR"/claude-settings-*.zip 2>/dev/null | tail -n +2))
+OLD_SETTINGS_BACKUPS=($(ls -t "$DATA_DIR"/ai-settings-*.zip(N) "$DATA_DIR"/claude-settings-*.zip(N) 2>/dev/null | tail -n +2))
 if [[ ${#OLD_SETTINGS_BACKUPS[@]} -gt 0 ]]; then
     log_verbose "Removing ${#OLD_SETTINGS_BACKUPS[@]} old settings backup(s)"
     for old_backup in "${OLD_SETTINGS_BACKUPS[@]}"; do
