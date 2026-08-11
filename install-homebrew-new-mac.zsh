@@ -51,7 +51,7 @@ BREW_TAPS=("manaflow-ai/cmux" "alielsokary/tap")
 DEV_GUI_APPS=("visual-studio-code" "docker-desktop" "jetbrains-toolbox" "claude" "claude-code@latest" "gcloud-cli" "cmux" "antigravity-cli")
 
 # GUI Applications - Productivity
-PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend" "mole" "antigravity" "bettercmdtab" "caskhub")
+PRODUCTIVITY_APPS=("rectangle" "todoist-app" "dropbox" "macwhisper" "iina" "microsoft-onenote" "localsend" "mole" "antigravity" "bettercmdtab" "caskhub" "handy")
 
 # GUI Applications - Communication
 COMMUNICATION_APPS=("whatsapp" "zoom" "google-chrome" "googleworkspace-cli")
