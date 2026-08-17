@@ -111,7 +111,7 @@ Comprehensive Mac setup script that automates Homebrew installation and configur
 
 **Package groups:**
 - DEV_CORE_TOOLS: git, gh, node, python, uv, bun
-- DEV_CLI_UTILS: eza, ripgrep, tree, ffmpeg, macmon, glow
+- DEV_CLI_UTILS: eza, ripgrep, tree, ffmpeg, macmon, glow, inshellisense
 - CONTAINER_TOOLS: docker
 - NETWORK_TOOLS: telnet
 - TERMINAL_APPS: warp
