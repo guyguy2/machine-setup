@@ -62,7 +62,7 @@ Backs up essential Claude Code and Gemini Antigravity CLI settings to a timestam
 **Note:** This script is also used by `backup-dev-environment.zsh` for orchestrated backups.
 
 **Key features:**
-- Backs up settings.json, .claude.json, statusline scripts, custom agents, slash commands, keybindings, and plugins for both tools
+- Backs up settings.json, statusline scripts, custom agents, slash commands, keybindings, and plugins for both tools
 - Creates timestamped zip files (e.g., ai-settings-20260703-120000.zip)
 - Supports custom output filenames with `--output` option
 - Verbose mode for detailed output
@@ -72,12 +72,12 @@ Backs up essential Claude Code and Gemini Antigravity CLI settings to a timestam
 - **Claude Code:**
   - `~/.claude/settings.json` - Hooks, statusline, preferences
   - `~/.claude/CLAUDE.md` - Global instructions for Claude Code
-  - `~/.claude.json` - Main config file with MCP servers
   - `~/.claude/statusline-*.sh` - Custom statusline scripts
   - `~/.claude/commands/` - Personal slash commands (if present)
   - `~/.claude/skills/` - Personal skills (if present)
   - `~/.claude/agents/` - Custom agents (if present)
   - `~/.claude/plugins/` - Installed plugins and marketplaces (if present)
+  - `~/.claude.json` is intentionally excluded - it stores MCP server API keys/tokens in plaintext
 - **Gemini Antigravity CLI:**
   - `~/.gemini/antigravity-cli/settings.json` - Main configuration
   - `~/.gemini/antigravity-cli/keybindings.json` - Custom shortcut keybindings (if present)
