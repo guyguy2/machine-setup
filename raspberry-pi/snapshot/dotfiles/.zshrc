@@ -132,7 +132,8 @@ PROMPT+=' $(git_prompt_info)'
 
 # ---------------------------------------------------------------------------
 # upd: update apt packages + kernel, Pi firmware, manually-installed tools,
-# and shallow-update (depth 1) every git repo under ~/dev (depth 1-2), every 5th run.
+# shallow-update (depth 1) every git repo under ~/dev (depth 1-2), and back up + push
+# machine settings; the last two run every 5th run.
 # ---------------------------------------------------------------------------
 _upd_step() { print -P "\n%F{cyan}==>%f %B$1%b" }
 
@@ -223,16 +224,23 @@ _upd_repos() {
   done
 }
 
-# Shallow-update ~/dev repos only on every 5th upd run (1st, 6th, 11th, ...)
-_upd_maybe_repos() {
-  local f=${XDG_CACHE_HOME:-$HOME/.cache}/upd-repos-runs n
+# Per-task run counter: returns 0 on the 1st, 6th, 11th, ... call for $1, else 1.
+# Sets _upd_left to the number of runs until the next due one.
+_upd_every_5th() {
+  local f=${XDG_CACHE_HOME:-$HOME/.cache}/upd-$1-runs n
   mkdir -p ${f:h}
   n=0; [[ -r $f ]] && n=$(( $(<$f) % 5 ))
   echo $(( n + 1 )) > $f
-  if (( n == 0 )); then
+  _upd_left=$(( 5 - n ))
+  (( n == 0 ))
+}
+
+# Shallow-update ~/dev repos only on every 5th upd run (1st, 6th, 11th, ...)
+_upd_maybe_repos() {
+  if _upd_every_5th repos; then
     _upd_step "git repos in ~/dev (every 5th run)"; _upd_repos
   else
-    _upd_step "git repos in ~/dev"; echo "skipped, next update in $(( 5 - n )) run(s)"
+    _upd_step "git repos in ~/dev"; echo "skipped, next update in $_upd_left run(s)"
   fi
 }
 
@@ -272,8 +280,12 @@ upd() {
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal
   _upd_maybe_repos
 
-  _upd_step "Settings backup (machine-setup/raspberry-pi)"
-  _upd_backup || print -P "%F{yellow}settings backup failed%f (see above)"
+  if _upd_every_5th backup; then
+    _upd_step "Settings backup (machine-setup/raspberry-pi, every 5th run)"
+    _upd_backup || print -P "%F{yellow}settings backup failed%f (see above)"
+  else
+    _upd_step "Settings backup (machine-setup/raspberry-pi)"; echo "skipped, next backup in $_upd_left run(s)"
+  fi
 
   # Reboot needed if a newer kernel of the running flavour (e.g. rpt-rpi-2712) is installed
   local running=$(uname -r) newest
