@@ -16,6 +16,7 @@ pipewire-pulse.service
 pipewire-pulse.socket
 pipewire.service
 pipewire.socket
+pi-status.service
 pk-debconf-helper.socket
 ssh-agent.socket
 wireplumber.service

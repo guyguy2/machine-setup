@@ -13,7 +13,7 @@ dotfiles=(
   .zshrc .gitconfig
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
-  .config/systemd/user/openhuman.service
+  .config/systemd/user/openhuman.service .config/systemd/user/pi-status.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
 )
 
@@ -76,6 +76,7 @@ say "versions (reference only)"
 {
   # shellcheck disable=SC1091
   echo "os: $(. /etc/os-release && echo "$PRETTY_NAME")"
+  echo "tailscale: $(tailscale version 2>/dev/null | head -1 || echo none)"
   echo "open-human: $(dpkg-query -W -f='${Version}' open-human 2>/dev/null || echo none)"
   echo "openclaw: $(jq -r .version "$HOME/dev/openclaw_node/node_modules/openclaw/package.json" 2>/dev/null || echo none)"
   echo "hermes-agent: $(brew list --versions hermes-agent 2>/dev/null | awk '{print $2}' || true)"

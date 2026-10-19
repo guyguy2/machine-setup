@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi Status</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231f9d55'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --track: #e5e5ea;
+    --ok: #1f9d55; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --accent-bg: #e8f0fe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111113; --card: #1c1c1f; --text: #f2f2f4; --muted: #9a9aa2; --track: #2c2c30;
+            --accent: #60a5fa; --accent-bg: #1e2a44; --ok: #34d399; --warn: #fbbf24; --bad: #f87171; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, sans-serif; }
+
+  /* layout: sidebar on the left, tabs at its top */
+  .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100vh; }
+  .side { position: sticky; top: 0; align-self: start; height: 100vh; padding: 16px 12px; overflow-y: auto;
+          display: flex; flex-direction: column;
+          background: var(--card); border-right: 1px solid var(--track); }
+  .brand { padding: 0 8px 12px; }
+  .brand h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); font-size: .8125rem; }
+  nav { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+  nav a { display: block; padding: 9px 12px; border-radius: 8px; color: var(--text); text-decoration: none; }
+  nav a:hover { background: var(--track); }
+  nav a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .version { margin-top: auto; padding: 12px 8px 0; font: .75rem/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
+  .version .stale { display: block; color: var(--warn); font-weight: 600; }
+  .version .copy { margin-top: 6px; font-size: .75rem; }
+  .brand .copy { margin-top: 8px; }
+  .content { padding: 16px 24px 32px; max-width: 1000px; width: 100%; }
+  h2 { font-size: 1.25rem; margin: 0 0 12px; }
+  h3 { font-size: 1rem; margin: 20px 0 8px; }
+
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
+  .dot.off { background: var(--bad); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .grid .card { margin-bottom: 0; }
+  .label { color: var(--muted); font-size: .8125rem; text-transform: uppercase; letter-spacing: .04em; }
+  .value { font-size: 1.75rem; font-weight: 600; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
+  .detail { color: var(--muted); font-size: .875rem; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .4s, background .4s; }
+  .bar > i.warn { background: var(--warn); } .bar > i.bad { background: var(--bad); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+  .alert { background: var(--bad); color: #fff; border-radius: 12px; padding: 10px 16px; margin-bottom: 12px; }
+  .empty { color: var(--muted); }
+
+  .card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .card-head strong { font-size: 1.0625rem; }
+  .pill { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: .75rem; font-weight: 600;
+          background: var(--track); color: var(--muted); white-space: nowrap; }
+  .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: .75rem; text-transform: uppercase;
+       letter-spacing: .04em; padding: 6px 10px 6px 0; white-space: nowrap; }
+  td { padding: 6px 10px 6px 0; border-top: 1px solid var(--track); vertical-align: top; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8125rem; }
+  .cmd { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .seg { display: inline-flex; border: 1px solid var(--track); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .seg button { border: 0; background: transparent; color: var(--text); padding: 5px 14px; font: inherit; font-size: .875rem; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+
+  .ssh-row { display: grid; grid-template-columns: minmax(150px, 230px) minmax(0, 1fr) auto; gap: 4px 12px;
+             align-items: center; padding: 7px 0; border-top: 1px solid var(--track); }
+  .ssh-row:first-child { border-top: 0; padding-top: 0; }
+  .ssh-label { color: var(--muted); font-size: .875rem; }
+  .ssh-cmd { margin: 0; padding: 4px 8px; background: var(--bg); border-radius: 6px; overflow-x: auto; white-space: pre; user-select: all; }
+  .ssh-config { grid-column: 1 / 3; }
+  .copy { border: 1px solid var(--track); background: transparent; color: var(--text); border-radius: 6px; padding: 3px 10px;
+          font: inherit; font-size: .8125rem; cursor: pointer; min-width: 64px; }
+  .copy:hover { background: var(--track); }
+  .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* phones: sidebar becomes a tab strip along the top */
+  @media (max-width: 720px) {
+    .layout { display: block; }
+    .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--track); padding: 12px 16px 8px; }
+    .brand { padding: 0 0 8px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    nav { flex-direction: row; overflow-x: auto; margin: 0 -8px; }
+    .version { margin-top: 0; padding: 6px 0 0; }
+    nav a { white-space: nowrap; }
+    .content { padding: 16px; }
+    .ssh-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .ssh-label { grid-column: 1 / 3; }
+    .ssh-config { grid-column: 1; }
+    .value { font-size: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="side">
+    <div class="brand">
+      <h1 id="host">Pi Status</h1>
+      <div class="sub" id="model"></div>
+      <div class="sub" id="conn"><span class="dot off"></span>connecting…</div>
+      <button class="copy" id="refresh" type="button">Refresh</button>
+    </div>
+    <nav id="nav" aria-label="Sections"></nav>
+    <div class="version" id="version"></div>
+  </aside>
+  <main class="content" id="view"></main>
+</div>
+
+<script>
+// ---------- helpers ----------
+const $ = id => document.getElementById(id);
+
+// Build DOM with textContent only, so command lines and names can never inject markup.
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid);
+  return el;
+}
+
+const gb = b => (b / 2**30).toFixed(1) + " GB";
+const size = b => b >= 2**30 ? gb(b) : (b / 2**20).toFixed(0) + " MB";
+function dur(s) {
+  if (s < 60) return s + "s";
+  const d = Math.floor(s / 86400), hr = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return [d && d + "d", (d || hr) && hr + "h", m + "m"].filter(Boolean).join(" ");
+}
+const pill = (text, kind) => h("span", { class: "pill " + (kind || "") }, text);
+const empty = text => h("div", { class: "card empty" }, text);
+
+function table(cols, rows) {
+  return h("div", { class: "scroll" }, h("table", {},
+    h("thead", {}, h("tr", {}, cols.map(c => h("th", { class: c.num ? "num" : "" }, c.label)))),
+    h("tbody", {}, rows.map(r => h("tr", {}, cols.map(c => {
+      const v = c.value(r);
+      const td = h("td", { class: [c.num && "num", c.mono && "mono", c.cmd && "cmd"].filter(Boolean).join(" ") }, v);
+      if (c.cmd) td.title = String(v);
+      return td;
+    }))))));
+}
+
+function copyButton(text) {
+  const btn = h("button", { class: "copy", type: "button" }, "Copy");
+  btn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = "Copied";
+    } catch {
+      btn.textContent = "Select & copy";  // clipboard needs HTTPS; fall back to manual copy
+    }
+    setTimeout(() => (btn.textContent = "Copy"), 1500);
+  });
+  return btn;
+}
+
+function bar(pct, warn, bad) {
+  const i = h("i");
+  i.style.width = Math.min(pct, 100) + "%";
+  i.className = pct >= bad ? "bad" : pct >= warn ? "warn" : "";
+  return h("div", { class: "bar" }, i);
+}
+
+function metric(label, value, pct, warn, bad, detail) {
+  return h("div", { class: "card" },
+    h("div", { class: "label" }, label), h("div", { class: "value" }, value),
+    bar(pct, warn, bad), h("div", { class: "detail" }, detail));
+}
+
+// ---------- views ----------
+const procCols = [
+  { label: "PID", num: true, value: p => p.pid },
+  { label: "CPU", num: true, value: p => p.cpu.toFixed(1) + "%" },
+  { label: "Memory", num: true, value: p => size(p.rss) },
+  { label: "Up", num: true, value: p => dur(p.age_s) },
+  { label: "User", value: p => p.user },
+];
+const cmdCol = { label: "Command", mono: true, cmd: true, value: p => p.cmd };
+
+function brand(s) {
+  document.title = s.hostname + " – Pi Status";
+  $("host").textContent = s.hostname;
+  $("model").textContent = s.model;
+}
+
+function overview(s) {
+  brand(s);
+  const mp = s.mem_used / s.mem_total * 100, dp = s.disk_used / s.disk_total * 100;
+  return [
+    h("h2", {}, "Overview"),
+    s.throttled.length && h("div", { class: "alert" }, "Power/thermal: " + s.throttled.join(", ")),
+    h("div", { class: "grid" },
+      metric("CPU", s.cpu_percent + "%", s.cpu_percent, 70, 90, `load ${s.load.join(" / ")} · ${s.cpus} cores`),
+      metric("Temperature", s.temp_c + " °C", s.temp_c / 85 * 100, 70, 90, "throttles at 80 °C"),
+      metric("Memory", mp.toFixed(0) + "%", mp, 75, 90, `${gb(s.mem_used)} of ${gb(s.mem_total)}`),
+      metric("Disk (/)", dp.toFixed(0) + "%", dp, 80, 92, `${gb(s.disk_used)} of ${gb(s.disk_total)}`)),
+    h("div", { class: "card", style: "margin-top:12px" }, h("dl", {},
+      h("dt", {}, "Model"), h("dd", {}, s.model),  // also in the sidebar; repeated here on purpose
+      h("dt", {}, "Uptime"), h("dd", {}, dur(s.uptime_s)),
+      h("dt", {}, "OS"), h("dd", {}, s.os),
+      h("dt", {}, "Kernel"), h("dd", {}, s.kernel),
+      h("dt", {}, "Connected to"), h("dd", {}, s.connection),
+      h("dt", {}, "Local IP"), h("dd", {}, s.local_ip ? `${s.local_ip} (gateway ${s.gateway})` : "–"),
+      h("dt", {}, "Tailscale IP"), h("dd", {}, s.tailscale_ip || "–"))),
+  ];
+}
+
+function network(n) {
+  const ts = n.tailscale || {};
+  const stateKind = { up: "ok", down: "", unknown: "ok" };
+  const ssh = n.ssh;
+  return [
+    h("h2", {}, "Network"),
+
+    h("h3", { style: "margin-top:0" }, "Connect with SSH"),
+    h("div", { class: "card" },
+      ssh.commands.map(c => h("div", { class: "ssh-row" },
+        h("div", { class: "ssh-label" }, c.label),
+        h("code", { class: "mono ssh-cmd" }, c.command),
+        copyButton(c.command))),
+      h("div", { class: "ssh-row" },
+        h("div", { class: "ssh-label" }, "Shortcut (after adding the config below)"),
+        h("code", { class: "mono ssh-cmd" }, ssh.shortcut.command),
+        copyButton(ssh.shortcut.command)),
+      h("div", { class: "sub", style: "margin:12px 0 4px" }, "Add this to ~/.ssh/config on the machine you connect from:"),
+      h("div", { class: "ssh-row" },
+        h("pre", { class: "mono ssh-cmd ssh-config" }, ssh.shortcut.config),
+        copyButton(ssh.shortcut.config))),
+
+    h("div", { class: "card" }, h("dl", {},
+      h("dt", {}, "Connected to"), h("dd", {}, n.connection),
+      n.wifi.ssid && [h("dt", {}, "Wi-Fi"), h("dd", {}, `${n.wifi.signal}% signal · ${n.wifi.rate} · channel ${n.wifi.channel} · ${n.wifi.security}`)],
+      h("dt", {}, "Local IP"), h("dd", {}, n.local_ip || "–"),
+      h("dt", {}, "Gateway"), h("dd", {}, n.gateway ? `${n.gateway} via ${n.device}` : "–"),
+      h("dt", {}, "DNS"), h("dd", {}, n.dns.join(", ") || "–"),
+      ts.dns_name && [h("dt", {}, "Tailscale name"), h("dd", {}, ts.dns_name)])),
+
+    h("h3", {}, "Interfaces"),
+    h("div", { class: "card" }, table([
+      { label: "Name", value: i => i.name },
+      { label: "State", value: i => pill(i.state === "unknown" ? "up" : i.state, stateKind[i.state]) },  // tunnels report "unknown"
+      { label: "Addresses", mono: true, value: i => i.addresses.join("  ") || "–" },
+      { label: "MAC", mono: true, value: i => i.mac || "–" },
+    ], n.interfaces)),
+
+    h("h3", {}, `Tailscale peers (${(ts.peers || []).length})`),
+    (ts.peers || []).length
+      ? h("div", { class: "card" }, table([
+          { label: "Machine", value: p => p.name + (p.exit_node ? " (exit node)" : "") },
+          { label: "Status", value: p => pill(p.online ? "online" : "offline", p.online ? "ok" : "") },
+          { label: "IP", mono: true, value: p => p.ip },
+          { label: "OS", value: p => p.os },
+          { label: "Path", value: p => p.online ? p.path || "–" : p.last_seen ? "seen " + new Date(p.last_seen).toLocaleDateString() : "–" },
+        ], ts.peers))
+      : empty("No other machines on this tailnet."),
+
+    h("h3", {}, "Logged-in sessions"),
+    n.sessions.length
+      ? h("div", { class: "card" }, table([
+          { label: "User", value: s => s.user },
+          { label: "Terminal", mono: true, value: s => s.tty },
+          { label: "Since", value: s => s.since },
+          { label: "From", mono: true, value: s => s.origin },
+        ], n.sessions))
+      : empty("No one is logged in."),
+  ];
+}
+
+const AUTH_PILL = {
+  signed_in: ["signed in", "ok"], signed_out: ["signed out", "warn"], expired: ["expired", "bad"],
+  error: ["error", "bad"], not_installed: ["not installed", ""],
+};
+
+function signIns(auth) {
+  if (!auth) return [h("h3", { style: "margin-top:0" }, "Sign-ins"), empty("Sign-in status unavailable.")];
+  const ago = Math.max(0, Math.round(Date.now() / 1000 - auth.checked_at));
+  return [
+    h("h3", { style: "margin-top:0" }, "Sign-ins"),
+    h("div", { class: "card" },
+      table([
+        { label: "Service", value: a => h("span", {}, a.name, " ", h("span", { class: "sub mono" }, a.command)) },
+        { label: "Status", value: a => pill(...AUTH_PILL[a.state] || [a.state, ""]) },
+        { label: "Account", value: a => a.account || "–" },
+        { label: "Details", value: a => a.detail || "–" },
+      ], auth.services),
+      h("div", { class: "sub", style: "margin-top:8px" }, `Local checks only; no tokens are shown. Checked ${dur(ago)} ago.`)),
+  ];
+}
+
+function agents(list, auth) {
+  const running = a => a.instances.length > 0;
+  const sorted = [...list].sort((a, b) => running(b) - running(a));
+  return [
+    h("h2", {}, "Agents & assistants"),
+    signIns(auth),
+    h("h3", {}, "Running agents"),
+    sorted.map(a => h("div", { class: "card agent" },
+      h("div", { class: "card-head" },
+        h("strong", {}, a.name), h("span", { class: "sub" }, a.kind),
+        running(a) ? pill(`running · ${a.instances.length}`, "ok") : pill("not running"),
+        a.unit && pill(`${a.unit}: ${a.unit_state}`, a.unit_state === "active" ? "ok" : a.unit_state === "failed" ? "bad" : "")),
+      running(a)
+        ? table([
+            ...procCols,
+            { label: "Directory", mono: true, value: p => p.cwd },
+            { label: "Listening", mono: true, value: p => p.ports.join(", ") || "–" },
+            cmdCol,
+          ], a.instances)
+        : null)),
+  ];
+}
+
+function docker(d) {
+  if (!d.installed) return [h("h2", {}, "Docker"), empty("Docker isn't installed on this Pi. Containers will appear here once it is.")];
+  if (d.error) return [h("h2", {}, "Docker"), h("div", { class: "card" }, pill("error", "bad"), " ", d.error)];
+  if (!d.containers.length) return [h("h2", {}, "Docker"), empty("Docker is installed, but there are no containers.")];
+  return [h("h2", {}, "Docker"), h("div", { class: "card" }, table([
+    { label: "Name", value: c => c.name },
+    { label: "State", value: c => pill(c.state, c.state === "running" ? "ok" : c.state === "exited" ? "" : "warn") },
+    { label: "Image", mono: true, value: c => c.image },
+    { label: "Status", value: c => c.status },
+    { label: "Ports", mono: true, value: c => c.ports || "–" },
+  ], d.containers))];
+}
+
+function services(s) {
+  const section = (title, rows) => [
+    h("h3", {}, `${title} (${rows.length})`),
+    rows.length ? h("div", { class: "card" }, table([
+      { label: "Unit", mono: true, value: r => r.unit },
+      { label: "State", value: r => pill(r.active === "failed" ? "failed" : r.sub, r.active === "failed" ? "bad" : "ok") },
+      { label: "Description", value: r => r.description },
+    ], rows)) : empty("None"),
+  ];
+  return [h("h2", {}, "Services"), section("Your user services", s.user), section("System services", s.system)];
+}
+
+let procSort = "cpu";
+function processes(d) {
+  const key = procSort === "cpu" ? "cpu" : "rss";
+  const rows = [...d.processes].sort((a, b) => b[key] - a[key]).slice(0, 25);
+  const seg = (id, label) => h("button", { "aria-pressed": String(procSort === id), onclick: () => { procSort = id; refresh(); } }, label);
+  return [
+    h("h2", {}, "Processes"),
+    h("div", { class: "seg", role: "group", "aria-label": "Sort by" }, seg("cpu", "Top by CPU"), seg("mem", "Top by memory")),
+    h("div", { class: "card" }, table([...procCols, cmdCol], rows)),
+    h("div", { class: "sub" }, `${d.total} processes in total`),
+  ];
+}
+
+function ports(list) {
+  const kind = { "local only": "", "tailnet": "ok", "all interfaces": "warn", "network": "warn" };
+  return [
+    h("h2", {}, "Listening ports"),
+    h("div", { class: "card" }, table([
+      { label: "Port", num: true, value: p => p.port },
+      { label: "Address", mono: true, value: p => p.address },
+      { label: "Reachable from", value: p => pill(p.exposure, kind[p.exposure]) },
+      { label: "Process", value: p => p.process ? `${p.process} (${p.pid})` : "–" },
+    ], list)),
+    h("div", { class: "sub" }, "Process names are only visible for your own processes; root-owned ones show –."),
+  ];
+}
+
+const TABS = [
+  { id: "overview", title: "Overview", api: "/api/status", render: overview },
+  { id: "network", title: "Network", api: "/api/network", render: network },
+  { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth"], render: agents },
+  { id: "docker", title: "Docker", api: "/api/docker", render: docker },
+  { id: "services", title: "Services", api: "/api/services", render: services },
+  { id: "processes", title: "Processes", api: "/api/processes", render: processes },
+  { id: "ports", title: "Ports", api: "/api/ports", render: ports },
+];
+
+// ---------- version (bottom of the sidebar) ----------
+let restarting = false;
+
+async function restartServer(btn) {
+  restarting = true;
+  btn.disabled = true;
+  btn.textContent = "Restarting…";
+  // The custom header is what stops other websites from triggering this POST.
+  try { await fetch("/api/restart", { method: "POST", headers: { "X-Requested-With": "pi-status" } }); } catch {}
+  for (let i = 0; i < 30; i++) {  // wait for the new process, then reload to pick up the new page too
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const v = await getJSON("/api/version");
+      if (!v.stale) { location.reload(); return; }
+    } catch {}  // the server is down for a moment while it restarts
+  }
+  restarting = false;
+  btn.disabled = false;
+  btn.textContent = "Restart now";
+}
+
+async function loadVersion() {
+  if (restarting) return;
+  const el = $("version");
+  try {
+    const v = await getJSON("/api/version");
+    const btn = v.stale && v.can_restart && h("button", { class: "copy", type: "button", onclick: e => restartServer(e.currentTarget) }, "Restart now");
+    el.replaceChildren(...[v.label, v.stale && h("span", { class: "stale" }, "newer code on disk: " + (btn ? "restart to update" : "restart the server to update")), btn].filter(Boolean));
+    el.title = v.stale
+      ? `Running: ${v.running_label}\nOn disk:  ${v.label}`
+      : v.dirty ? "Includes changes that aren't committed yet" : "Running the latest committed code";
+  } catch {
+    el.replaceChildren("version unavailable");
+  }
+}
+
+// ---------- routing & refresh ----------
+let current = TABS[0];
+
+$("nav").append(...TABS.map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title)));
+
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || r.status);
+  return data;
+}
+
+async function refresh() {
+  const tab = current;
+  try {
+    const [data, ...extra] = await Promise.all([
+      getJSON(tab.api),
+      ...(tab.also || []).map(url => getJSON(url).catch(() => null)),  // optional extras never break the tab
+    ]);
+    if (tab !== current) return;  // user switched tabs while this was loading
+    $("view").replaceChildren(...[tab.render(data, ...extra)].flat(Infinity).filter(Boolean));
+    $("conn").replaceChildren(h("span", { class: "dot" }), "updated " + new Date().toLocaleTimeString());
+  } catch (e) {
+    $("conn").replaceChildren(h("span", { class: "dot off" }), "unreachable");
+    if (tab === current && !$("view").children.length) $("view").replaceChildren(empty("Couldn't load: " + e.message));
+  }
+}
+
+function route() {
+  current = TABS.find(t => "#" + t.id === location.hash) || TABS[0];
+  for (const a of $("nav").children) {
+    if (a.dataset.tab === current.id) a.setAttribute("aria-current", "page");
+    else a.removeAttribute("aria-current");
+  }
+  $("view").replaceChildren();
+  refresh();  // once per tab visit; nothing polls in the background, use the Refresh button for fresh numbers
+}
+
+addEventListener("hashchange", route);
+route();
+loadVersion();
+
+$("refresh").addEventListener("click", async e => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  await Promise.all([refresh(), loadVersion()]);
+  btn.disabled = false;
+  btn.textContent = "Refresh";
+});
+// the sidebar shows the hostname whichever tab is open
+if (current.id !== "overview") fetch("/api/status").then(r => r.json()).then(brand).catch(() => {});
+</script>
+</body>
+</html>

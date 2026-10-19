@@ -1,0 +1,14 @@
+[Unit]
+Description=Pi status web page (HTTPS comes from `tailscale serve --bg 8080`)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/dev/pi-status
+ExecStart=%h/dev/pi-status/.venv/bin/pi-status --host 127.0.0.1 --port 8080
+# User services get a minimal PATH; the sign-in checks need the Homebrew CLIs (gcloud, gws, gh, claude).
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
