@@ -152,6 +152,15 @@ Enhanced Google Voice call launcher with multi-browser support, contacts, and ca
 ./google-voice-call.zsh --list-contacts                     # List contacts
 ```
 
+## Raspberry Pi (raspberry-pi/)
+
+Bash scripts that back up and restore a Raspberry Pi / Debian setup. Not macOS.
+
+- `raspberry-pi/save.sh [--push]` snapshots dotfiles, apt/Homebrew/uv/npm lists, systemd units into `raspberry-pi/snapshot/`; `--push` commits only `snapshot/`. The Pi's `upd` function runs it.
+- `raspberry-pi/restore.sh [--dry-run] [--only steps]` rebuilds a fresh image from the snapshot.
+- Text only: never put secrets, SSH keys, history or files over 100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
+- `raspberry-pi/bin/` has the Hermes, OpenClaw and OpenHuman launchers (zsh).
+
 ## Development Environment
 
 ### Shell Scripts

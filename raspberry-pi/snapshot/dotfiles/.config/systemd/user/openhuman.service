@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenHuman Daemon
+
+[Service]
+ExecStart="/opt/openhuman-core/openhuman-core" run
+Restart=always
+RestartSec=3
+
+StandardOutput=append:/home/guy/.openhuman/users/local-raspberrypi/logs/daemon.stdout.log
+StandardError=append:/home/guy/.openhuman/users/local-raspberrypi/logs/daemon.stderr.log
+
+[Install]
+WantedBy=default.target
