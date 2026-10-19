@@ -34,7 +34,10 @@ Backs up essential settings for Claude Code and Gemini Antigravity on a new Mac:
     - ~/.claude/skills/           (personal skills, if present)
     - ~/.claude/agents/           (custom agents, if present)
     - ~/.claude/plugins/          (installed plugins and marketplaces, if present)
-    - ~/.claude.json              (main config file - MCP servers, settings)
+
+  Note: ~/.claude.json is intentionally excluded. It stores MCP server
+  credentials and other API keys/tokens in plaintext, so it is not safe
+  to bundle into a backup that may be copied elsewhere (e.g. git).
 
   Gemini Antigravity CLI:
     - ~/.gemini/antigravity-cli/settings.json     (main configuration file)
@@ -115,7 +118,6 @@ log_verbose() {
 # Define paths to essential Claude Code settings
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 CLAUDE_MD="$HOME/.claude/CLAUDE.md"
-CLAUDE_JSON="$HOME/.claude.json"
 CLAUDE_DIR="$HOME/.claude"
 
 # Define paths to essential Antigravity settings
@@ -133,10 +135,6 @@ if [[ -f "$CLAUDE_SETTINGS" ]]; then
 fi
 if [[ -f "$CLAUDE_MD" ]]; then
     log_verbose "Found global CLAUDE.md: $CLAUDE_MD"
-    FOUND_SETTINGS=true
-fi
-if [[ -f "$CLAUDE_JSON" ]]; then
-    log_verbose "Found Claude config: $CLAUDE_JSON"
     FOUND_SETTINGS=true
 fi
 
@@ -211,11 +209,6 @@ fi
 if [[ -f "$CLAUDE_MD" ]]; then
     log_verbose "Copying CLAUDE.md"
     cp "$CLAUDE_MD" "$TEMP_DIR/.claude/CLAUDE.md"
-fi
-
-if [[ -f "$CLAUDE_JSON" ]]; then
-    log_verbose "Copying .claude.json"
-    cp "$CLAUDE_JSON" "$TEMP_DIR/.claude.json"
 fi
 
 # Copy statusline scripts if they exist
