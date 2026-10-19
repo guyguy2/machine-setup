@@ -59,7 +59,11 @@ step), so edit it here and never keep a second copy.
 - The `pi-status` step runs `uv sync`, enables the service, and, once Tailscale is signed in, runs
   `sudo tailscale serve --bg 8080` to publish it at `https://<pi>.<tailnet>.ts.net` (tailnet only).
 - `upd` restarts the service after pulling repos, so the running page loads the new code. The bottom of the page's
-  sidebar shows `v<date time> · <commit>`; an amber "restart to update" means the code on disk is newer than the
-  running server.
+  sidebar shows `v<date time> · <commit>`; an amber "newer code on disk" notice with a **Restart now** button means
+  the code on disk is newer than the running server.
+- The page never polls: it loads when you open a tab and again when you press **Refresh**, so it costs nothing while
+  idle.
 - `save.sh --push` commits only `snapshot/`. Commit changes under `pi-status/` yourself, or a restore from GitHub
   will not include them.
+- Tests: `cd ~/dev/pi-status && uv run pytest`. The README in `pi-status/` has the tab list, endpoints and how to add
+  an agent or a sign-in check.
