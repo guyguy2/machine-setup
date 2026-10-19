@@ -1,25 +1,35 @@
-# Scripts
+# Machine Setup
 
-Setup, backup and restore scripts for my machines (Mac and Raspberry Pi), plus a few utilities.
+Setup, backup and restore scripts for my machines, plus a few utilities.
 
-## Contents
+| Directory | For | What it does |
+|---|---|---|
+| repo root (`*.zsh`) | macOS | Back up and restore Claude Code / Antigravity settings and dotfiles, set up a new Mac with Homebrew, and a Google Voice launcher |
+| [`raspberry-pi/`](raspberry-pi/README.md) | Raspberry Pi OS / Debian | Snapshot and restore the whole Pi setup (shell config, apt and Homebrew packages, app settings), plus the Hermes / OpenClaw / OpenHuman launchers |
 
-- **raspberry-pi/** - Back up and restore a Raspberry Pi's setup (zshrc, apt/Homebrew packages, app config) with `save.sh` and `restore.sh`; also the Hermes/OpenClaw/OpenHuman launchers. See [raspberry-pi/README.md](raspberry-pi/README.md)
+## Raspberry Pi
+
+`raspberry-pi/save.sh` snapshots this Pi's settings into `raspberry-pi/snapshot/` (text only: no secrets, no files over 100 KB). The Pi's `upd` command runs it after every update and pushes the result here. `raspberry-pi/restore.sh` rebuilds a fresh image from that snapshot.
+
+```bash
+# On a new Pi / fresh image
+git clone https://github.com/guyguy2/machine-setup ~/dev/machine-setup
+cd ~/dev/machine-setup/raspberry-pi
+./restore.sh --dry-run     # preview
+./restore.sh               # apt, Homebrew, Oh My Zsh, dotfiles, systemd
+```
+
+The agent launchers live in `raspberry-pi/bin/`; `~/dev/scripts` is a symlink to that directory. See [raspberry-pi/README.md](raspberry-pi/README.md) for the steps, options and what is (and is not) backed up.
+
+## macOS scripts
+
 - **backup-ai-settings.zsh** - Backs up Claude Code and Gemini Antigravity CLI settings to a timestamped zip file
 - **restore-ai-settings.zsh** - Restores Claude Code and Gemini Antigravity CLI settings from a backup zip, fixing absolute home directory paths
-- **backup-dev-environment.zsh** - Orchestrates comprehensive backup of settings and dotfiles (.zshrc, .gitconfig, Homebrew packages, etc.)
+- **backup-dev-environment.zsh** - Orchestrates a comprehensive backup of settings and dotfiles (.zshrc, .gitconfig, Homebrew packages, etc.)
 - **google-voice-call.zsh** - Enhanced Google Voice call launcher with contacts and call history
 - **install-homebrew-new-mac.zsh** - Comprehensive Mac setup script with Homebrew installation and app configuration
 
-## Usage
-
-Each script is executable and includes a `--help` option for detailed usage information:
-
-```bash
-./script-name.sh --help
-```
-
-Example usage:
+Each macOS script is executable and includes a `--help` option for detailed usage information:
 
 ```bash
 # Backup Claude Code and Gemini Antigravity settings
@@ -38,20 +48,15 @@ Example usage:
 ./install-homebrew-new-mac.zsh
 ```
 
-Make sure scripts have execution permissions:
-
-```bash
-chmod +x script-name.sh
-```
+Make sure scripts have execution permissions: `chmod +x script-name.zsh`
 
 ## Requirements
 
-- macOS for the scripts at the repo root (tailored for Mac); Raspberry Pi OS / Debian for `raspberry-pi/` (bash)
-- Zsh shell (default on macOS)
-- Individual scripts may require:
-  - Homebrew (install-homebrew-new-mac.zsh installs it automatically)
-  - Chrome browser (google-voice-call.zsh)
-  - Claude Code or Gemini Antigravity CLI installed (backup-ai-settings.zsh / restore-ai-settings.zsh)
+- macOS scripts: macOS and Zsh (the macOS default). Individual scripts may also need:
+  - Homebrew (`install-homebrew-new-mac.zsh` installs it automatically)
+  - Chrome browser (`google-voice-call.zsh`)
+  - Claude Code or Gemini Antigravity CLI installed (`backup-ai-settings.zsh` / `restore-ai-settings.zsh`)
+- `raspberry-pi/` scripts: Raspberry Pi OS / Debian (arm64). `save.sh` and `restore.sh` are bash, so they run on a fresh image; the agent launchers use zsh.
 
 ## License
 
