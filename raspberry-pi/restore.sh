@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Rebuild this Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot.
 # Usage: restore.sh [--dry-run] [--only step,step,...]
-# Steps (run in this order): apt-sources apt brew uv npm omzsh dotfiles shell systemd
+# Steps (run in this order): apt-sources apt brew uv npm omzsh dotfiles links shell systemd
 # Safe to re-run. Existing dotfiles are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt brew uv npm omzsh dotfiles shell systemd)
+all_steps=(apt-sources apt brew uv npm omzsh dotfiles links shell systemd)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 
 dry=0
@@ -116,6 +116,15 @@ if want dotfiles; then
   fi
 fi
 
+if want links; then
+  say "\$HOME/dev/scripts -> agent launchers (bin/)"
+  link=$HOME/dev/scripts
+  if [[ -L $link && $(readlink -f "$link") == "$(readlink -f "$here/bin")" ]]; then echo "  already linked"
+  elif [[ -e $link || -L $link ]]; then echo "  $link exists and is not this repo's bin/; leaving it"
+  else run mkdir -p "$HOME/dev"; run ln -s "$here/bin" "$link"; echo "  linked $link -> $here/bin"
+  fi
+fi
+
 if want shell; then
   say "login shell -> zsh"
   zsh_path=$(command -v zsh || true)
@@ -148,7 +157,7 @@ cat <<'MSG'
   - gh auth login        (then: gh auth setup-git)
   - tailscale up
   - claude               (log in; installed via the Brewfile cask)
-  - OpenHuman / OpenClaw: run raspberry-pi/bin/openhuman and raspberry-pi/bin/openclaw once;
+  - OpenHuman / OpenClaw: run ~/dev/scripts/openhuman and ~/dev/scripts/openclaw once;
     each installs itself on first run (see snapshot/versions.txt for last-known versions).
   - Re-create ~/.ssh keys and any API tokens yourself; they are intentionally not backed up.
 MSG

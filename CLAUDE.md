@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is a collection of utility scripts for macOS automation and development tasks. The scripts are written in Bash and Zsh, focusing on system setup, Claude Code backup, and communication tools.
+This is a collection of setup, backup and utility scripts for my machines: macOS scripts at the repo root and Raspberry Pi scripts in `raspberry-pi/`. The scripts are written in Bash and Zsh, focusing on system setup, Claude Code backup, and communication tools.
 
 ## Core Scripts
 
@@ -159,7 +159,7 @@ Bash scripts that back up and restore a Raspberry Pi / Debian setup. Not macOS.
 - `raspberry-pi/save.sh [--push]` snapshots dotfiles, apt/Homebrew/uv/npm lists, systemd units into `raspberry-pi/snapshot/`; `--push` commits only `snapshot/`. The Pi's `upd` function runs it.
 - `raspberry-pi/restore.sh [--dry-run] [--only steps]` rebuilds a fresh image from the snapshot.
 - Text only: never put secrets, SSH keys, history or files over 100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
-- `raspberry-pi/bin/` has the Hermes, OpenClaw and OpenHuman launchers (zsh).
+- `raspberry-pi/bin/` has the Hermes, OpenClaw and OpenHuman launchers (zsh). On the Pi, `~/dev/scripts` is a symlink to it, so edit the launchers here and never keep a second copy.
 
 ## Development Environment
 

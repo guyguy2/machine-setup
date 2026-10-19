@@ -16,9 +16,9 @@ Text and scripts only: no SSH keys, tokens, history or caches.
 1. Install git and clone this repo to `~/dev/machine-setup` (HTTPS clone needs no login while the repo is public).
 2. `cd ~/dev/machine-setup/raspberry-pi && ./restore.sh --dry-run` to preview, then `./restore.sh`.
    Use `--only apt,brew,dotfiles` to run selected steps.
-   Steps in order: apt-sources apt brew uv npm omzsh dotfiles shell systemd.
+   Steps in order: apt-sources apt brew uv npm omzsh dotfiles links shell systemd.
 3. Manual follow-ups (also printed at the end): `gh auth login`, `tailscale up`, log in to
-   `claude`, run `bin/openhuman` and `bin/openclaw` once to self-install, recreate `~/.ssh` keys.
+   `claude`, run `~/dev/scripts/openhuman` and `~/dev/scripts/openclaw` once to self-install, recreate `~/.ssh` keys.
 
 Existing files are never overwritten: they are moved to `~/.pi-restore-backup-<timestamp>/`.
 
@@ -35,5 +35,6 @@ Existing files are never overwritten: they are moved to `~/.pi-restore-backup-<t
 | `versions.txt` | OS and agent versions at save time (reference) |
 
 `bin/` holds the launch wrappers for Hermes, OpenClaw and OpenHuman; each updates its tool on launch.
+`~/dev/scripts` is a symlink to this `bin/` (created by the `links` step of `restore.sh`), so run the agents from there: `~/dev/scripts/hermes`, `~/dev/scripts/openclaw`, `~/dev/scripts/openhuman`.
 
 To back up another file, add it to the `dotfiles` list at the top of `save.sh`.
