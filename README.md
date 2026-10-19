@@ -5,7 +5,7 @@ Setup, backup and restore scripts for my machines, plus a few utilities.
 | Directory | For | What it does |
 |---|---|---|
 | repo root (`*.zsh`) | macOS | Back up and restore Claude Code / Antigravity settings and dotfiles, set up a new Mac with Homebrew, and a Google Voice launcher |
-| [`raspberry-pi/`](raspberry-pi/README.md) | Raspberry Pi OS / Debian | Snapshot and restore the whole Pi setup (shell config, apt and Homebrew packages, app settings), plus the Hermes / OpenClaw / OpenHuman launchers |
+| [`raspberry-pi/`](raspberry-pi/README.md) | Raspberry Pi OS / Debian | Snapshot and restore the whole Pi setup (shell config, apt and Homebrew packages, Tailscale, app settings), plus the Hermes / OpenClaw / OpenHuman launchers and the [`pi-status`](raspberry-pi/pi-status/README.md) status web page |
 
 ## Raspberry Pi
 
@@ -16,10 +16,10 @@ Setup, backup and restore scripts for my machines, plus a few utilities.
 git clone https://github.com/guyguy2/machine-setup ~/dev/machine-setup
 cd ~/dev/machine-setup/raspberry-pi
 ./restore.sh --dry-run     # preview
-./restore.sh               # apt, Homebrew, Oh My Zsh, dotfiles, systemd
+./restore.sh               # apt, Tailscale, Homebrew, Oh My Zsh, dotfiles, status page, systemd
 ```
 
-The agent launchers live in `raspberry-pi/bin/`; `~/dev/scripts` is a symlink to that directory. See [raspberry-pi/README.md](raspberry-pi/README.md) for the steps, options and what is (and is not) backed up.
+The agent launchers live in `raspberry-pi/bin/` and the status web page in `raspberry-pi/pi-status/`; `~/dev/scripts` and `~/dev/pi-status` are symlinks to them. See [raspberry-pi/README.md](raspberry-pi/README.md) for the steps, options and what is (and is not) backed up.
 
 ## macOS scripts
 

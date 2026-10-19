@@ -1,0 +1,340 @@
+import subprocess
+
+import pytest
+
+from pi_status import collect
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("tool --api-key sk-abcdef1234567890 --model=x", "tool --api-key ••• --model=x"),
+    ("app --token abc123 run", "app --token ••• run"),
+    ("env OPENAI_API_KEY=sk-live-aaaaaaaaaaaaaaaa node x.js", "env OPENAI_API_KEY=••• node x.js"),
+    ("curl -H Authorization:Bearer ghp_aaaaaaaaaaaaaaaaaaaaaaaa", "curl -H Authorization:Bearer •••"),
+    ("claude --dangerously-skip-permissions --model=sonnet", "claude --dangerously-skip-permissions --model=sonnet"),
+])
+def test_redact(raw, expected):
+    assert collect.redact(raw) == expected
+
+
+def test_exe_names_native_binary():
+    assert collect.exe_names(["/opt/openhuman-core/openhuman-core", "run"]) == {"openhuman-core"}
+
+
+def test_exe_names_node_script_includes_package_folder():
+    names = collect.exe_names(["node", "/usr/lib/node_modules/openclaw/dist/index.js", "gateway"])
+    assert "openclaw" in names
+
+
+def test_exe_names_python_module_and_script():
+    assert "hermes_cli.main" in collect.exe_names(["/usr/bin/python3", "-m", "hermes_cli.main"])
+    assert "hermes" in collect.exe_names(["/opt/python3.13", "/home/x/bin/hermes", "chat"])
+
+
+def test_exe_names_ignores_shell_command_strings():
+    assert collect.exe_names(["zsh", "-c", "claude something"]) == {"zsh"}
+
+
+@pytest.mark.parametrize("address, expected", [
+    ("127.0.0.1", "local only"), ("::1", "local only"),
+    ("100.64.1.2", "tailnet"), ("fd7a:115c:a1e0::1", "tailnet"),
+    ("0.0.0.0", "all interfaces"), ("::", "all interfaces"),
+    ("192.168.1.5", "network"),
+])
+def test_exposure(address, expected):
+    assert collect.exposure(address) == expected
+
+
+def test_ports_parses_ss_output(monkeypatch):
+    ss = "\n".join([
+        'LISTEN 0 128 127.0.0.1:7788 0.0.0.0:* users:(("openhuman-core",pid=54003,fd=15))',
+        "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*",
+        "LISTEN 0 128 [::]:22 [::]:*",
+        "LISTEN 0 4096 [fd7a:115c:a1e0::1]%tailscale0:443 [::]:*",
+    ])
+    monkeypatch.setattr(collect, "run", lambda *cmd: ss)
+    result = collect.ports()
+    assert [(p["port"], p["exposure"]) for p in result] == [(22, "all interfaces"), (443, "tailnet"), (7788, "local only")]
+    assert result[1]["address"] == "fd7a:115c:a1e0::1"  # no brackets or %iface
+    assert result[2]["process"] == "openhuman-core" and result[2]["pid"] == 54003
+
+
+def test_sessions_parse(monkeypatch):
+    who = "\n".join([
+        "guy      sshd pts/0   2026-10-19 15:32 (fd1b::1)",
+        "guy      seat0        2026-10-19 02:31",
+        "guy      tty1         2026-10-19 02:31",
+    ])
+    monkeypatch.setattr(collect, "run", lambda *cmd: who)
+    rows = collect.sessions()
+    assert [(r["tty"], r["origin"]) for r in rows] == [("sshd pts/0", "fd1b::1"), ("tty1", "local")]
+
+
+def test_ssh_help_uses_live_values():
+    ts = {"dns_name": "box.tail1234.ts.net", "ip": "100.1.2.3"}
+    result = collect.ssh_help("alice", "box", ts, "192.168.0.9")
+    commands = [c["command"] for c in result["commands"]]
+    assert commands == [
+        "ssh alice@box", "ssh alice@box.tail1234.ts.net", "ssh alice@100.1.2.3",
+        "ssh alice@box.local", "ssh alice@192.168.0.9",
+    ]
+    assert result["shortcut"]["command"] == "ssh pi"
+    assert result["shortcut"]["config"] == "Host pi\n    HostName box.tail1234.ts.net\n    User alice"
+
+
+def test_ssh_help_without_tailscale_falls_back_to_lan():
+    result = collect.ssh_help("alice", "box", {}, "192.168.0.9")
+    assert [c["command"] for c in result["commands"]] == ["ssh alice@box.local", "ssh alice@192.168.0.9"]
+    assert "HostName 192.168.0.9" in result["shortcut"]["config"]
+
+
+def test_docker_not_installed(monkeypatch):
+    monkeypatch.setattr(collect.shutil, "which", lambda name: None)
+    assert collect.docker() == {"installed": False, "containers": []}
+
+
+def test_docker_lists_containers(monkeypatch):
+    out = '{"Names":"web","Image":"nginx","State":"running","Status":"Up 2h","Ports":"80/tcp"}\n'
+    monkeypatch.setattr(collect.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(collect.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, out, ""))
+    result = collect.docker()
+    assert result["containers"] == [{"name": "web", "image": "nginx", "state": "running", "status": "Up 2h", "ports": "80/tcp"}]
+
+
+def test_docker_permission_error_is_reported(monkeypatch):
+    monkeypatch.setattr(collect.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(collect.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", "permission denied"))
+    assert collect.docker()["error"] == "permission denied"
+
+
+def fake_proc(pid, argv, rss=1000):
+    return {"pid": pid, "user": "guy", "cpu": 0.0, "rss": rss, "age_s": 5, "argv": argv, "ticks": 0, "start": 0}
+
+
+def test_agents_matches_running_and_hides_optional(monkeypatch):
+    procs = [
+        fake_proc(1, ["claude", "--model=sonnet"]),
+        fake_proc(2, ["node", "/lib/node_modules/openclaw/dist/index.js", "gateway"]),
+        fake_proc(3, ["zsh", "-c", "claude hermes ollama"]),
+    ]
+    monkeypatch.setattr(collect, "scan", lambda: procs)
+    monkeypatch.setattr(collect, "ports", lambda: [{"pid": 2, "address": "127.0.0.1", "port": 18789}])
+    monkeypatch.setattr(collect, "run", lambda *cmd: "active")
+    result = {a["name"]: a for a in collect.agents()}
+    assert [i["pid"] for i in result["Claude Code"]["instances"]] == [1]
+    assert result["OpenClaw"]["instances"][0]["ports"] == ["127.0.0.1:18789"]
+    assert result["Hermes"]["instances"] == []       # the zsh -c string must not count
+    assert "Ollama" not in result and "Codex" not in result  # optional + not running
+    assert result["OpenHuman"]["unit_state"] == "active"
+
+
+def test_top_processes_shape():
+    result = collect.top_processes()
+    assert result["total"] > 0
+    assert all({"pid", "cpu", "rss", "cmd", "user", "age_s"} <= p.keys() for p in result["processes"])
+    assert len(result["processes"]) <= 50
+
+
+def test_scan_includes_own_process():
+    import os
+    assert os.getpid() in {p["pid"] for p in collect.scan()}
+
+
+# ---------- sign-in checks ----------
+
+def fake_cli(monkeypatch, outputs: dict):
+    """Make collect.run return canned output keyed by the command's first words."""
+    def run(*cmd, **kw):
+        for prefix, out in outputs.items():
+            if " ".join(cmd).startswith(prefix):
+                return out
+        return ""
+    monkeypatch.setattr(collect, "run", run)
+
+
+def test_gcloud_signed_in_with_project(monkeypatch):
+    fake_cli(monkeypatch, {"gcloud auth list": '[{"account": "a@x.com", "status": "ACTIVE"}]', "gcloud config": "my-proj"})
+    assert collect.check_gcloud() == {"state": "signed_in", "account": "a@x.com", "detail": "project my-proj"}
+
+
+def test_gcloud_signed_out(monkeypatch):
+    fake_cli(monkeypatch, {"gcloud auth list": "[]"})
+    assert collect.check_gcloud()["state"] == "signed_out"
+
+
+def test_gws_valid_expired_and_signed_out(monkeypatch):
+    status = '{"user": "a@x.com", "token_valid": %s, "project_id": "p", "scope_count": 13, "storage": "encrypted", "client_id": "SECRET-ID"}'
+    fake_cli(monkeypatch, {"gws auth status": status % "true"})
+    ok = collect.check_gws()
+    assert ok["state"] == "signed_in" and ok["account"] == "a@x.com" and "13 scopes" in ok["detail"]
+    assert "SECRET-ID" not in str(ok)  # only whitelisted fields leave the module
+    fake_cli(monkeypatch, {"gws auth status": status % "false"})
+    assert collect.check_gws()["state"] == "expired"
+    fake_cli(monkeypatch, {"gws auth status": "not json"})
+    assert collect.check_gws()["state"] == "signed_out"
+
+
+def test_gh_states(monkeypatch):
+    hosts = '{"hosts": {"github.com": [{"state": "%s", "active": true, "host": "github.com", "login": "me", "gitProtocol": "https"}]}}'
+    fake_cli(monkeypatch, {"gh auth status": hosts % "success"})
+    assert collect.check_gh() == {"state": "signed_in", "account": "me", "detail": "github.com · git over https"}
+    fake_cli(monkeypatch, {"gh auth status": hosts % "error"})
+    assert collect.check_gh()["state"] == "expired"
+    fake_cli(monkeypatch, {"gh auth status": ""})
+    assert collect.check_gh()["state"] == "signed_out"
+
+
+def test_claude_hides_org_details(monkeypatch):
+    fake_cli(monkeypatch, {"claude auth status": '{"loggedIn": true, "email": "a@x.com", "authMethod": "claude.ai", "subscriptionType": "max", "orgId": "ORG-SECRET"}'})
+    result = collect.check_claude()
+    assert result == {"state": "signed_in", "account": "a@x.com", "detail": "claude.ai · max plan"}
+    fake_cli(monkeypatch, {"claude auth status": '{"loggedIn": false}'})
+    assert collect.check_claude()["state"] == "signed_out"
+
+
+def test_tailscale_states(monkeypatch):
+    running = '{"BackendState": "Running", "Self": {"UserID": 7, "DNSName": "pi.ts.net."}, "User": {"7": {"LoginName": "a@x.com"}}}'
+    fake_cli(monkeypatch, {"tailscale status": running})
+    assert collect.check_tailscale() == {"state": "signed_in", "account": "a@x.com", "detail": "pi.ts.net"}
+    fake_cli(monkeypatch, {"tailscale status": '{"BackendState": "NeedsLogin"}'})
+    assert collect.check_tailscale()["state"] == "signed_out"
+    fake_cli(monkeypatch, {"tailscale status": ""})
+    assert collect.check_tailscale()["state"] == "error"
+
+
+def test_missing_cli_is_not_installed(monkeypatch):
+    monkeypatch.setattr(collect.shutil, "which", lambda name: None)
+    result = collect.run_check("Thing", "thing", lambda: pytest.fail("should not run"))
+    assert result["state"] == "not_installed"
+
+
+def test_one_failing_check_does_not_hide_the_others(monkeypatch):
+    monkeypatch.setattr(collect.shutil, "which", lambda name: "/bin/x")
+    def broken():
+        raise RuntimeError("kaput")
+    bad = collect.run_check("Bad", "bad", broken)
+    good = collect.run_check("Good", "good", lambda: {"state": "signed_in", "account": "", "detail": ""})
+    assert bad["state"] == "error" and "kaput" in bad["detail"]
+    assert good["state"] == "signed_in"
+
+
+def test_auth_status_is_cached_and_refreshes_in_background(monkeypatch):
+    calls = []
+    monkeypatch.setitem(collect._auth, "data", None)
+    monkeypatch.setattr(collect, "AUTH_CHECKS", [("A", "a", lambda: calls.append(1) or {"state": "signed_in", "account": "", "detail": ""})])
+    monkeypatch.setattr(collect.shutil, "which", lambda name: "/bin/x")
+
+    first = collect.auth_status()                 # cold: computes
+    assert len(calls) == 1 and first["services"][0]["name"] == "A"
+    assert collect.auth_status() is first         # warm: served from cache
+    assert len(calls) == 1
+
+    monkeypatch.setattr(collect, "AUTH_TTL", 0)   # now stale: returns old data immediately, refreshes behind
+    assert collect.auth_status() is first
+    for _ in range(50):
+        if len(calls) == 2:
+            break
+        collect.time.sleep(0.05)
+    assert len(calls) == 2
+
+
+# ---------- version stamp ----------
+
+def make_project(tmp_path, monkeypatch, git_init=True):
+    """A throwaway project folder shaped like this one, optionally a git repo with one commit."""
+    (tmp_path / "src" / "pi_status").mkdir(parents=True)
+    (tmp_path / "src" / "pi_status" / "a.py").write_text("x = 1\n")
+    monkeypatch.setattr(collect, "PROJECT", tmp_path)
+    monkeypatch.setattr(collect, "_loaded", None)
+    if git_init:
+        env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+        for cmd in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "first"]):
+            subprocess.run(["git", "-C", str(tmp_path), *cmd], check=True, env={**__import__("os").environ, **env})
+
+
+def test_version_clean_checkout_shows_commit(tmp_path, monkeypatch):
+    make_project(tmp_path, monkeypatch)
+    v = collect.version()
+    head = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    assert v["label"].startswith("v20") and v["label"].endswith(f" · {head}")
+    assert v["commit"] == head and v["dirty"] is False and v["stale"] is False
+
+
+def test_version_marks_uncommitted_changes(tmp_path, monkeypatch):
+    make_project(tmp_path, monkeypatch)
+    (tmp_path / "src" / "pi_status" / "a.py").write_text("x = 2\n")
+    v = collect.version()
+    assert v["label"].endswith("+") and v["dirty"] is True
+
+
+def test_version_without_git(tmp_path, monkeypatch):
+    make_project(tmp_path, monkeypatch, git_init=False)
+    monkeypatch.setattr(collect, "git", lambda *a: None)
+    v = collect.version()
+    assert v["label"].endswith("· nogit") and v["dirty"] is True
+
+
+def test_version_ignores_commits_elsewhere_in_the_repo(tmp_path, monkeypatch):
+    """A shared repo (machine-setup) gets snapshot commits constantly; they must not change this project's version."""
+    make_project(tmp_path, monkeypatch, git_init=False)
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    sub = tmp_path / "site"
+    (sub / "src" / "pi_status").mkdir(parents=True)
+    (sub / "src" / "pi_status" / "a.py").write_text("x = 1\n")
+    monkeypatch.setattr(collect, "PROJECT", sub)
+    ident = ["-c", "user.name=t", "-c", "user.email=t@x"]
+    git_in = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *ident, *a], check=True, capture_output=True)
+    git_in("add", "site"); git_in("commit", "-q", "-m", "site")
+    before = collect.current_version()["commit"]
+    (tmp_path / "other.txt").write_text("unrelated\n")
+    git_in("add", "other.txt"); git_in("commit", "-q", "-m", "unrelated")
+    assert collect.current_version()["commit"] == before
+
+
+def test_version_flags_stale_when_code_changes_after_start(tmp_path, monkeypatch):
+    make_project(tmp_path, monkeypatch)
+    assert collect.version()["stale"] is False          # pins what the "running" server loaded
+    f = tmp_path / "src" / "pi_status" / "a.py"
+    f.write_text("x = 3\n")
+    import os
+    os.utime(f, (f.stat().st_atime, f.stat().st_mtime + 10))
+    v = collect.version()
+    assert v["stale"] is True and v["running_label"] != v["label"]
+
+
+def test_editing_tests_does_not_flag_stale(tmp_path, monkeypatch):
+    make_project(tmp_path, monkeypatch)
+    collect.version()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("pass\n")
+    assert collect.version()["stale"] is False
+
+
+def test_scratch_scripts_in_tmp_are_not_mistaken_for_agents():
+    """Claude's scratchpad is /tmp/claude-<uid>/...; a python script run from there is not Claude Code."""
+    argv = ["/home/x/.venv/bin/python", "/tmp/claude-1000/proj/scratchpad/shot.py"]
+    assert collect.exe_names(argv) == {"python", "shot.py"}
+    assert not any(n.startswith("claude") for n in collect.exe_names(argv))
+
+
+def test_agents_ignores_python_script_run_from_tmp(monkeypatch):
+    procs = [fake_proc(1, ["claude", "--model=sonnet"]), fake_proc(2, ["python3", "/tmp/claude-1000/x/shot.py"])]
+    monkeypatch.setattr(collect, "scan", lambda: procs)
+    monkeypatch.setattr(collect, "ports", lambda: [])
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: "active")
+    claude = next(a for a in collect.agents() if a["name"] == "Claude Code")
+    assert [i["pid"] for i in claude["instances"]] == [1]
+
+
+def test_can_restart_only_under_systemd(monkeypatch):
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    assert collect.can_restart() is False
+    monkeypatch.setenv("INVOCATION_ID", "abc123")   # systemd sets this for every service it starts
+    assert collect.can_restart() is True
+
+
+def test_restart_service_queues_a_non_blocking_user_restart(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(collect.subprocess, "Popen", lambda cmd, **kw: seen.update(cmd=cmd, kw=kw))
+    collect.restart_service()
+    assert seen["cmd"] == ["systemctl", "--user", "--no-block", "restart", "pi-status.service"]
+    assert seen["kw"]["start_new_session"] is True   # survives the service being stopped

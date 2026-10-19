@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Rebuild this Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot.
 # Usage: restore.sh [--dry-run] [--only step,step,...]
-# Steps (run in this order): apt-sources apt brew uv npm omzsh dotfiles links shell systemd
+# Steps (run in this order): apt-sources apt tailscale brew uv npm omzsh dotfiles links pi-status shell systemd
 # Safe to re-run. Existing dotfiles are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt brew uv npm omzsh dotfiles links shell systemd)
+all_steps=(apt-sources apt tailscale brew uv npm omzsh dotfiles links pi-status shell systemd)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 
 dry=0
@@ -30,17 +30,21 @@ need() { [[ -e $snap/$1 ]] || { echo "  missing snapshot/$1, skipping"; return 1
 [[ -d $snap ]] || { echo "no snapshot/ next to restore.sh" >&2; exit 1; }
 (( dry )) || sudo true
 
+restore_apt_sources() {
+  need apt-sources || return 0
+  local f
+  for f in "$snap"/apt-sources/*; do
+    [[ -f $f ]] || continue
+    case $f in
+      *.gpg|*.asc) run sudo install -m 644 "$f" /usr/share/keyrings/ ;;
+      *)           run sudo install -m 644 "$f" /etc/apt/sources.list.d/ ;;
+    esac
+  done
+}
+
 if want apt-sources; then
   say "apt: third-party sources (nodesource, tailscale, ...)"
-  if need apt-sources; then
-    for f in "$snap"/apt-sources/*; do
-      [[ -f $f ]] || continue
-      case $f in
-        *.gpg|*.asc) run sudo install -m 644 "$f" /usr/share/keyrings/ ;;
-        *)           run sudo install -m 644 "$f" /etc/apt/sources.list.d/ ;;
-      esac
-    done
-  fi
+  restore_apt_sources
 fi
 
 if want apt; then
@@ -52,6 +56,21 @@ if want apt; then
     mapfile -t pkgs < <(comm -12 "$snap/apt-manual.txt" <(printf '%s\n' "${avail[@]}"))
     comm -23 "$snap/apt-manual.txt" <(printf '%s\n' "${avail[@]}") | sed 's/^/  not available: /'
     (( ${#pkgs[@]} )) && run sudo apt-get install -y "${pkgs[@]}"
+  fi
+fi
+
+if want tailscale; then
+  say "Tailscale (apt package + tailscaled service)"
+  if have tailscale; then echo "  already installed"
+  else
+    # The apt-sources step restores Tailscale's repo and signing key; do it here too so this step works alone.
+    if ! apt-cache policy tailscale 2>/dev/null | grep -q 'Candidate: [0-9]'; then restore_apt_sources; run sudo apt-get update; fi
+    run sudo apt-get install -y tailscale
+  fi
+  run sudo systemctl enable --now tailscaled
+  if (( dry )); then echo "  [dry-run] check whether Tailscale is signed in"
+  elif tailscale status >/dev/null 2>&1; then echo "  signed in"
+  else echo "  not signed in yet: run 'sudo tailscale up' and open the link it prints"
   fi
 fi
 
@@ -116,12 +135,39 @@ if want dotfiles; then
   fi
 fi
 
+# link_dir <directory in this repo> <symlink path>: never replaces something that is already there.
+link_dir() {
+  local target=$1 link=$2
+  if [[ -L $link && $(readlink -f "$link") == "$(readlink -f "$target")" ]]; then echo "  $link already linked"
+  elif [[ -e $link || -L $link ]]; then echo "  $link exists and is not this repo's ${target#"$here/"}/; leaving it"
+  else run mkdir -p "$(dirname "$link")"; run ln -s "$target" "$link"; echo "  linked $link -> $target"
+  fi
+}
+
 if want links; then
-  say "\$HOME/dev/scripts -> agent launchers (bin/)"
-  link=$HOME/dev/scripts
-  if [[ -L $link && $(readlink -f "$link") == "$(readlink -f "$here/bin")" ]]; then echo "  already linked"
-  elif [[ -e $link || -L $link ]]; then echo "  $link exists and is not this repo's bin/; leaving it"
-  else run mkdir -p "$HOME/dev"; run ln -s "$here/bin" "$link"; echo "  linked $link -> $here/bin"
+  say "\$HOME/dev/scripts -> agent launchers (bin/), \$HOME/dev/pi-status -> status page (pi-status/)"
+  link_dir "$here/bin" "$HOME/dev/scripts"
+  link_dir "$here/pi-status" "$HOME/dev/pi-status"
+fi
+
+if want pi-status; then
+  say "pi-status web page (service on 127.0.0.1:8080, HTTPS via Tailscale Serve)"
+  site=$HOME/dev/pi-status
+  unit=$HOME/.config/systemd/user/pi-status.service
+  if [[ ! -d $site ]]; then echo "  $site missing (run the links step)"
+  elif ! have uv; then echo "  uv not installed (run the brew step)"
+  elif [[ ! -f $unit ]] && (( ! dry )); then echo "  $unit missing (run the dotfiles step)"
+  else
+    run uv sync --project "$site" --no-dev --inexact
+    run systemctl --user daemon-reload
+    run systemctl --user enable --now pi-status.service
+    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080 (when Tailscale is signed in)"
+    elif tailscale status >/dev/null 2>&1; then
+      sudo tailscale serve --bg 8080
+      tailscale serve status
+    else
+      echo "  Tailscale isn't signed in yet: run 'sudo tailscale up', then './restore.sh --only pi-status' to publish the page"
+    fi
   fi
 fi
 
@@ -155,7 +201,9 @@ say "Restore finished. Manual follow-ups"
 cat <<'MSG'
   - Open a new terminal (or log out/in) so zsh and ~/.zshrc take effect.
   - gh auth login        (then: gh auth setup-git)
-  - tailscale up
+  - sudo tailscale up    (open the link it prints), then ./restore.sh --only pi-status to publish the
+                         status page over HTTPS. A brand-new tailnet must first enable HTTPS certificates
+                         (https://login.tailscale.com/admin/dns) and approve Serve (the link `tailscale serve` prints).
   - claude               (log in; installed via the Brewfile cask)
   - OpenHuman / OpenClaw: run ~/dev/scripts/openhuman and ~/dev/scripts/openclaw once;
     each installs itself on first run (see snapshot/versions.txt for last-known versions).
