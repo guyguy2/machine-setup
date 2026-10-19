@@ -1,0 +1,32 @@
+#!/usr/bin/env zsh
+# Run the OpenHuman TUI from /opt/openhuman-core, updating to the latest GitHub
+# release first (.deb for the desktop app + core tarball; needs sudo).
+# Offline or a failed update still launches.
+repo=tinyhumansai/openhuman
+
+update() {
+  local latest=$1 base core tmp
+  base=https://github.com/$repo/releases/download/v$latest
+  core=openhuman-core-$latest-$(uname -m)-unknown-linux-gnu.tar.gz
+  tmp=$(mktemp -d) && chmod 755 $tmp || return 1
+  {
+    curl -fsSL -o $tmp/openhuman.deb $base/OpenHuman_${latest}_$(dpkg --print-architecture).deb &&
+    curl -fsSL -o $tmp/$core $base/$core &&
+    echo "$(curl -fsSL $base/$core.sha256 | awk '{print $1}')  $tmp/$core" | sha256sum -c --quiet &&
+    sudo apt-get install -y $tmp/openhuman.deb &&
+    sudo rm -rf /opt/openhuman-core.new && sudo mkdir /opt/openhuman-core.new &&
+    sudo tar xzf $tmp/$core -C /opt/openhuman-core.new --no-same-owner &&
+    sudo rm -rf /opt/openhuman-core && sudo mv /opt/openhuman-core.new /opt/openhuman-core
+  } always { rm -rf $tmp }
+}
+
+latest=$(curl -fsSL --max-time 10 https://api.github.com/repos/$repo/releases/latest 2>/dev/null | jq -er '.tag_name | ltrimstr("v")')
+cur=$(dpkg-query -W -f='${Version}' open-human 2>/dev/null)
+if [[ -z $latest ]]; then
+  print -u2 "openhuman: could not check for updates, running ${cur:-nothing}"
+elif [[ $cur != $latest ]]; then
+  print -u2 "openhuman: ${cur:-not installed} -> $latest"
+  update $latest >&2 || print -u2 "openhuman: update failed, running ${cur:-nothing}"
+fi
+
+exec /opt/openhuman-core/openhuman-tui "$@"

@@ -1,0 +1,16 @@
+#!/usr/bin/env zsh
+# Run OpenClaw from the npm install in ~/dev/openclaw_node, updating to the
+# latest published version first. Offline or a failed update still launches.
+dir=$HOME/dev/openclaw_node
+
+latest=$(npm view openclaw version 2>/dev/null)
+cur=$(jq -r .version $dir/node_modules/openclaw/package.json 2>/dev/null)
+if [[ -z $latest ]]; then
+  print -u2 "openclaw: could not check for updates, running ${cur:-nothing}"
+elif [[ $cur != $latest ]]; then
+  print -u2 "openclaw: ${cur:-not installed} -> $latest"
+  npm --prefix $dir install openclaw@latest --no-fund >&2 ||
+    print -u2 "openclaw: update failed, running ${cur:-nothing}"
+fi
+
+exec $dir/node_modules/.bin/openclaw "$@"
