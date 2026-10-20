@@ -14,6 +14,7 @@ folder installs and starts it.
 | Overview | CPU, temperature, memory, disk, uptime, model and revision, OS, kernel, Wi-Fi/ethernet, local IP, Tailscale IP, power/thermal throttling warnings |
 | Network | Ready-to-paste SSH commands (Tailscale name and IP, `.local`, LAN IP, plus an `ssh pi` config snippet), Wi-Fi details, gateway, DNS, interfaces, Tailscale peers, logged-in sessions |
 | Agents | **Sign-ins** (`gcloud`, `gws`, `gh`, `claude`, Tailscale: signed in, expired, signed out or not installed, with account and project) and which agents are running (Claude Code, OpenHuman, Hermes, OpenClaw) with PID, CPU, memory, directory, listening ports |
+| Agent lab | Read-only view of `~/dev/agent-lab` (the OpenClaw / Hermes / OpenHuman comparison): scoreboard per use case, average scores per agent as a bar chart, time and memory per run, my notes per agent, every run note (`#lab/<file>` links to one), and each use case's prompt with a Copy button. The markdown files stay the source of truth; nothing is written back |
 | Docker | Containers, or a note that Docker isn't installed |
 | Services | Running (and failed) systemd system and user services |
 | Processes | Top processes by CPU or memory |
@@ -56,4 +57,4 @@ asks you to restart it: `systemctl --user restart pi-status`.
     uv run python screenshots.py        # PNGs of every tab (desktop + phone) in ./screenshots
 
 JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/agents`, `/api/auth`, `/api/docker`,
-`/api/services`, `/api/processes`, `/api/ports`, `/api/version`; `POST /api/restart`.
+`/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/version`; `POST /api/restart`.

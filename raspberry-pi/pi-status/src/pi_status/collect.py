@@ -246,6 +246,95 @@ def agents() -> list[dict]:
     return result
 
 
+# ---------- agent lab ----------
+# ~/dev/agent-lab compares agents on the same use cases (see its README). Use cases and run notes are markdown
+# files with "key: value" front matter; they stay the one source of truth, so this only ever reads them.
+
+LAB = Path(HOME) / "dev" / "agent-lab"
+LAB_AGENTS = [("openclaw", "OpenClaw"), ("hermes", "Hermes"), ("openhuman", "OpenHuman")]  # (id in notes, AGENTS name)
+LAB_NUMBERS = ("score_outcome", "score_quality", "score_autonomy", "score_safety", "score_ux", "score_happiness",
+               "overall", "duration_min", "my_effort_min", "followups", "peak_rss_mb", "avg_cpu_pct")
+NOTE_LIMIT = 50_000  # characters of a run note's body sent to the page
+
+
+def front_matter(text: str) -> tuple[dict, str]:
+    """Split a note into its front matter (trailing "# comments" dropped) and its body."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    meta = {}
+    for i, line in enumerate(lines[1:], 1):
+        if line.strip() == "---":
+            return meta, "\n".join(lines[i + 1:]).strip()
+        key, sep, value = line.partition(":")
+        if sep:
+            meta[key.strip()] = re.sub(r"(^|\s+)#.*$", "", value).strip()
+    return {}, text  # no closing ---: treat it all as body
+
+
+def number(value: str | None) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def lab_prompt(body: str) -> str:
+    m = re.search(r"^## Prompt.*?\n```[^\n]*\n(.*?)\n```", body, re.S | re.M)
+    return m[1] if m else ""
+
+
+def lab_impressions(results: Path) -> dict[str, str]:
+    """My running opinion per agent: the "### <Agent>" parts of results.md's "Overall impressions"."""
+    try:
+        text = results.read_text(errors="replace")
+    except OSError:
+        return {}
+    section = re.search(r"^## Overall impressions\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    found = {}
+    for name, body in re.findall(r"^### ([^\n]+)\n(.*?)(?=^### |\Z)", section[1] if section else "", re.S | re.M):
+        lines = [l for l in body.strip().splitlines() if l.strip() not in ("-", "*")]  # skip the template's empty bullets
+        agent = next((a for a, n in LAB_AGENTS if n.lower() == name.strip().lower()), None)
+        if agent and lines:
+            found[agent] = "\n".join(lines)
+    return found
+
+
+def lab() -> dict:
+    path = "~" + str(LAB)[len(HOME):] if str(LAB).startswith(HOME) else str(LAB)
+    if not LAB.is_dir():
+        return {"found": False, "path": path}
+    procs = list(sample().values())
+    match = {a["name"]: a["match"] for a in AGENTS}
+    running = {name for name in match if any(n.startswith(match[name]) for p in procs for n in exe_names(p["argv"]))}
+
+    use_cases = []
+    for f in sorted((LAB / "use-cases").glob("UC-*.md")):
+        meta, body = front_matter(f.read_text(errors="replace"))
+        use_cases.append({"id": meta.get("id") or f.stem[:6], "title": meta.get("title", f.stem), "file": f.name,
+                          "category": meta.get("category", ""), "risk": meta.get("risk", ""), "prompt": lab_prompt(body)})
+
+    runs = []
+    for f in (LAB / "runs").glob("*.md"):
+        meta, body = front_matter(f.read_text(errors="replace"))
+        runs.append({
+            "file": f.name,
+            **{k: meta.get(k, "") for k in ("use_case", "agent", "date", "version", "model", "interface", "outcome")},
+            **{k: number(meta.get(k)) for k in LAB_NUMBERS},
+            "note": body[:NOTE_LIMIT],
+        })
+    runs.sort(key=lambda r: (r["date"], r["file"]))  # oldest first, so the last one per cell is the latest
+
+    return {
+        "found": True,
+        "path": path,
+        "agents": [{"id": a, "name": n, "running": n in running} for a, n in LAB_AGENTS],
+        "use_cases": use_cases,
+        "runs": runs,
+        "impressions": lab_impressions(LAB / "results.md"),
+    }
+
+
 # ---------- docker ----------
 
 def docker() -> dict:
@@ -404,6 +493,17 @@ def ssh_help(user: str, host: str, ts: dict, local_ip: str) -> dict:
     }
 
 
+def page_url(dns_name: str) -> str:
+    """This page's HTTPS address, but only while `tailscale serve` actually publishes it under that name."""
+    if not dns_name:
+        return ""
+    try:
+        web = json.loads(run("tailscale", "serve", "status", "--json") or "{}").get("Web", {})
+    except ValueError:
+        return ""
+    return f"https://{dns_name}/#overview" if f"{dns_name}:443" in web else ""
+
+
 def network() -> dict:
     interfaces = []
     for i in json.loads(run("ip", "-j", "addr") or "[]"):
@@ -419,6 +519,7 @@ def network() -> dict:
     ts = tailscale_info()
     return {
         "connection": connection_label(route.get("dev", "")),
+        "page_url": page_url(ts.get("dns_name", "")),
         "ssh": ssh_help(username(os.getuid()), platform.node(), ts, route.get("prefsrc", "")),
         "wifi": wifi(),
         "local_ip": route.get("prefsrc", ""),
