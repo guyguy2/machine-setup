@@ -497,13 +497,13 @@ def open_agents(page, base_url, agents=AGENTS, dash=DASHBOARDS, auth=SIGNED_IN):
     page.route("**/api/auth", lambda r: r.fulfill(json=auth))
     open_tab(page, base_url, "agents")
     page.wait_for_selector("#view .agent")
-    return {c.locator(".card-head strong").inner_text(): c for c in page.locator("#view .agent").all()}
+    return {c.locator(".card-head h4").inner_text(): c for c in page.locator("#view .agent").all()}
 
 
 def test_each_agent_appears_once(make_page, base_url):
     page = make_page()
     cards = open_agents(page, base_url)
-    names = page.locator("#view .agent .card-head strong").all_inner_texts()
+    names = page.locator("#view .agent .card-head h4").all_inner_texts()
     assert sorted(names) == sorted({"Claude Code", "OpenHuman", "Hermes", "OpenClaw"})
     assert names[-1] == "OpenHuman"   # running ones first, stopped last
     assert page.locator("#view .dashboard").count() == 0
@@ -983,3 +983,80 @@ def test_overview_visit_fetches_each_api_once(make_page, base_url):
     page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
     for api in ["status", "agents", "auth", "services", "dashboards", "version"]:
         assert seen.count(api) == 1, (api, seen)
+
+
+# ---------- polish: labels, headings, touch targets, times, phone header ----------
+
+def test_copy_buttons_say_what_they_copy(make_page, base_url):
+    page = make_page()
+    open_agents(page, base_url)
+    page.evaluate("document.querySelectorAll('#view details').forEach(d => d.open = true)")
+    labels = page.locator("#view button.copy:not(.service-btn)").evaluate_all("bs => bs.map(b => b.getAttribute('aria-label'))")
+    assert labels and all(labels), labels
+    assert len(set(labels)) == len(labels), "two Copy buttons read the same"
+    assert "Copy OpenClaw tailnet address" in labels and "Copy OpenClaw SSH tunnel command" in labels
+
+
+def test_network_copy_buttons_say_what_they_copy(make_page, base_url):
+    page = make_page()
+    page.route("**/api/network", lambda r: r.fulfill(json=NETWORK))
+    open_tab(page, base_url, "network")
+    page.wait_for_selector(".ssh-row")
+    labels = page.locator("#view button.copy").evaluate_all("bs => bs.map(b => b.getAttribute('aria-label'))")
+    assert all(labels) and len(set(labels)) == len(labels), labels
+    assert "Copy SSH command: Over Tailscale (from anywhere)" in labels
+
+
+def test_start_and_stop_buttons_name_their_agent(make_page, base_url):
+    page = make_page()
+    page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .service-btn")
+    labels = page.locator("#view .service-btn").evaluate_all("bs => bs.map(b => b.getAttribute('aria-label'))")
+    assert sorted(labels) == ["Start OpenClaw", "Stop Hermes"]
+
+
+def test_card_titles_are_headings(make_page, base_url):
+    page = make_page()
+    open_agents(page, base_url)
+    assert page.locator("#view .agent h4").all_inner_texts().count("OpenClaw") == 1
+    assert page.locator("#view .agent .card-head strong").count() == 0
+
+
+def test_buttons_are_bigger_on_touch_screens(browser, base_url):
+    ctx = browser.new_context(viewport={"width": PHONE[0], "height": PHONE[1]}, has_touch=True, is_mobile=True)
+    page = ctx.new_page()
+    try:
+        page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
+        open_tab(page, base_url, "agents")
+        page.wait_for_selector("#view .service-btn")
+        assert page.evaluate("matchMedia('(pointer: coarse)').matches")
+        for sel in ["#refresh", "#view .service-btn"]:
+            assert page.locator(sel).first.bounding_box()["height"] >= 36, sel
+    finally:
+        ctx.close()
+
+
+def test_buttons_stay_compact_with_a_mouse(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    assert page.locator("#refresh").bounding_box()["height"] < 36
+
+
+def test_sign_in_check_time_has_the_clock_time_on_hover(make_page, base_url):
+    page = make_page()
+    open_agents(page, base_url, auth={**SIGNED_IN, "checked_at": 1_800_000_000})
+    title = page.locator("#view .signins summary").get_attribute("title")
+    assert title and title.startswith("checked at ")
+
+
+def test_version_shares_the_status_line_on_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
+    open_tab(page, base_url, "overview")
+    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    conn, version, nav = (page.locator(s).bounding_box() for s in ["#conn", "#version", "nav"])
+    assert abs(version["y"] - conn["y"]) < 12, (conn, version)   # same line as "updated ..."
+    assert version["y"] < nav["y"]
+    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert widths[0] <= widths[1]
