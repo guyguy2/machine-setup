@@ -143,6 +143,7 @@ def sample() -> dict[int, dict]:
                 continue
             procs[pid] = {
                 "pid": pid,
+                "ppid": int(f[1]),
                 "ticks": int(f[11]) + int(f[12]),  # utime + stime
                 "start": int(f[19]) / CLK_TCK,
                 "rss": int(f[21]) * PAGE_SIZE,
@@ -222,9 +223,10 @@ def exe_names(argv: list[str]) -> set[str]:
 def agents() -> list[dict]:
     procs = scan()
     listening = ports()
+    me = os.getpid()  # the server's own children (the `claude auth status` sign-in check) aren't agents
     result = []
     for spec in AGENTS:
-        found = [p for p in procs if any(n.startswith(spec["match"]) for n in exe_names(p["argv"]))]
+        found = [p for p in procs if p["ppid"] != me and any(n.startswith(spec["match"]) for n in exe_names(p["argv"]))]
         if spec.get("optional") and not found:
             continue
         instances = []

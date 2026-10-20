@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231f9d55'/%3E%3C/svg%3E">
 <style>
   :root {
+    color-scheme: light dark;
     --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --track: #e5e5ea;
     --ok: #1f9d55; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --accent-bg: #e8f0fe;
   }
@@ -69,6 +70,7 @@
        letter-spacing: .04em; padding: 6px 10px 6px 0; white-space: nowrap; }
   td { padding: 6px 10px 6px 0; border-top: 1px solid var(--track); vertical-align: top; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.num, td.nowrap { white-space: nowrap; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8125rem; }
   .cmd { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .seg { display: inline-flex; border: 1px solid var(--track); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
@@ -182,7 +184,7 @@ function table(cols, rows) {
     h("thead", {}, h("tr", {}, cols.map(c => h("th", { class: c.num ? "num" : "" }, c.label)))),
     h("tbody", {}, rows.map(r => h("tr", {}, cols.map(c => {
       const v = c.value(r);
-      const td = h("td", { class: [c.num && "num", c.mono && "mono", c.cmd && "cmd"].filter(Boolean).join(" ") }, v);
+      const td = h("td", { class: [c.num && "num", c.nowrap && "nowrap", c.mono && "mono", c.cmd && "cmd"].filter(Boolean).join(" ") }, v);
       if (c.cmd) td.title = String(v);
       return td;
     }))))));
@@ -315,7 +317,7 @@ function network(n) {
       ? h("div", { class: "card" }, table([
           { label: "User", value: s => s.user },
           { label: "Terminal", mono: true, value: s => s.tty },
-          { label: "Since", value: s => s.since },
+          { label: "Since", nowrap: true, value: s => s.since },
           { label: "From", mono: true, value: s => s.origin },
         ], n.sessions))
       : empty("No one is logged in."),

@@ -560,3 +560,37 @@ def test_failed_agent_control_shows_the_error(make_page, base_url):
     page.locator("#view .agent", has_text="OpenClaw").locator(".service-btn").click()
     page.wait_for_selector("#view .alert")
     assert "Couldn't start openclaw-gateway.service: Unit not loaded." in page.locator("#view .alert").inner_text()
+
+
+def test_dark_mode_uses_dark_scrollbars(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    assert "dark" in page.evaluate("getComputedStyle(document.documentElement).colorScheme")
+
+
+def line_count(page, selector):
+    """How many lines the text of the first matching element wraps onto."""
+    return page.evaluate("""s => { const r = document.createRange(); r.selectNodeContents(document.querySelector(s));
+                                   return new Set([...r.getClientRects()].map(b => Math.round(b.top))).size; }""", selector)
+
+
+def test_process_uptime_stays_on_one_line_on_phone(make_page, base_url):
+    procs = {"total": 1, "processes": [
+        {"pid": 4242, "user": "guy", "cpu": 1.0, "rss": 2**30, "age_s": 109800, "cmd": "node /usr/lib/node_modules/" + "x" * 200}]}
+    page = make_page(*PHONE)
+    page.route("**/api/processes", lambda r: r.fulfill(json=procs))
+    open_tab(page, base_url, "processes")
+    page.wait_for_selector("#view tbody td")
+    assert page.locator("#view tbody td:nth-child(4)").first.inner_text() == "1d 6h 30m"
+    assert line_count(page, "#view tbody td:nth-child(4)") == 1
+
+
+def test_session_date_stays_on_one_line_on_phone(make_page, base_url):
+    sessions = [{"user": "guy", "tty": "sshd pts/0", "since": "2026-10-20 09:01", "origin": "fd7a:115c:a1e0::1234:5678"}]
+    page = make_page(*PHONE)
+    page.route("**/api/network", lambda r: r.fulfill(json={**NETWORK, "sessions": sessions}))
+    open_tab(page, base_url, "network")
+    since = "#view > .card:last-child tbody td:nth-child(3)"  # the sessions table is the last card
+    page.wait_for_selector(since)
+    assert page.locator(since).inner_text() == "2026-10-20 09:01"
+    assert line_count(page, since) == 1
