@@ -40,7 +40,19 @@
   h3 { font-size: 1rem; margin: 20px 0 8px; }
 
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
-  .dot.off { background: var(--bad); }
+  .dot.off, .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+
+  /* overview: what needs you, then one line per agent */
+  .attention { border-left: 3px solid var(--warn); }
+  .attention ul { margin: 0; padding: 0; list-style: none; }
+  .attention li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 3px 0; }
+  .attention a, .strip-row a { color: var(--text); }
+  .strip-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid var(--track); }
+  .strip-row:first-child { border-top: 0; padding-top: 0; }
+  .strip-row:last-child { padding-bottom: 0; }
+  .strip-row a { font-weight: 600; text-decoration: none; }
+  .strip-row a:hover { text-decoration: underline; }
+  .strip-row .status { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
   .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
@@ -263,17 +275,57 @@ function brand(s) {
   $("view").querySelector(".subtabs")?.replaceWith(subtabs());  // this can arrive after System has rendered
 }
 
-function overview(s) {
+let lastVersion = null;   // from loadVersion; the attention list reads it
+let overviewData = null;  // what Overview last rendered, so the attention list can redraw when the version arrives
+
+const AUTH_PROBLEM = { signed_out: ["is signed out", "warn"], expired: ["sign-in expired", "bad"], error: ["sign-in check failed", "bad"] };
+
+// Everything on the Pi that needs you, each problem once. Empty when all is well.
+function problems() {
+  const { s, list, auth, svc } = overviewData;
+  const item = (kind, text, href, action) => h("li", {}, h("span", { class: "dot " + kind }), href ? h("a", { href }, text) : text, action);
+  const agentUnits = new Set((list || []).map(a => a.unit).filter(Boolean));  // a failed agent is listed as the agent
+  const v = lastVersion;
+  return [
+    s.throttled.length && item("bad", "Power/thermal: " + s.throttled.join(", ")),
+    (list || []).filter(a => a.unit_state === "failed").map(a => item("bad", `${a.name} failed (${a.unit})`, "#agents")),
+    (auth?.services || []).filter(a => AUTH_PROBLEM[a.state]).map(a => {
+      const [words, kind] = AUTH_PROBLEM[a.state];
+      return item(kind, `${a.name} ${words}${a.detail?.startsWith("run:") ? " · " + a.detail : ""}`, "#agents");
+    }),
+    svc && [...svc.user, ...svc.system].filter(r => r.active === "failed" && !agentUnits.has(r.unit))
+      .map(r => item("bad", `${r.unit} failed`, "#system/services")),
+    v?.stale && item("warn", "Newer pi-status code on disk", null,
+      v.can_restart && h("button", { class: "copy", type: "button", onclick: e => restartServer(e.currentTarget) }, "Restart now")),
+  ].flat().filter(Boolean);
+}
+
+function attentionCard() {
+  const items = problems();
+  return h("div", { class: "card attention", hidden: !items.length || null },
+    h("h3", { style: "margin:0 0 6px" }, "Needs attention"), h("ul", {}, items));
+}
+
+function overview(s, list, auth, svc, dash) {
   brand(s);
+  overviewData = { s, list, auth, svc };
+  const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
   const mp = s.mem_used / s.mem_total * 100, dp = s.disk_used / s.disk_total * 100;
   return [
     h("h2", {}, "Overview"),
-    s.throttled.length && h("div", { class: "alert" }, "Power/thermal: " + s.throttled.join(", ")),
+    attentionCard(),
     h("div", { class: "grid" },
       metric("CPU", s.cpu_percent + "%", s.cpu_percent, 70, 90, `load ${s.load.join(" / ")} · ${s.cpus} cores`),
       metric("Temperature", s.temp_c + " °C", s.temp_c / 85 * 100, 70, 90, "throttles at 80 °C"),
       metric("Memory", mp.toFixed(0) + "%", mp, 75, 90, `${gb(s.mem_used)} of ${gb(s.mem_total)}`),
       metric("Disk (/)", dp.toFixed(0) + "%", dp, 80, 92, `${gb(s.disk_used)} of ${gb(s.disk_total)}`)),
+    h("h3", {}, "Agents"),
+    agentError && h("div", { class: "alert" }, agentError),
+    list
+      ? h("div", { class: "card strip" }, sortAgents(list, byName).map(a => h("div", { class: "strip-row" },
+          h("a", { href: "#agents" }, a.name),
+          h("span", { class: "status" }, pill(...agentStatus(a, byName[a.name])), a.unit && serviceButton(a)))))
+      : empty("Agent status unavailable."),
     h("div", { class: "card", style: "margin-top:12px" }, h("dl", {},
       h("dt", {}, "Model"), h("dd", {}, s.model),  // also in the sidebar; repeated here on purpose
       h("dt", {}, "Uptime"), h("dd", {}, dur(s.uptime_s)),
@@ -455,14 +507,19 @@ function agentCard(a, d) {
       ], ps)));
 }
 
+// running ones first, stopped last
+function sortAgents(list, byName) {
+  const live = a => agentStatus(a, byName[a.name])[0] !== "stopped";
+  return [...list].sort((a, b) => live(b) - live(a));
+}
+
 function agents(list, auth, dash) {
   const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
-  const live = a => agentStatus(a, byName[a.name])[0] !== "stopped";
   return [
     h("h2", {}, "Agents & assistants"),
     agentError && h("div", { class: "alert" }, agentError),
     !dash && h("div", { class: "sub", style: "margin-bottom:12px" }, "Dashboard status unavailable."),
-    [...list].sort((a, b) => live(b) - live(a)).map(a => agentCard(a, byName[a.name])),
+    sortAgents(list, byName).map(a => agentCard(a, byName[a.name])),
     signIns(auth),
   ];
 }
@@ -667,7 +724,8 @@ const SYSTEM = [
 ];
 
 const TABS = [
-  { id: "overview", title: "Overview", api: "/api/status", render: overview },
+  { id: "overview", title: "Overview", api: "/api/status", also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"],
+    render: overview },
   { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
   { id: "lab", title: "Lab", api: "/api/lab", render: lab },
   { id: "network", title: "Network", api: "/api/network", render: network },
@@ -699,7 +757,8 @@ async function loadVersion() {
   if (restarting) return;
   const el = $("version");
   try {
-    const v = await getJSON("/api/version");
+    const v = lastVersion = await getJSON("/api/version");
+    $("view").querySelector(".attention")?.replaceWith(attentionCard());  // Overview may have rendered before this arrived
     const btn = v.stale && v.can_restart && h("button", { class: "copy", type: "button", onclick: e => restartServer(e.currentTarget) }, "Restart now");
     el.replaceChildren(...[v.label, v.stale && h("span", { class: "stale" }, "newer code on disk: " + (btn ? "restart to update" : "restart the server to update")), btn].filter(Boolean));
     el.title = v.stale
