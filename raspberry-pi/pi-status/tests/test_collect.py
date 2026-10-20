@@ -126,8 +126,8 @@ def test_docker_permission_error_is_reported(monkeypatch):
     assert collect.docker()["error"] == "permission denied"
 
 
-def fake_proc(pid, argv, rss=1000):
-    return {"pid": pid, "user": "guy", "cpu": 0.0, "rss": rss, "age_s": 5, "argv": argv, "ticks": 0, "start": 0}
+def fake_proc(pid, argv, rss=1000, ppid=1):
+    return {"pid": pid, "ppid": ppid, "user": "guy", "cpu": 0.0, "rss": rss, "age_s": 5, "argv": argv, "ticks": 0, "start": 0}
 
 
 def test_agents_matches_running_and_hides_optional(monkeypatch):
@@ -145,6 +145,27 @@ def test_agents_matches_running_and_hides_optional(monkeypatch):
     assert result["Hermes"]["instances"] == []       # the zsh -c string must not count
     assert "Ollama" not in result and "Codex" not in result  # optional + not running
     assert result["OpenHuman"]["unit_state"] == "active"
+
+
+def test_agents_skips_the_servers_own_child_processes(monkeypatch):
+    """The sign-in check runs `claude auth status` while the Agents tab scans /proc; it is not a running agent."""
+    import os
+    procs = [fake_proc(1, ["claude", "auth", "status"], ppid=os.getpid()), fake_proc(2, ["claude"], ppid=os.getppid())]
+    monkeypatch.setattr(collect, "scan", lambda: procs)
+    monkeypatch.setattr(collect, "ports", lambda: [])
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: "active")
+    claude = next(a for a in collect.agents() if a["name"] == "Claude Code")
+    assert [i["pid"] for i in claude["instances"]] == [2]
+
+
+def test_sample_records_parent_pid():
+    import os
+    child = subprocess.Popen(["sleep", "5"])
+    try:
+        assert collect.sample()[child.pid]["ppid"] == os.getpid()
+    finally:
+        child.kill()
+        child.wait()
 
 
 def test_top_processes_shape():
