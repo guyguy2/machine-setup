@@ -407,6 +407,43 @@ def ports() -> list[dict]:
     return sorted(seen.values(), key=lambda e: (e["port"], e["address"]))
 
 
+# ---------- agent dashboards ----------
+# The agents' own web UIs. Each listens on 127.0.0.1 only: `tailscale serve --bg --https=<tailnet_port> <port>`
+# publishes one to the tailnet, and an SSH tunnel reaches it from anywhere SSH does. Without a port it's a placeholder.
+
+DASHBOARDS = [
+    {"name": "Hermes", "what": "Web dashboard: settings, API keys, sessions",
+     "port": 9119, "tailnet_port": 8443, "start": "hermes dashboard --no-open"},
+    {"name": "OpenClaw", "what": "Control UI: chat, sessions, channels, automations",
+     "port": 18789, "tailnet_port": 8444, "start": "openclaw gateway run"},
+    {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
+]
+
+
+def dashboards() -> list[dict]:
+    listening = {p["port"] for p in ports()}
+    dns_name = tailscale_info().get("dns_name", "")
+    try:
+        web = json.loads(run("tailscale", "serve", "status", "--json") or "{}").get("Web", {})
+    except ValueError:
+        web = {}
+    result = []
+    for d in DASHBOARDS:
+        entry = {"name": d["name"], "what": d["what"]}
+        if port := d.get("port"):
+            published = dns_name and f"{dns_name}:{d['tailnet_port']}" in web
+            entry |= {
+                "running": port in listening,
+                "start": d["start"],
+                "tailnet_url": f"https://{dns_name}:{d['tailnet_port']}/" if published else "",
+                "publish": f"tailscale serve --bg --https={d['tailnet_port']} {port}",
+                "tunnel": f"ssh -N -L {port}:localhost:{port} pi",
+                "local_url": f"http://localhost:{port}/",
+            }
+        result.append(entry)
+    return result
+
+
 # ---------- network ----------
 
 def default_route() -> dict:

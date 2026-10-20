@@ -478,3 +478,44 @@ def test_lab_fits_phone(make_page, base_url, hash):
     open_lab(page, base_url, hash=hash)
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
+
+
+DASHBOARDS = [
+    {"name": "Hermes", "what": "Web dashboard", "running": False, "start": "hermes dashboard --no-open", "tailnet_url": "",
+     "publish": "tailscale serve --bg --https=8443 9119", "tunnel": "ssh -N -L 9119:localhost:9119 pi", "local_url": "http://localhost:9119/"},
+    {"name": "OpenClaw", "what": "Control UI", "running": True, "start": "openclaw gateway run",
+     "tailnet_url": "https://box.tail9.ts.net:8444/", "publish": "tailscale serve --bg --https=8444 18789",
+     "tunnel": "ssh -N -L 18789:localhost:18789 pi", "local_url": "http://localhost:18789/"},
+    {"name": "OpenHuman", "what": "Desktop app and TUI only"},
+]
+
+
+def test_agents_tab_links_dashboards(make_page, base_url):
+    page = make_page()
+    page.route("**/api/dashboards", lambda r: r.fulfill(json=DASHBOARDS))
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .dashboard")
+    cards = page.locator("#view .dashboard")
+    hermes, openclaw, openhuman = (cards.nth(i).inner_text() for i in range(3))
+    assert "not running" in hermes and "hermes dashboard --no-open" in hermes and "not published yet" in hermes
+    assert page.locator("#view a[href='https://box.tail9.ts.net:8444/']").count() == 1
+    assert "ssh -N -L 18789:localhost:18789 pi" in openclaw and "Start it" not in openclaw
+    assert "no web UI" in openhuman and "ssh" not in openhuman
+    assert page.errors == []
+
+
+def test_agents_tab_survives_dashboard_failure(make_page, base_url):
+    page = make_page()
+    page.route("**/api/dashboards", lambda r: r.fulfill(status=500, json={"error": "boom"}))
+    open_tab(page, base_url, "agents")
+    page.wait_for_function("document.querySelector('#view')?.textContent.includes('Running agents')")
+    assert "Dashboard status unavailable" in page.locator("#view").inner_text()
+
+
+def test_dashboards_fit_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    page.route("**/api/dashboards", lambda r: r.fulfill(json=DASHBOARDS))
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .dashboard")
+    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert widths[0] <= widths[1]

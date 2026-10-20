@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import pytest
@@ -455,3 +456,22 @@ def test_lab_reads_use_cases_runs_and_impressions(lab_dir):
 def test_lab_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(collect, "LAB", tmp_path / "nope")
     assert collect.lab() == {"found": False, "path": str(tmp_path / "nope")}
+
+
+def test_dashboards_link_only_what_tailscale_publishes(monkeypatch):
+    monkeypatch.setattr(collect, "ports", lambda: [{"pid": 2, "address": "127.0.0.1", "port": 18789}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
+    monkeypatch.setattr(collect, "run", lambda *cmd: json.dumps({"Web": {"box.tail9.ts.net:8444": {}}}))
+    result = {d["name"]: d for d in collect.dashboards()}
+    assert result["OpenClaw"]["running"] and result["OpenClaw"]["tailnet_url"] == "https://box.tail9.ts.net:8444/"
+    assert not result["Hermes"]["running"] and result["Hermes"]["tailnet_url"] == ""
+    assert result["Hermes"]["publish"] == "tailscale serve --bg --https=8443 9119"
+    assert result["Hermes"]["tunnel"] == "ssh -N -L 9119:localhost:9119 pi"
+    assert "local_url" not in result["OpenHuman"]  # placeholder: no web UI
+
+
+def test_dashboards_without_tailscale(monkeypatch):
+    monkeypatch.setattr(collect, "ports", lambda: [])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {})
+    monkeypatch.setattr(collect, "run", lambda *cmd: "")
+    assert all(d.get("tailnet_url", "") == "" for d in collect.dashboards())
