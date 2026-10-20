@@ -3,7 +3,7 @@
 import pytest
 
 TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
-NAV = ["Overview", "Agents", "Lab", "Network", "System"]
+NAV = ["Overview", "Agents", "Agent Lab", "Network", "System"]
 SYSTEM = ["services", "processes", "ports", "docker"]
 PHONE = (390, 844)
 
