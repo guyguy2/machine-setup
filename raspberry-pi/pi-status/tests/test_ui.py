@@ -2,7 +2,9 @@
 
 import pytest
 
-TABS = ["overview", "network", "agents", "lab", "docker", "services", "processes", "ports"]
+TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
+NAV = ["Overview", "Agents", "Lab", "Network", "System"]
+SYSTEM = ["services", "processes", "ports", "docker"]
 PHONE = (390, 844)
 
 NETWORK = {
@@ -31,7 +33,7 @@ def open_tab(page, base_url, tab):
 def test_tab_renders_without_errors(make_page, base_url, tab):
     page = make_page()
     open_tab(page, base_url, tab)
-    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab.split("/")[0]
     assert page.locator("#view h2").inner_text()
     assert page.locator("#conn").inner_text().startswith("updated")
     assert page.errors == []
@@ -47,7 +49,7 @@ def test_nav_click_switches_tabs(make_page, base_url):
 
 def test_sidebar_hostname_loads_on_any_tab(make_page, base_url):
     page = make_page()
-    open_tab(page, base_url, "ports")
+    open_tab(page, base_url, "system/ports")
     page.wait_for_function("document.getElementById('host').textContent !== 'Pi Status'")
 
 
@@ -137,7 +139,7 @@ def test_command_lines_are_escaped_not_injected(make_page, base_url):
 def test_docker_not_installed_message(make_page, base_url):
     page = make_page()
     page.route("**/api/docker", lambda r: r.fulfill(json={"installed": False, "containers": []}))
-    open_tab(page, base_url, "docker")
+    open_tab(page, base_url, "system/docker")
     assert "isn't installed" in page.locator("#view").inner_text()
 
 
@@ -146,7 +148,7 @@ def test_docker_containers_table(make_page, base_url):
         {"name": "web", "image": "nginx", "state": "running", "status": "Up 2h", "ports": "80/tcp"}]}
     page = make_page()
     page.route("**/api/docker", lambda r: r.fulfill(json=data))
-    open_tab(page, base_url, "docker")
+    open_tab(page, base_url, "system/docker")
     page.wait_for_selector("#view table")
     assert "web" in page.locator("#view tbody").inner_text() and "nginx" in page.locator("#view tbody").inner_text()
 
@@ -157,7 +159,7 @@ def test_process_sort_toggle(make_page, base_url):
         {"pid": 2, "user": "u", "cpu": 1.0, "rss": 2**30, "age_s": 1, "cmd": "memhog"}]}
     page = make_page()
     page.route("**/api/processes", lambda r: r.fulfill(json=procs))
-    open_tab(page, base_url, "processes")
+    open_tab(page, base_url, "system/processes")
     page.wait_for_selector("#view tbody tr")
     assert "cpuhog" in page.locator("#view tbody tr").first.inner_text()
     page.click("text=Top by memory")
@@ -167,7 +169,7 @@ def test_process_sort_toggle(make_page, base_url):
 def test_api_failure_shows_unreachable(make_page, base_url):
     page = make_page()
     page.route("**/api/ports", lambda r: r.fulfill(status=500, json={"error": "boom"}))
-    open_tab_ports = f"{base_url}/#ports"
+    open_tab_ports = f"{base_url}/#system/ports"
     page.goto(open_tab_ports)
     page.wait_for_function("document.getElementById('conn').textContent.includes('unreachable')")
     assert "boom" in page.locator("#view").inner_text()
@@ -333,7 +335,7 @@ def test_nothing_polls_in_the_background(make_page, base_url, tab):
 def test_each_tab_visit_fetches_once(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
-    open_tab(page, base_url, "ports")
+    open_tab(page, base_url, "system/ports")
     page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
     assert seen.count("ports") == 1 and seen.count("version") == 1
 
@@ -341,7 +343,7 @@ def test_each_tab_visit_fetches_once(make_page, base_url):
 def test_refresh_button_reloads_the_current_tab(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
-    open_tab(page, base_url, "ports")
+    open_tab(page, base_url, "system/ports")
     page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
     seen.clear()
     page.click("#refresh")
@@ -683,7 +685,7 @@ def test_process_uptime_stays_on_one_line_on_phone(make_page, base_url):
         {"pid": 4242, "user": "guy", "cpu": 1.0, "rss": 2**30, "age_s": 109800, "cmd": "node /usr/lib/node_modules/" + "x" * 200}]}
     page = make_page(*PHONE)
     page.route("**/api/processes", lambda r: r.fulfill(json=procs))
-    open_tab(page, base_url, "processes")
+    open_tab(page, base_url, "system/processes")
     page.wait_for_selector("#view tbody td")
     assert page.locator("#view tbody td:nth-child(4)").first.inner_text() == "1d 6h 30m"
     assert line_count(page, "#view tbody td:nth-child(4)") == 1
@@ -738,7 +740,7 @@ def test_lab_does_not_overflow_on_phone(make_page, base_url):
 def test_process_command_is_readable_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     page.route("**/api/processes", lambda r: r.fulfill(json=PROCS))
-    open_tab(page, base_url, "processes")
+    open_tab(page, base_url, "system/processes")
     cmd = page.locator("#view td.cmd").first
     assert cmd.inner_text() == LONG_CMD
     box = cmd.bounding_box()
@@ -759,7 +761,7 @@ def test_cell_labels_use_the_header_text(make_page, base_url):
 def test_long_command_wraps_to_two_lines_on_desktop(make_page, base_url):
     page = make_page(1100, 900)
     page.route("**/api/processes", lambda r: r.fulfill(json=PROCS))
-    open_tab(page, base_url, "processes")
+    open_tab(page, base_url, "system/processes")
     cmd = page.locator("#view td.cmd").first
     lines = cmd.evaluate("""e => { const s = getComputedStyle(e);
         return Math.round((e.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom)) / parseFloat(s.lineHeight)); }""")
@@ -772,7 +774,7 @@ def test_columns_with_no_values_are_hidden(make_page, base_url):
             {"port": 53, "address": "127.0.0.1", "exposure": "local only", "process": "", "pid": None}]
     page = make_page()
     page.route("**/api/ports", lambda r: r.fulfill(json=rows))
-    open_tab(page, base_url, "ports")
+    open_tab(page, base_url, "system/ports")
     assert page.locator("#view thead").inner_text().split("\n")[-1].strip().lower() != "process"
     assert "–" not in page.locator("#view tbody").inner_text()
 
@@ -782,7 +784,7 @@ def test_columns_with_some_values_are_kept(make_page, base_url):
             {"port": 7788, "address": "127.0.0.1", "exposure": "local only", "process": "openhuman-core", "pid": 9}]
     page = make_page()
     page.route("**/api/ports", lambda r: r.fulfill(json=rows))
-    open_tab(page, base_url, "ports")
+    open_tab(page, base_url, "system/ports")
     assert "PROCESS" in page.locator("#view thead").inner_text().upper()
     assert "openhuman-core (9)" in page.locator("#view tbody").inner_text()
 
@@ -792,3 +794,84 @@ def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
     open_lab(page, base_url)
     head = page.locator("#view table").first.locator("thead").inner_text().upper()
     assert "OPENCLAW" in head and "OPENHUMAN" in head  # neither has a run yet; the "–" cells are the point
+
+
+# ---------- navigation ----------
+
+def test_nav_has_five_tabs(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    assert page.locator("nav a").all_inner_texts() == NAV
+
+
+def test_every_nav_link_is_on_screen_on_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    open_tab(page, base_url, "overview")
+    for link in page.locator("nav a").all():
+        box = link.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE[0], f"{link.inner_text()} is off-screen"
+
+
+def status(docker):
+    """Just what the sidebar reads from /api/status on a System tab."""
+    return {"hostname": "box", "model": "Raspberry Pi 5", "docker_installed": docker}
+
+
+def subtab(page):
+    return page.locator("#view .subtabs a[aria-current=page]").inner_text()
+
+
+@pytest.mark.parametrize("sub", SYSTEM)
+def test_system_sub_tabs_mark_system_and_themselves(make_page, base_url, sub):
+    page = make_page()
+    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=True)))
+    open_tab(page, base_url, f"system/{sub}")
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "system"
+    assert subtab(page) == sub.capitalize()
+    assert page.locator("#view h2").inner_text() == "System"
+
+
+def test_system_opens_on_services(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_tab(page, base_url, "system")
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert subtab(page) == "Services" and "Your user services" in page.locator("#view").inner_text()
+    assert seen.count("services") == 1
+
+
+def test_sub_tab_links_switch_views(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "system/services")
+    page.click("#view .subtabs a:text('Processes')")
+    page.wait_for_selector("#view .seg button:text('Top by CPU')")
+    assert page.url.endswith("#system/processes") and subtab(page) == "Processes"
+
+
+@pytest.mark.parametrize("old", SYSTEM)
+def test_old_hashes_redirect_to_system(make_page, base_url, old):
+    page = make_page()
+    seen = count_api_requests(page)
+    page.goto(f"{base_url}/#{old}")
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert page.url.endswith(f"#system/{old}")
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "system"
+    assert seen.count(old) == 1   # the redirect doesn't load the view twice
+
+
+@pytest.mark.parametrize("installed, expected", [(False, ["Services", "Processes", "Ports"]),
+                                                 (True, ["Services", "Processes", "Ports", "Docker"])])
+def test_docker_sub_tab_only_when_installed(make_page, base_url, installed, expected):
+    page = make_page()
+    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=installed)))
+    open_tab(page, base_url, "system/services")
+    page.wait_for_function(f"document.querySelectorAll('#view .subtabs a').length === {len(expected)}")
+    assert page.locator("#view .subtabs a").all_inner_texts() == expected
+
+
+def test_docker_sub_tab_still_opens_by_link_when_not_installed(make_page, base_url):
+    page = make_page()
+    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=False)))
+    page.route("**/api/docker", lambda r: r.fulfill(json={"installed": False, "containers": []}))
+    open_tab(page, base_url, "system/docker")
+    assert subtab(page) == "Docker" and "isn't installed" in page.locator("#view").inner_text()

@@ -96,6 +96,7 @@ def status() -> dict:
         "local_ip": route.get("prefsrc", ""),
         "gateway": route.get("gateway", ""),
         "connection": connection_label(route.get("dev", "")),
+        "docker_installed": shutil.which("docker") is not None,
         "time": int(time.time()),
     }
 

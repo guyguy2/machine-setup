@@ -14,7 +14,7 @@ from playwright.sync_api import sync_playwright
 
 from pi_status import Handler
 
-TABS = ["overview", "network", "agents", "lab", "docker", "services", "processes", "ports"]
+TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
 VIEWPORTS = {"desktop": (1280, 900), "phone": (390, 844)}
 
 
@@ -41,7 +41,7 @@ def main() -> None:
                 page.goto(f"{url}/#{tab}")
                 page.wait_for_selector("#view h2")
                 page.wait_for_timeout(500)
-                path = out / f"{tab}-{name}.png"
+                path = out / f"{tab.replace('/', '-')}-{name}.png"
                 page.screenshot(path=path, full_page=True)
                 print(path)
             page.close()
