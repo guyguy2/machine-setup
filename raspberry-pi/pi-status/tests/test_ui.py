@@ -128,10 +128,10 @@ def test_command_lines_are_escaped_not_injected(make_page, base_url):
     page = make_page()
     page.route("**/api/agents", lambda r: r.fulfill(json=agents))
     open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view table")
+    page.wait_for_selector("#view .agent")
     assert page.evaluate("window.pwned") is None
     assert page.locator("#view img").count() == 0
-    assert evil in page.locator("#view").inner_text()
+    assert evil in page.locator("#view .agent").text_content()
 
 
 def test_docker_not_installed_message(make_page, base_url):
@@ -149,22 +149,6 @@ def test_docker_containers_table(make_page, base_url):
     open_tab(page, base_url, "docker")
     page.wait_for_selector("#view table")
     assert "web" in page.locator("#view tbody").inner_text() and "nginx" in page.locator("#view tbody").inner_text()
-
-
-def test_agents_show_idle_ones_as_not_running(make_page, base_url):
-    data = [
-        {"name": "Hermes", "kind": "Agent", "instances": []},
-        {"name": "OpenHuman", "kind": "Personal assistant", "unit": "openhuman.service", "unit_state": "active", "instances": [
-            {"pid": 7, "user": "guy", "cpu": 0.0, "rss": 2**20, "age_s": 99, "cwd": "~", "ports": ["127.0.0.1:7788"], "cmd": "openhuman-core run"}]},
-    ]
-    page = make_page()
-    page.route("**/api/agents", lambda r: r.fulfill(json=data))
-    open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view table")
-    cards = page.locator("#view .agent")
-    assert "OpenHuman" in cards.nth(0).inner_text()  # running ones sort first
-    assert "not running" in cards.nth(1).inner_text()
-    assert "127.0.0.1:7788" in cards.nth(0).inner_text()
 
 
 def test_process_sort_toggle(make_page, base_url):
@@ -201,7 +185,7 @@ def test_agents_tab_shows_sign_in_status(make_page, base_url):
     page = make_page()
     page.route("**/api/auth", lambda r: r.fulfill(json=AUTH))
     open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view table")
+    page.wait_for_selector("#view .signins table")
     text = page.locator("#view").inner_text()
     for expected in ["Sign-ins", "Google Cloud", "gcloud", "Google Workspace", "gws", "gh", "me@x.com", "project demo",
                      "signed in", "expired", "signed out", "not installed"]:
@@ -213,7 +197,7 @@ def test_agents_tab_survives_sign_in_failure(make_page, base_url):
     page = make_page()
     page.route("**/api/auth", lambda r: r.fulfill(status=500, json={"error": "boom"}))
     open_tab(page, base_url, "agents")
-    page.wait_for_function("document.querySelector('#view')?.textContent.includes('Running agents')")
+    page.wait_for_selector("#view .agent")
     assert "Sign-in status unavailable" in page.locator("#view").inner_text()
     assert "Claude Code" in page.locator("#view").inner_text()  # the agent list still renders
 
@@ -222,7 +206,7 @@ def test_sign_in_table_fits_phone(make_page, base_url):
     page = make_page(*PHONE)
     page.route("**/api/auth", lambda r: r.fulfill(json=AUTH))
     open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view table")
+    page.wait_for_selector("#view .signins table")
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
 
@@ -480,45 +464,160 @@ def test_lab_fits_phone(make_page, base_url, hash):
     assert widths[0] <= widths[1]
 
 
-DASHBOARDS = [
-    {"name": "Hermes", "what": "Web dashboard", "running": False, "start": "hermes dashboard --no-open", "tailnet_url": "",
-     "publish": "tailscale serve --bg --https=8443 9119", "tunnel": "ssh -N -L 9119:localhost:9119 pi", "local_url": "http://localhost:9119/"},
-    {"name": "OpenClaw", "what": "Control UI", "running": True, "start": "openclaw gateway run",
-     "tailnet_url": "https://box.tail9.ts.net:8444/", "publish": "tailscale serve --bg --https=8444 18789",
-     "tunnel": "ssh -N -L 18789:localhost:18789 pi", "local_url": "http://localhost:18789/"},
-    {"name": "OpenHuman", "what": "Desktop app and TUI only"},
+def proc(pid, cwd="~", ports=(), cmd="x", age_s=900, rss=400 * 2**20):
+    return {"pid": pid, "user": "guy", "cpu": 1.5, "rss": rss, "age_s": age_s, "cwd": cwd, "ports": list(ports), "cmd": cmd}
+
+
+AGENTS = [
+    {"name": "Claude Code", "kind": "Coding agent", "instances": [
+        proc(11, "~/dev/pi-status", cmd="claude --model=opus"), proc(12, "~/dev", cmd="claude --model=sonnet", age_s=60)]},
+    {"name": "OpenHuman", "kind": "Personal assistant", "unit": "openhuman.service", "unit_state": "inactive", "instances": []},
+    {"name": "Hermes", "kind": "Agent", "unit": "hermes-dashboard.service", "unit_state": "active",   # up, port not open yet
+     "instances": [proc(21, cmd="hermes dashboard --no-open")]},
+    {"name": "OpenClaw", "kind": "Personal assistant", "unit": "openclaw-gateway.service", "unit_state": "active",
+     "instances": [proc(31, ports=["127.0.0.1:18789"], cmd="openclaw-gateway")]},
 ]
 
+DASHBOARDS = [
+    {"name": "Hermes", "what": "Web dashboard", "running": False, "tailnet_url": "https://box.tail9.ts.net:8443/",
+     "publish": "tailscale serve --bg --https=8443 9119", "tunnel": "ssh -N -L 9119:localhost:9119 pi", "local_url": "http://localhost:9119/"},
+    {"name": "OpenClaw", "what": "Control UI", "running": True, "tailnet_url": "https://box.tail9.ts.net:8444/",
+     "publish": "tailscale serve --bg --https=8444 18789", "tunnel": "ssh -N -L 18789:localhost:18789 pi", "local_url": "http://localhost:18789/"},
+    {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
+]
 
-def test_agents_tab_links_dashboards(make_page, base_url):
-    page = make_page()
-    page.route("**/api/dashboards", lambda r: r.fulfill(json=DASHBOARDS))
+SIGNED_IN = {"checked_at": 0, "services": [{**s, "state": "signed_in"} for s in AUTH["services"]]}
+
+
+def open_agents(page, base_url, agents=AGENTS, dash=DASHBOARDS, auth=SIGNED_IN):
+    page.route("**/api/agents", lambda r: r.fulfill(json=agents))
+    page.route("**/api/dashboards", lambda r: r.fulfill(json=dash))
+    page.route("**/api/auth", lambda r: r.fulfill(json=auth))
     open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view .dashboard")
-    cards = page.locator("#view .dashboard")
-    hermes, openclaw, openhuman = (cards.nth(i).inner_text() for i in range(3))
-    assert "not running" in hermes and "hermes dashboard --no-open" in hermes and "not published yet" in hermes
-    assert page.locator("#view a[href='https://box.tail9.ts.net:8444/']").count() == 1
-    assert "ssh -N -L 18789:localhost:18789 pi" in openclaw and "Start it" not in openclaw
-    assert "no web UI" in openhuman and "ssh" not in openhuman
+    page.wait_for_selector("#view .agent")
+    return {c.locator(".card-head strong").inner_text(): c for c in page.locator("#view .agent").all()}
+
+
+def test_each_agent_appears_once(make_page, base_url):
+    page = make_page()
+    cards = open_agents(page, base_url)
+    names = page.locator("#view .agent .card-head strong").all_inner_texts()
+    assert sorted(names) == sorted({"Claude Code", "OpenHuman", "Hermes", "OpenClaw"})
+    assert names[-1] == "OpenHuman"   # running ones first, stopped last
+    assert page.locator("#view .dashboard").count() == 0
+    assert "Start it on the Pi" not in page.locator("#view").text_content()  # the Start button replaces it
+    after = page.evaluate("[...document.querySelectorAll('#view .agent')].pop().compareDocumentPosition(document.querySelector('#view .signins'))")
+    assert after & 4, "sign-ins come after the agent cards"
     assert page.errors == []
+
+
+def test_agent_status_words(make_page, base_url):
+    page = make_page()
+    cards = open_agents(page, base_url)
+    pills = {name: c.locator(".card-head .pill").all_inner_texts() for name, c in cards.items()}
+    assert pills == {"Claude Code": ["running · 2"], "OpenClaw": ["running"],
+                     "Hermes": ["starting"],      # its unit is active, its dashboard port isn't listening yet
+                     "OpenHuman": ["stopped"]}    # one pill each: no separate unit-state pill
+
+
+def test_running_published_agent_has_an_open_link(make_page, base_url):
+    page = make_page()
+    cards = open_agents(page, base_url)
+    assert cards["OpenClaw"].locator("a", has_text="Open").get_attribute("href") == "https://box.tail9.ts.net:8444/"
+    assert cards["Hermes"].locator("a", has_text="Open").count() == 0     # published, but not listening yet
+    assert page.locator("#view a[href^='https://box.tail9.ts.net']").count() == 1
+
+
+def test_stopped_agent_has_no_open_link(make_page, base_url):
+    stopped = [{**a, "unit_state": "inactive", "instances": []} if a["name"] == "OpenClaw" else a for a in AGENTS]
+    dash = [{**d, "running": False} if d["name"] == "OpenClaw" else d for d in DASHBOARDS]
+    page = make_page()
+    cards = open_agents(page, base_url, stopped, dash)
+    assert cards["OpenClaw"].locator(".card-head .pill").inner_text() == "stopped"
+    assert cards["OpenClaw"].locator(".service-btn").inner_text() == "Start"
+    assert page.locator("#view a[href^='https://box.tail9.ts.net']").count() == 0
+
+
+def test_unpublished_dashboard_shows_the_publish_command(make_page, base_url):
+    dash = [{**d, "tailnet_url": ""} if d["name"] == "Hermes" else d for d in DASHBOARDS]
+    page = make_page()
+    cards = open_agents(page, base_url, dash=dash)
+    text = cards["Hermes"].inner_text()
+    assert "not published yet" in text and "tailscale serve --bg --https=8443 9119" in text
+
+
+def test_agent_reference_details_are_under_more(make_page, base_url):
+    page = make_page()
+    claw = open_agents(page, base_url)["OpenClaw"]
+    assert "ssh -N -L 18789" not in claw.inner_text()       # collapsed by default
+    assert "up 15m · 1.5% CPU · 400 MB" in claw.inner_text()  # the summary line stays visible
+    claw.locator("summary", has_text="More").click()
+    text = claw.inner_text()
+    for expected in ["ssh -N -L 18789:localhost:18789 pi", "http://localhost:18789/", "openclaw-gateway.service", "127.0.0.1:18789"]:
+        assert expected in text
+    assert claw.locator("table").count() == 1               # the process table
+
+
+def test_no_web_ui_agent_says_so(make_page, base_url):
+    page = make_page()
+    human = open_agents(page, base_url)["OpenHuman"]
+    assert "no web dashboard yet" in human.inner_text() and "ssh" not in human.text_content()
+
+
+def test_claude_code_has_one_row_per_session(make_page, base_url):
+    page = make_page()
+    claude = open_agents(page, base_url)["Claude Code"]
+    rows = claude.locator(".session")
+    assert rows.count() == 2
+    assert "~/dev/pi-status" in rows.nth(0).inner_text() and "up 15m" in rows.nth(0).inner_text() and "400 MB" in rows.nth(0).inner_text()
+    assert "claude --model=opus" not in rows.nth(0).inner_text()  # the full command is one click away
+    rows.nth(0).locator("summary").click()
+    assert "claude --model=opus" in rows.nth(0).inner_text()
+
+
+def test_sign_ins_collapse_to_one_line_when_all_signed_in(make_page, base_url):
+    page = make_page()
+    open_agents(page, base_url)
+    box = page.locator("#view .signins details")
+    assert box.get_attribute("open") is None
+    assert box.locator("summary").inner_text().startswith("4 of 4 signed in · checked ")
+
+
+def test_sign_ins_open_when_one_is_expired(make_page, base_url):
+    page = make_page()
+    open_agents(page, base_url, auth=AUTH)
+    box = page.locator("#view .signins details")
+    assert box.get_attribute("open") is not None
+    assert box.locator("summary").inner_text().startswith("1 of 4 signed in")
+    assert "expired" in box.inner_text()
 
 
 def test_agents_tab_survives_dashboard_failure(make_page, base_url):
     page = make_page()
+    page.route("**/api/agents", lambda r: r.fulfill(json=AGENTS))
     page.route("**/api/dashboards", lambda r: r.fulfill(status=500, json={"error": "boom"}))
     open_tab(page, base_url, "agents")
-    page.wait_for_function("document.querySelector('#view')?.textContent.includes('Running agents')")
+    page.wait_for_selector("#view .agent")
     assert "Dashboard status unavailable" in page.locator("#view").inner_text()
+    assert page.locator("#view .agent").count() == 4
+    assert page.locator("#view .agent", has_text="Hermes").locator(".card-head .pill").inner_text() == "running"  # the unit says so
 
 
-def test_dashboards_fit_phone(make_page, base_url):
+def test_status_stays_next_to_its_button_on_phone(make_page, base_url):
     page = make_page(*PHONE)
-    page.route("**/api/dashboards", lambda r: r.fulfill(json=DASHBOARDS))
-    open_tab(page, base_url, "agents")
-    page.wait_for_selector("#view .dashboard")
-    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
-    assert widths[0] <= widths[1]
+    cards = open_agents(page, base_url)
+    for name in ("OpenClaw", "OpenHuman", "Hermes"):
+        # both boxes in one call: the sidebar loading in between can shift the whole view
+        middles = cards[name].evaluate("""c => [".card-head .pill", ".service-btn"].map(s => {
+            const b = c.querySelector(s).getBoundingClientRect(); return b.top + b.height / 2; })""")
+        assert abs(middles[0] - middles[1]) < 4, f"{name}: split across lines"
+
+
+def test_agent_cards_fit_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    open_agents(page, base_url, auth=AUTH)
+    page.evaluate("document.querySelectorAll('#view details').forEach(d => d.open = true)")
+    assert page.evaluate(OVERFLOWING) == []
 
 
 SERVICE_AGENTS = [

@@ -489,6 +489,7 @@ def test_dashboards_link_only_what_tailscale_publishes(monkeypatch):
     assert result["Hermes"]["publish"] == "tailscale serve --bg --https=8443 9119"
     assert result["Hermes"]["tunnel"] == "ssh -N -L 9119:localhost:9119 pi"
     assert "local_url" not in result["OpenHuman"]  # placeholder: no web UI
+    assert "start" not in result["Hermes"]  # its service has a Start button; a manual start would clash over the port
 
 
 def test_dashboards_without_tailscale(monkeypatch):

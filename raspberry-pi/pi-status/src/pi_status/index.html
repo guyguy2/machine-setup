@@ -90,6 +90,12 @@
   .copy { border: 1px solid var(--track); background: transparent; color: var(--text); border-radius: 6px; padding: 3px 10px;
           font: inherit; font-size: .8125rem; cursor: pointer; min-width: 64px; }
   .copy:hover { background: var(--track); }
+  a.copy { color: var(--text); text-decoration: none; text-align: center; }
+  .card-head .status { display: inline-flex; align-items: center; gap: 10px; }
+  .session { padding: 6px 0; border-top: 1px solid var(--track); overflow-wrap: anywhere; }
+  .session details summary { margin-top: 2px; }
+  .signins summary { margin: 0; color: var(--text); font-size: 1rem; }
+  .signins details[open] summary { margin-bottom: 8px; }
   .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* agent lab: one fixed color per agent (validated categorical slots 1-3, light and dark) */
@@ -349,38 +355,23 @@ const AUTH_PILL = {
 function signIns(auth) {
   if (!auth) return [h("h3", {}, "Sign-ins"), empty("Sign-in status unavailable.")];
   const ago = Math.max(0, Math.round(Date.now() / 1000 - auth.checked_at));
+  const ok = auth.services.filter(a => a.state === "signed_in").length;
   return [
     h("h3", {}, "Sign-ins"),
-    h("div", { class: "card" },
+    h("div", { class: "card signins" }, h("details", { open: ok < auth.services.length || null },  // opens itself when one needs you
+      h("summary", {}, `${ok} of ${auth.services.length} signed in · checked ${dur(ago)} ago`),
       table([
         { label: "Service", value: a => h("span", {}, a.name, " ", h("span", { class: "sub mono" }, a.command)) },
         { label: "Status", value: a => pill(...AUTH_PILL[a.state] || [a.state, ""]) },
         { label: "Account", value: a => a.account || "–" },
         { label: "Details", value: a => a.detail || "–" },
       ], auth.services),
-      h("div", { class: "sub", style: "margin-top:8px" }, `Local checks only; no tokens are shown. Checked ${dur(ago)} ago.`)),
+      h("div", { class: "sub", style: "margin-top:8px" }, "Local checks only; no tokens are shown."))),
   ];
 }
 
-function dashboards(list) {
-  if (!list) return [h("h3", { style: "margin-top:0" }, "Dashboards"), empty("Dashboard status unavailable.")];
-  const row = (label, el, copy) => h("div", { class: "ssh-row" }, h("div", { class: "ssh-label" }, label), el, copy || h("span"));
-  return [
-    h("h3", { style: "margin-top:0" }, "Dashboards"),
-    list.map(d => h("div", { class: "card dashboard" },
-      h("div", { class: "card-head" },
-        h("strong", {}, d.name), h("span", { class: "sub" }, d.what),
-        d.local_url ? (d.running ? pill("running", "ok") : pill("not running")) : pill("no web UI")),
-      d.local_url && [
-        !d.running && row("Start it on the Pi", h("code", { class: "mono ssh-cmd" }, d.start), copyButton(d.start)),
-        d.tailnet_url
-          ? row("On your tailnet", h("a", { class: "mono ssh-cmd", href: d.tailnet_url, target: "_blank", rel: "noopener" }, d.tailnet_url), copyButton(d.tailnet_url))
-          : row("On your tailnet (not published yet)", h("code", { class: "mono ssh-cmd" }, d.publish), copyButton(d.publish)),
-        row("Without Tailscale: tunnel over SSH", h("code", { class: "mono ssh-cmd" }, d.tunnel), copyButton(d.tunnel)),
-        row("…then open on that machine", h("code", { class: "mono ssh-cmd" }, d.local_url), copyButton(d.local_url)),
-      ])),
-  ];
-}
+const copyRow = (label, text) => h("div", { class: "ssh-row" },
+  h("div", { class: "ssh-label" }, label), h("code", { class: "mono ssh-cmd" }, text), copyButton(text));
 
 let agentError = "";  // the last failed Start/Stop, shown above the cards until the next attempt
 
@@ -410,29 +401,62 @@ function serviceButton(a) {
   }, up ? "Stop" : "Start");
 }
 
+const UNIT_STATUS = { active: ["running", "ok"], reloading: ["running", "ok"], activating: ["starting", "warn"],
+                      deactivating: ["stopping", "warn"], failed: ["failed", "bad"] };  // anything else: stopped
+
+// An agent with a service goes by its unit; one without (Claude Code) by its processes.
+function agentStatus(a, d) {
+  if (!a.unit) return a.instances.length ? [`running · ${a.instances.length}`, "ok"] : ["stopped", ""];
+  const [word, kind] = UNIT_STATUS[a.unit_state] || ["stopped", ""];
+  if (word === "running" && d && d.local_url && !d.running) return ["starting", "warn"];  // up, dashboard not listening yet
+  return [word, kind];
+}
+
+// oldest process's uptime, total CPU and memory
+const usage = ps => `up ${dur(Math.max(...ps.map(p => p.age_s)))} · ${ps.reduce((t, p) => t + p.cpu, 0).toFixed(1)}% CPU · ${size(ps.reduce((t, p) => t + p.rss, 0))}`;
+
+const session = p => h("div", { class: "session" },
+  h("span", { class: "mono" }, p.cwd || "–"), h("span", { class: "sub" }, ` · up ${dur(p.age_s)} · ${size(p.rss)}`),
+  h("details", {}, h("summary", {}, "Command"), h("pre", { class: "mono prompt" }, p.cmd)));
+
+function agentCard(a, d) {
+  const [word, kind] = agentStatus(a, d);
+  const web = d && d.local_url;
+  const ps = a.instances;
+  const summary = [
+    a.unit && ps.length && (UNIT_STATUS[a.unit_state] ? usage(ps) : `running outside ${a.unit}: ${usage(ps)}`),
+    d && !web && d.what,
+  ].filter(Boolean).join(" · ");
+  return h("div", { class: "card agent" },
+    h("div", { class: "card-head" },
+      h("strong", {}, a.name), h("span", { class: "sub" }, a.kind),
+      h("span", { class: "status" }, pill(word, kind),  // wraps as one, so the status stays beside its buttons
+        web && d.running && d.tailnet_url &&
+          h("a", { class: "copy", href: d.tailnet_url, target: "_blank", rel: "noopener", title: d.what }, "Open"),
+        a.unit && serviceButton(a))),
+    summary && h("div", { class: "detail" }, summary),
+    web && !d.tailnet_url && copyRow("On your tailnet (not published yet)", d.publish),
+    !a.unit && ps.map(session),
+    a.unit && h("details", {}, h("summary", {}, "More"),
+      web && [copyRow("Without Tailscale: tunnel over SSH", d.tunnel), copyRow("…then open on that machine", d.local_url)],
+      h("div", { class: "sub", style: "margin:8px 0" }, "Service: ", h("span", { class: "mono" }, a.unit)),
+      ps.length && table([
+        ...procCols,
+        { label: "Directory", mono: true, value: p => p.cwd },
+        { label: "Listening", mono: true, value: p => p.ports.join(", ") || "–" },
+        cmdCol,
+      ], ps)));
+}
+
 function agents(list, auth, dash) {
-  const running = a => a.instances.length > 0;
-  const sorted = [...list].sort((a, b) => running(b) - running(a));
+  const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
+  const live = a => agentStatus(a, byName[a.name])[0] !== "stopped";
   return [
     h("h2", {}, "Agents & assistants"),
     agentError && h("div", { class: "alert" }, agentError),
-    dashboards(dash),
+    !dash && h("div", { class: "sub", style: "margin-bottom:12px" }, "Dashboard status unavailable."),
+    [...list].sort((a, b) => live(b) - live(a)).map(a => agentCard(a, byName[a.name])),
     signIns(auth),
-    h("h3", {}, "Running agents"),
-    sorted.map(a => h("div", { class: "card agent" },
-      h("div", { class: "card-head" },
-        h("strong", {}, a.name), h("span", { class: "sub" }, a.kind),
-        running(a) ? pill(`running · ${a.instances.length}`, "ok") : pill("not running"),
-        a.unit && pill(`${a.unit}: ${a.unit_state}`, a.unit_state === "active" ? "ok" : a.unit_state === "failed" ? "bad" : ""),
-        a.unit && serviceButton(a)),
-      running(a)
-        ? table([
-            ...procCols,
-            { label: "Directory", mono: true, value: p => p.cwd },
-            { label: "Listening", mono: true, value: p => p.ports.join(", ") || "–" },
-            cmdCol,
-          ], a.instances)
-        : null)),
   ];
 }
 
