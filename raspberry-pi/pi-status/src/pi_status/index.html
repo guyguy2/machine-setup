@@ -328,10 +328,10 @@ const AUTH_PILL = {
 };
 
 function signIns(auth) {
-  if (!auth) return [h("h3", { style: "margin-top:0" }, "Sign-ins"), empty("Sign-in status unavailable.")];
+  if (!auth) return [h("h3", {}, "Sign-ins"), empty("Sign-in status unavailable.")];
   const ago = Math.max(0, Math.round(Date.now() / 1000 - auth.checked_at));
   return [
-    h("h3", { style: "margin-top:0" }, "Sign-ins"),
+    h("h3", {}, "Sign-ins"),
     h("div", { class: "card" },
       table([
         { label: "Service", value: a => h("span", {}, a.name, " ", h("span", { class: "sub mono" }, a.command)) },
@@ -343,11 +343,32 @@ function signIns(auth) {
   ];
 }
 
-function agents(list, auth) {
+function dashboards(list) {
+  if (!list) return [h("h3", { style: "margin-top:0" }, "Dashboards"), empty("Dashboard status unavailable.")];
+  const row = (label, el, copy) => h("div", { class: "ssh-row" }, h("div", { class: "ssh-label" }, label), el, copy || h("span"));
+  return [
+    h("h3", { style: "margin-top:0" }, "Dashboards"),
+    list.map(d => h("div", { class: "card dashboard" },
+      h("div", { class: "card-head" },
+        h("strong", {}, d.name), h("span", { class: "sub" }, d.what),
+        d.local_url ? (d.running ? pill("running", "ok") : pill("not running")) : pill("no web UI")),
+      d.local_url && [
+        !d.running && row("Start it on the Pi", h("code", { class: "mono ssh-cmd" }, d.start), copyButton(d.start)),
+        d.tailnet_url
+          ? row("On your tailnet", h("a", { class: "mono ssh-cmd", href: d.tailnet_url, target: "_blank", rel: "noopener" }, d.tailnet_url), copyButton(d.tailnet_url))
+          : row("On your tailnet (not published yet)", h("code", { class: "mono ssh-cmd" }, d.publish), copyButton(d.publish)),
+        row("Without Tailscale: tunnel over SSH", h("code", { class: "mono ssh-cmd" }, d.tunnel), copyButton(d.tunnel)),
+        row("…then open on that machine", h("code", { class: "mono ssh-cmd" }, d.local_url), copyButton(d.local_url)),
+      ])),
+  ];
+}
+
+function agents(list, auth, dash) {
   const running = a => a.instances.length > 0;
   const sorted = [...list].sort((a, b) => running(b) - running(a));
   return [
     h("h2", {}, "Agents & assistants"),
+    dashboards(dash),
     signIns(auth),
     h("h3", {}, "Running agents"),
     sorted.map(a => h("div", { class: "card agent" },
@@ -561,7 +582,7 @@ function ports(list) {
 const TABS = [
   { id: "overview", title: "Overview", api: "/api/status", render: overview },
   { id: "network", title: "Network", api: "/api/network", render: network },
-  { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth"], render: agents },
+  { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
   { id: "lab", title: "Agent lab", api: "/api/lab", render: lab },
   { id: "docker", title: "Docker", api: "/api/docker", render: docker },
   { id: "services", title: "Services", api: "/api/services", render: services },
