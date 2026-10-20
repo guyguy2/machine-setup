@@ -195,8 +195,8 @@ def top_processes() -> dict:
 AGENTS = [
     {"name": "Claude Code", "kind": "Coding agent", "match": ("claude",)},
     {"name": "OpenHuman", "kind": "Personal assistant", "match": ("openhuman", "open-human"), "unit": "openhuman.service"},
-    {"name": "Hermes", "kind": "Agent", "match": ("hermes",)},
-    {"name": "OpenClaw", "kind": "Personal assistant", "match": ("openclaw",)},
+    {"name": "Hermes", "kind": "Agent", "match": ("hermes",), "unit": "hermes-dashboard.service"},
+    {"name": "OpenClaw", "kind": "Personal assistant", "match": ("openclaw",), "unit": "openclaw-gateway.service"},
     # not installed here; listed only while running
     {"name": "Codex", "kind": "Coding agent", "match": ("codex",), "optional": True},
     {"name": "Gemini CLI", "kind": "Coding agent", "match": ("gemini",), "optional": True},
@@ -244,6 +244,25 @@ def agents() -> list[dict]:
             entry["unit_state"] = run("systemctl", "--user", "is-active", spec["unit"]) or "unknown"
         result.append(entry)
     return result
+
+
+AGENT_UNITS = {spec["unit"] for spec in AGENTS if "unit" in spec}  # the only units the page may start or stop
+
+
+def control_agent(unit: str, action: str) -> tuple[int, dict]:
+    """Start or stop an agent's user service from the page. A stop is systemd's graceful one: SIGTERM, then up to
+    the unit's TimeoutStopSec to clean up before SIGKILL (90s by default; OpenClaw's unit allows 330s to drain
+    active turns). This waits for it, however long it takes."""
+    if unit not in AGENT_UNITS or action not in ("start", "stop"):
+        return 404, {"error": f"not an agent service: {unit}"}
+    try:
+        done = subprocess.run(["systemctl", "--user", action, unit], capture_output=True, text=True, timeout=360)
+    except subprocess.TimeoutExpired:
+        return 504, {"error": f"{unit} is still stopping; check again in a moment"}
+    state = run("systemctl", "--user", "is-active", unit) or "unknown"
+    if done.returncode:
+        return 500, {"error": done.stderr.strip() or f"systemctl {action} failed", "state": state}
+    return 200, {"unit": unit, "state": state}
 
 
 # ---------- agent lab ----------

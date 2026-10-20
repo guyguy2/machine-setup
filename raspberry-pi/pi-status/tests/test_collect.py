@@ -475,3 +475,31 @@ def test_dashboards_without_tailscale(monkeypatch):
     monkeypatch.setattr(collect, "tailscale_info", lambda: {})
     monkeypatch.setattr(collect, "run", lambda *cmd: "")
     assert all(d.get("tailnet_url", "") == "" for d in collect.dashboards())
+
+
+def test_control_agent_refuses_units_that_are_not_agents(monkeypatch):
+    called = []
+    monkeypatch.setattr(collect.subprocess, "run", lambda *a, **k: called.append(a))
+    assert collect.control_agent("ssh.service", "stop")[0] == 404
+    assert collect.control_agent("pi-status.service", "stop")[0] == 404
+    assert collect.control_agent("openhuman.service", "restart")[0] == 404
+    assert called == []
+
+
+def test_control_agent_stops_gracefully_and_reports_state(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(collect.subprocess, "run", fake_run)
+    monkeypatch.setattr(collect, "run", lambda *cmd: "inactive")
+    assert collect.control_agent("hermes-dashboard.service", "stop") == (200, {"unit": "hermes-dashboard.service", "state": "inactive"})
+    assert calls == [["systemctl", "--user", "stop", "hermes-dashboard.service"]]  # plain stop: SIGTERM, then the stop timeout
+
+
+def test_control_agent_reports_systemctl_failure(monkeypatch):
+    monkeypatch.setattr(collect.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 5, "", "Unit not loaded."))
+    monkeypatch.setattr(collect, "run", lambda *cmd: "inactive")
+    code, body = collect.control_agent("openclaw-gateway.service", "start")
+    assert code == 500 and body["error"] == "Unit not loaded."

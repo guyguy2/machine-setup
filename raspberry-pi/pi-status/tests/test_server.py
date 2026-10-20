@@ -110,3 +110,32 @@ def test_restart_is_not_available_as_a_get_or_unknown_post(base_url, restarts):
 def test_version_reports_can_restart(base_url, monkeypatch):
     monkeypatch.setattr(pi_status.collect, "can_restart", lambda: True)
     assert json.loads(get(base_url + "/api/version")[2])["can_restart"] is True
+
+
+# ---------- agent start/stop endpoint ----------
+
+@pytest.fixture
+def controls(monkeypatch):
+    """Record start/stop requests instead of touching real services."""
+    calls = []
+    monkeypatch.setattr(pi_status.collect, "control_agent",
+                        lambda unit, action: (calls.append((unit, action)), (200, {"unit": unit, "state": "inactive"}))[1])
+    return calls
+
+
+def test_agent_control_requires_the_custom_header(base_url, controls):
+    status, body = post(base_url + "/api/agents/hermes-dashboard.service/stop")
+    assert status == 403 and "X-Requested-With" in body["error"]
+    assert controls == []
+
+
+def test_agent_control_passes_unit_and_action(base_url, controls):
+    status, body = post(base_url + "/api/agents/openclaw-gateway.service/stop", {"X-Requested-With": "pi-status"})
+    assert status == 200 and body["state"] == "inactive"
+    assert controls == [("openclaw-gateway.service", "stop")]
+
+
+def test_agent_control_only_start_and_stop(base_url, controls):
+    assert post(base_url + "/api/agents/openhuman.service/restart", {"X-Requested-With": "pi-status"})[0] == 404
+    assert get(base_url + "/api/agents/openhuman.service/stop")[0] == 404
+    assert controls == []
