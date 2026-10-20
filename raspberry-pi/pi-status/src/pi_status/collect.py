@@ -434,9 +434,9 @@ def ports() -> list[dict]:
 
 DASHBOARDS = [
     {"name": "Hermes", "what": "Web dashboard: settings, API keys, sessions",
-     "port": 9119, "tailnet_port": 8443, "start": "hermes dashboard --no-open"},
+     "port": 9119, "tailnet_port": 8443},
     {"name": "OpenClaw", "what": "Control UI: chat, sessions, channels, automations",
-     "port": 18789, "tailnet_port": 8444, "start": "openclaw gateway run"},
+     "port": 18789, "tailnet_port": 8444},
     {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
 ]
 
@@ -455,7 +455,6 @@ def dashboards() -> list[dict]:
             published = dns_name and f"{dns_name}:{d['tailnet_port']}" in web
             entry |= {
                 "running": port in listening,
-                "start": d["start"],
                 "tailnet_url": f"https://{dns_name}:{d['tailnet_port']}/" if published else "",
                 "publish": f"tailscale serve --bg --https={d['tailnet_port']} {port}",
                 "tunnel": f"ssh -N -L {port}:localhost:{port} pi",
