@@ -9,8 +9,10 @@ gpg-agent-browser.socket
 gpg-agent-extra.socket
 gpg-agent.socket
 gpg-agent-ssh.socket
+hermes-dashboard.service
 keyboxd.socket
 mpris-proxy.service
+openclaw-gateway.service
 openhuman.service
 pipewire-pulse.service
 pipewire-pulse.socket

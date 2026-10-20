@@ -28,7 +28,11 @@ GREEN='\033[32m'
 CYAN='\033[36m'
 RED='\033[31m'
 YELLOW='\033[33m'
+MAGENTA='\033[35m'
 RESET='\033[0m'
+
+# Hostname (so it's obvious which machine this session is on)
+host_display="${MAGENTA}[🖥 $(hostname -s)]${RESET}"
 
 # Git status detection
 git_status=""
@@ -176,8 +180,8 @@ if [ -n "$effort_level" ]; then
     effort_display="${YELLOW}[${effort_emoji} ${effort_level}]${RESET}"
 fi
 
-# Line 1: git status, path, model, version, effort, context usage, session duration
-echo -e "${git_status} ${CYAN}[${display_path}]${RESET} ${YELLOW}[🤔 ${model}]${RESET} ${effort_display} ${GREEN}[v${version}]${RESET} ${context_display} ${elapsed_display}"
+# Line 1: hostname, git status, path, model, version, effort, context usage, session duration
+echo -e "${host_display} ${git_status} ${CYAN}[${display_path}]${RESET} ${YELLOW}[🤔 ${model}]${RESET} ${effort_display} ${GREEN}[v${version}]${RESET} ${context_display} ${elapsed_display}"
 # Line 2: rate limits with progress bars (only when data is available)
 if [ -n "$rate_display" ]; then
     echo -e "    ${rate_display}"

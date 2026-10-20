@@ -2,4 +2,4 @@ os: Debian GNU/Linux 13 (trixie)
 tailscale: 1.104.1
 open-human: 0.64.15
 openclaw: 2026.10.5
-hermes-agent: 0.22.0
+hermes-agent: 0.22.2

@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenClaw Gateway + Control UI on 127.0.0.1:18789 (HTTPS via `tailscale serve --bg --https=8444 18789`)
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=10
+StartLimitIntervalSec=300
+
+[Service]
+# The npm install in ~/dev/openclaw_node; ~/dev/scripts/openclaw (which also updates it) is for interactive use.
+ExecStart=%h/dev/openclaw_node/node_modules/.bin/openclaw gateway run
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin
+Restart=always
+RestartSec=5
+# Stop and restart settings from OpenClaw's own unit (docs/gateway/index.md): on SIGTERM the Gateway drains
+# active turns for up to 315s, so allow 330s; mixed sends SIGTERM to the Gateway only and lets it stop its
+# workers itself; 143 (SIGTERM) is a clean exit and 78 a config error not worth restarting for.
+RestartPreventExitStatus=78
+TimeoutStopSec=330
+TimeoutStartSec=30
+SuccessExitStatus=0 143
+OOMPolicy=continue
+KillMode=mixed
+
+[Install]
+WantedBy=default.target
