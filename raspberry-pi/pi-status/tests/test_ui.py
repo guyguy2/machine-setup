@@ -875,3 +875,111 @@ def test_docker_sub_tab_still_opens_by_link_when_not_installed(make_page, base_u
     page.route("**/api/docker", lambda r: r.fulfill(json={"installed": False, "containers": []}))
     open_tab(page, base_url, "system/docker")
     assert subtab(page) == "Docker" and "isn't installed" in page.locator("#view").inner_text()
+
+
+# ---------- overview: needs attention and the agent strip ----------
+
+NO_SERVICES = {"user": [], "system": []}
+FAILED_UNIT = {"unit": "backup.service", "active": "failed", "sub": "failed", "description": "Nightly backup"}
+
+
+def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIGNED_IN, services=NO_SERVICES,
+                  version=VERSION, dash=DASHBOARDS):
+    page.route("**/api/status", lambda r: r.fulfill(json=status))
+    page.route("**/api/agents", lambda r: r.fulfill(json=agents))
+    page.route("**/api/auth", lambda r: r.fulfill(json=auth))
+    page.route("**/api/services", lambda r: r.fulfill(json=services))
+    page.route("**/api/dashboards", lambda r: r.fulfill(json=dash))
+    page.route("**/api/version", lambda r: r.fulfill(json=version))
+    open_tab(page, base_url, "overview")
+    page.wait_for_selector("#view .strip")
+    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+
+
+def attention(page):
+    return page.locator("#view .attention li").all_inner_texts()
+
+
+def test_overview_has_no_attention_list_when_all_is_well(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url)
+    assert attention(page) == [] and not page.locator("#view .attention").is_visible()
+    assert page.errors == []
+
+
+@pytest.mark.parametrize("change, expected", [
+    ({"status": {**STATUS, "throttled": ["under-voltage now"]}}, "Power/thermal: under-voltage now"),
+    ({"auth": AUTH}, "Google Workspace sign-in expired"),
+    ({"services": {"user": [FAILED_UNIT], "system": []}}, "backup.service failed"),
+    ({"version": {**VERSION, "stale": True}}, "Newer pi-status code on disk"),
+    ({"agents": [{**SERVICE_AGENTS[1], "unit_state": "failed"}]}, "OpenClaw failed"),
+])
+def test_overview_attention_lists_what_needs_you(make_page, base_url, change, expected):
+    page = make_page()
+    open_overview(page, base_url, **change)
+    page.wait_for_selector("#view .attention li")
+    assert any(expected in line for line in attention(page)), attention(page)
+
+
+def test_attention_lists_each_problem_once(make_page, base_url):
+    """A failed agent unit is also a failed user service; it's listed once, as the agent."""
+    page = make_page()
+    agent_unit = {**FAILED_UNIT, "unit": "openclaw-gateway.service"}
+    open_overview(page, base_url, agents=[{**SERVICE_AGENTS[1], "unit_state": "failed"}],
+                  services={"user": [agent_unit], "system": []}, auth=AUTH)
+    lines = attention(page)
+    assert sum("openclaw" in line.lower() for line in lines) == 1, lines
+    assert "GitHub sign-in signed out" not in lines and any(line.startswith("GitHub") for line in lines)
+    assert not any("Claude Code" in line for line in lines)   # "not installed" isn't a problem
+
+
+def test_attention_links_to_where_it_is_fixed(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url, auth=AUTH, services={"user": [FAILED_UNIT], "system": []})
+    assert page.locator("#view .attention a[href='#agents']").count() >= 1
+    assert page.locator("#view .attention a[href='#system/services']").count() == 1
+
+
+def test_overview_strip_shows_each_agent_with_its_status(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url, agents=AGENTS)
+    rows = page.locator("#view .strip .strip-row")
+    assert rows.count() == 4
+    text = page.locator("#view .strip").inner_text()
+    for word in ["Claude Code", "running · 2", "Hermes", "starting", "OpenClaw", "running", "OpenHuman", "stopped"]:
+        assert word in text
+    assert page.locator("#view .strip a[href='#agents']").count() == 4   # each name opens the Agents tab
+
+
+def test_overview_strip_start_posts_to_the_unit(make_page, base_url):
+    posts = []
+
+    def control(route):
+        posts.append(route.request.url)
+        route.fulfill(json={"unit": "openclaw-gateway.service", "state": "active"})
+    page = make_page()
+    page.route("**/api/agents/*/*", control)
+    open_overview(page, base_url)
+    page.locator("#view .strip-row", has_text="OpenClaw").locator(".service-btn").click()
+    page.wait_for_timeout(500)
+    assert posts == [f"{base_url}/api/agents/openclaw-gateway.service/start"]
+
+
+def test_overview_survives_agent_and_sign_in_failures(make_page, base_url):
+    page = make_page()
+    for api in ["agents", "auth", "services", "dashboards"]:
+        page.route(f"**/api/{api}", lambda r: r.fulfill(status=500, json={"error": "boom"}))
+    page.route("**/api/status", lambda r: r.fulfill(json=STATUS))
+    open_tab(page, base_url, "overview")
+    page.wait_for_selector("#view .grid")
+    assert "Agent status unavailable" in page.locator("#view").inner_text()
+    assert "Raspberry Pi 5 Model B Rev 1.0" in page.locator("#view dl").inner_text()
+
+
+def test_overview_visit_fetches_each_api_once(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_overview(page, base_url)
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    for api in ["status", "agents", "auth", "services", "dashboards", "version"]:
+        assert seen.count(api) == 1, (api, seen)
