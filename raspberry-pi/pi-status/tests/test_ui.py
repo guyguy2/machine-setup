@@ -594,3 +594,97 @@ def test_session_date_stays_on_one_line_on_phone(make_page, base_url):
     page.wait_for_selector(since)
     assert page.locator(since).inner_text() == "2026-10-20 09:01"
     assert line_count(page, since) == 1
+
+
+# ---------- tables ----------
+
+OVERFLOWING = """() => [...document.querySelectorAll('#view *')]
+  .filter(e => !e.closest('.ssh-cmd') && e.clientWidth > 0 && e.scrollWidth > e.clientWidth + 1)
+  .map(e => `${e.tagName.toLowerCase()}.${e.className} ${e.scrollWidth}px in ${e.clientWidth}px`)"""
+
+LONG_CMD = ("node /usr/lib/node_modules/openclaw/dist/index.js gateway --port 18789 --bind loopback --verbose "
+            "--log-file /home/guy/.openclaw/logs/gateway.log --config /home/guy/.openclaw/openclaw.json --profile default")
+PROCS = {"total": 1, "processes": [{"pid": 4242, "user": "guy", "cpu": 1.0, "rss": 2**30, "age_s": 109800, "cmd": LONG_CMD}]}
+
+
+@pytest.mark.parametrize("tab", TABS)
+def test_nothing_in_the_view_overflows_on_phone(make_page, base_url, tab):
+    """Stricter than the page-width check: a table can't hide columns inside its own sideways-scrolling box."""
+    page = make_page(*PHONE)
+    open_tab(page, base_url, tab)
+    page.wait_for_timeout(300)
+    assert page.evaluate(OVERFLOWING) == []
+
+
+@pytest.mark.parametrize("tab, api, data", [("network", "network", NETWORK), ("processes", "processes", PROCS)])
+def test_nothing_overflows_on_phone_with_long_values(make_page, base_url, tab, api, data):
+    page = make_page(*PHONE)
+    page.route(f"**/api/{api}", lambda r: r.fulfill(json=data))
+    open_tab(page, base_url, tab)
+    page.wait_for_selector("#view tbody td")
+    assert page.evaluate(OVERFLOWING) == []
+
+
+def test_lab_does_not_overflow_on_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    open_lab(page, base_url)
+    assert page.evaluate(OVERFLOWING) == []
+
+
+def test_process_command_is_readable_on_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    page.route("**/api/processes", lambda r: r.fulfill(json=PROCS))
+    open_tab(page, base_url, "processes")
+    cmd = page.locator("#view td.cmd").first
+    assert cmd.inner_text() == LONG_CMD
+    box = cmd.bounding_box()
+    assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE[0]
+    assert cmd.evaluate("e => e.scrollHeight <= e.clientHeight && e.scrollWidth <= e.clientWidth")  # wrapped, not clipped
+    label = lambda td: td.evaluate("e => getComputedStyle(e, '::before').content")
+    assert "Command" in label(cmd)                                     # each cell says what it is
+    assert label(page.locator("#view tbody td").first) in ("none", "normal")  # the first one is the row's title
+
+
+def test_cell_labels_use_the_header_text(make_page, base_url):
+    page = make_page(*PHONE)
+    open_lab(page, base_url)
+    cells = page.locator("#view table").first.locator("tbody tr").first.locator("td")
+    assert [cells.nth(i).get_attribute("data-label") for i in range(4)] == ["Use case", "OpenClaw", "Hermes", "OpenHuman"]
+
+
+def test_long_command_wraps_to_two_lines_on_desktop(make_page, base_url):
+    page = make_page(1100, 900)
+    page.route("**/api/processes", lambda r: r.fulfill(json=PROCS))
+    open_tab(page, base_url, "processes")
+    cmd = page.locator("#view td.cmd").first
+    lines = cmd.evaluate("""e => { const s = getComputedStyle(e);
+        return Math.round((e.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom)) / parseFloat(s.lineHeight)); }""")
+    assert lines == 2
+    assert cmd.get_attribute("title") == LONG_CMD  # the rest is on hover
+
+
+def test_columns_with_no_values_are_hidden(make_page, base_url):
+    rows = [{"port": 22, "address": "0.0.0.0", "exposure": "all interfaces", "process": "", "pid": None},
+            {"port": 53, "address": "127.0.0.1", "exposure": "local only", "process": "", "pid": None}]
+    page = make_page()
+    page.route("**/api/ports", lambda r: r.fulfill(json=rows))
+    open_tab(page, base_url, "ports")
+    assert page.locator("#view thead").inner_text().split("\n")[-1].strip().lower() != "process"
+    assert "–" not in page.locator("#view tbody").inner_text()
+
+
+def test_columns_with_some_values_are_kept(make_page, base_url):
+    rows = [{"port": 22, "address": "0.0.0.0", "exposure": "all interfaces", "process": "", "pid": None},
+            {"port": 7788, "address": "127.0.0.1", "exposure": "local only", "process": "openhuman-core", "pid": 9}]
+    page = make_page()
+    page.route("**/api/ports", lambda r: r.fulfill(json=rows))
+    open_tab(page, base_url, "ports")
+    assert "PROCESS" in page.locator("#view thead").inner_text().upper()
+    assert "openhuman-core (9)" in page.locator("#view tbody").inner_text()
+
+
+def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url)
+    head = page.locator("#view table").first.locator("thead").inner_text().upper()
+    assert "OPENCLAW" in head and "OPENHUMAN" in head  # neither has a run yet; the "–" cells are the point
