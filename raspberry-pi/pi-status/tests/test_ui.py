@@ -520,22 +520,27 @@ def test_agent_status_words(make_page, base_url):
                      "OpenHuman": ["stopped"]}    # one pill each: no separate unit-state pill
 
 
-def test_running_published_agent_has_an_open_link(make_page, base_url):
+def test_published_dashboards_link_to_their_tailnet_url(make_page, base_url):
     page = make_page()
     cards = open_agents(page, base_url)
-    assert cards["OpenClaw"].locator("a", has_text="Open").get_attribute("href") == "https://box.tail9.ts.net:8444/"
-    assert cards["Hermes"].locator("a", has_text="Open").count() == 0     # published, but not listening yet
-    assert page.locator("#view a[href^='https://box.tail9.ts.net']").count() == 1
+    link = cards["OpenClaw"].locator("a[href='https://box.tail9.ts.net:8444/']")
+    assert link.inner_text() == "https://box.tail9.ts.net:8444/" and link.get_attribute("target") == "_blank"
+    assert "On your tailnet" in cards["OpenClaw"].inner_text() and "once it's running" not in cards["OpenClaw"].inner_text()
+    assert cards["Hermes"].locator("a[href='https://box.tail9.ts.net:8443/']").count() == 1  # published, still starting
+    assert page.locator("#view a[href^='https://box.tail9.ts.net']").count() == 2           # once per agent
+    cards["OpenClaw"].locator(".ssh-row:has(a[href='https://box.tail9.ts.net:8444/']) .copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "https://box.tail9.ts.net:8444/"
 
 
-def test_stopped_agent_has_no_open_link(make_page, base_url):
+def test_stopped_agent_keeps_its_tailnet_link(make_page, base_url):
     stopped = [{**a, "unit_state": "inactive", "instances": []} if a["name"] == "OpenClaw" else a for a in AGENTS]
     dash = [{**d, "running": False} if d["name"] == "OpenClaw" else d for d in DASHBOARDS]
     page = make_page()
-    cards = open_agents(page, base_url, stopped, dash)
-    assert cards["OpenClaw"].locator(".card-head .pill").inner_text() == "stopped"
-    assert cards["OpenClaw"].locator(".service-btn").inner_text() == "Start"
-    assert page.locator("#view a[href^='https://box.tail9.ts.net']").count() == 0
+    claw = open_agents(page, base_url, stopped, dash)["OpenClaw"]
+    assert claw.locator(".card-head .pill").inner_text() == "stopped"
+    assert claw.locator(".service-btn").inner_text() == "Start"
+    assert claw.locator("a[href='https://box.tail9.ts.net:8444/']").count() == 1
+    assert "On your tailnet (once it's running)" in claw.inner_text()
 
 
 def test_unpublished_dashboard_shows_the_publish_command(make_page, base_url):
