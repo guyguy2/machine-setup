@@ -90,7 +90,6 @@
   .copy { border: 1px solid var(--track); background: transparent; color: var(--text); border-radius: 6px; padding: 3px 10px;
           font: inherit; font-size: .8125rem; cursor: pointer; min-width: 64px; }
   .copy:hover { background: var(--track); }
-  a.copy { color: var(--text); text-decoration: none; text-align: center; }
   .card-head .status { display: inline-flex; align-items: center; gap: 10px; }
   .session { padding: 6px 0; border-top: 1px solid var(--track); overflow-wrap: anywhere; }
   .session details summary { margin-top: 2px; }
@@ -370,8 +369,8 @@ function signIns(auth) {
   ];
 }
 
-const copyRow = (label, text) => h("div", { class: "ssh-row" },
-  h("div", { class: "ssh-label" }, label), h("code", { class: "mono ssh-cmd" }, text), copyButton(text));
+const copyRow = (label, text, el = h("code", { class: "mono ssh-cmd" }, text)) => h("div", { class: "ssh-row" },
+  h("div", { class: "ssh-label" }, label), el, copyButton(text));
 
 let agentError = "";  // the last failed Start/Stop, shown above the cards until the next attempt
 
@@ -430,12 +429,12 @@ function agentCard(a, d) {
   return h("div", { class: "card agent" },
     h("div", { class: "card-head" },
       h("strong", {}, a.name), h("span", { class: "sub" }, a.kind),
-      h("span", { class: "status" }, pill(word, kind),  // wraps as one, so the status stays beside its buttons
-        web && d.running && d.tailnet_url &&
-          h("a", { class: "copy", href: d.tailnet_url, target: "_blank", rel: "noopener", title: d.what }, "Open"),
-        a.unit && serviceButton(a))),
+      h("span", { class: "status" }, pill(word, kind), a.unit && serviceButton(a))),  // wraps as one: status beside its button
     summary && h("div", { class: "detail" }, summary),
-    web && !d.tailnet_url && copyRow("On your tailnet (not published yet)", d.publish),
+    web && (d.tailnet_url
+      ? copyRow(d.running ? "On your tailnet" : "On your tailnet (once it's running)", d.tailnet_url,
+                h("a", { class: "mono ssh-cmd", href: d.tailnet_url, target: "_blank", rel: "noopener", title: d.what }, d.tailnet_url))
+      : copyRow("On your tailnet (not published yet)", d.publish)),
     !a.unit && ps.map(session),
     a.unit && h("details", {}, h("summary", {}, "More"),
       web && [copyRow("Without Tailscale: tunnel over SSH", d.tunnel), copyRow("…then open on that machine", d.local_url)],
