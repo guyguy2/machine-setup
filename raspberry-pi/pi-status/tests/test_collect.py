@@ -87,6 +87,25 @@ def test_ssh_help_without_tailscale_falls_back_to_lan():
     assert "HostName 192.168.0.9" in result["shortcut"]["config"]
 
 
+SERVE_STATUS = '{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail1234.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}}}}'
+
+
+def test_page_url_when_tailscale_serve_publishes_it(monkeypatch):
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: SERVE_STATUS)
+    assert collect.page_url("box.tail1234.ts.net") == "https://box.tail1234.ts.net/#overview"
+
+
+@pytest.mark.parametrize("dns_name, serve_out", [
+    ("box.tail1234.ts.net", ""),          # serve not configured / tailscale missing
+    ("box.tail1234.ts.net", "{}"),
+    ("other.tail1234.ts.net", SERVE_STATUS),  # served under a different name
+    ("", SERVE_STATUS),                   # not on a tailnet
+])
+def test_page_url_empty_when_not_served(monkeypatch, dns_name, serve_out):
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: serve_out)
+    assert collect.page_url(dns_name) == ""
+
+
 def test_docker_not_installed(monkeypatch):
     monkeypatch.setattr(collect.shutil, "which", lambda name: None)
     assert collect.docker() == {"installed": False, "containers": []}
@@ -338,3 +357,101 @@ def test_restart_service_queues_a_non_blocking_user_restart(monkeypatch):
     collect.restart_service()
     assert seen["cmd"] == ["systemctl", "--user", "--no-block", "restart", "pi-status.service"]
     assert seen["kw"]["start_new_session"] is True   # survives the service being stopped
+
+
+# ---------- agent lab ----------
+
+RUN_NOTE = """---
+use_case: UC-001
+agent: hermes
+date: 2026-10-20 09:00
+model: claude-opus-5-5
+outcome: partial            # pass | partial | fail
+score_quality: 4            # 1-5  how good was the result itself?
+score_ux:                   # 1-5  how pleasant/clear the interface and interaction were
+overall: 3.5
+peak_rss_mb: 812
+---
+
+# UC-001 on hermes
+
+## My opinion
+Fast, but it missed two emails.
+"""
+
+USE_CASE = """---
+id: UC-001
+title: Fetch and triage email
+risk: read-only
+---
+
+## Prompt (paste exactly)
+```
+Check my inbox.
+Don't change anything.
+```
+
+## Prerequisites
+- Gmail
+"""
+
+RESULTS = """# Results
+
+## Overall impressions
+
+### OpenClaw
+- 
+
+### Hermes
+- Quick and chatty.
+
+## Verdict so far
+### Not an agent
+- ignored
+"""
+
+
+def test_front_matter_drops_comments_and_keeps_body():
+    meta, body = collect.front_matter(RUN_NOTE)
+    assert meta["outcome"] == "partial" and meta["score_quality"] == "4" and meta["score_ux"] == ""
+    assert meta["date"] == "2026-10-20 09:00"  # colons after the first one belong to the value
+    assert body.startswith("# UC-001 on hermes") and "missed two emails" in body
+
+
+@pytest.mark.parametrize("text", ["no front matter", "---\nkey: value\nnever closed"])
+def test_front_matter_missing_or_unterminated(text):
+    assert collect.front_matter(text) == ({}, text)
+
+
+@pytest.fixture
+def lab_dir(tmp_path, monkeypatch):
+    (tmp_path / "use-cases").mkdir()
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "use-cases" / "UC-001-fetch-email.md").write_text(USE_CASE)
+    (tmp_path / "runs" / "2026-10-20_UC-001_hermes.md").write_text(RUN_NOTE)
+    (tmp_path / "runs" / "2026-10-19_UC-001_hermes.md").write_text(RUN_NOTE.replace("2026-10-20 09:00", "2026-10-19 18:00"))
+    (tmp_path / "runs" / "2026-10-19_UC-001_hermes.samples").write_text("1 2 3 4\n")  # not a note
+    (tmp_path / "results.md").write_text(RESULTS)
+    monkeypatch.setattr(collect, "LAB", tmp_path)
+    monkeypatch.setattr(collect, "sample", lambda: {1: {"argv": ["/home/x/bin/hermes", "chat"]}})
+    return tmp_path
+
+
+def test_lab_reads_use_cases_runs_and_impressions(lab_dir):
+    d = collect.lab()
+    assert d["found"] and d["path"] == str(lab_dir)
+    assert d["use_cases"] == [{"id": "UC-001", "title": "Fetch and triage email", "file": "UC-001-fetch-email.md",
+                               "category": "", "risk": "read-only", "prompt": "Check my inbox.\nDon't change anything."}]
+    assert [r["date"] for r in d["runs"]] == ["2026-10-19 18:00", "2026-10-20 09:00"]  # oldest first
+    run = d["runs"][1]
+    assert run["agent"] == "hermes" and run["outcome"] == "partial" and run["model"] == "claude-opus-5-5"
+    assert run["score_quality"] == 4 and run["overall"] == 3.5 and run["peak_rss_mb"] == 812
+    assert run["score_ux"] is None and run["duration_min"] is None  # blank or missing fields aren't zeros
+    assert "missed two emails" in run["note"]
+    assert d["impressions"] == {"hermes": "- Quick and chatty."}  # empty template bullets and other sections ignored
+    assert {a["id"]: a["running"] for a in d["agents"]} == {"openclaw": False, "hermes": True, "openhuman": False}
+
+
+def test_lab_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(collect, "LAB", tmp_path / "nope")
+    assert collect.lab() == {"found": False, "path": str(tmp_path / "nope")}

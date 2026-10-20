@@ -2,7 +2,7 @@
 
 import pytest
 
-TABS = ["overview", "network", "agents", "docker", "services", "processes", "ports"]
+TABS = ["overview", "network", "agents", "lab", "docker", "services", "processes", "ports"]
 PHONE = (390, 844)
 
 NETWORK = {
@@ -11,6 +11,7 @@ NETWORK = {
     "interfaces": [{"name": "wlan0", "state": "up", "mac": "aa:bb", "addresses": ["10.0.0.5/24"]}],
     "tailscale": {"dns_name": "box.tail9.ts.net", "ip": "100.9.9.9", "online": True, "peers": []},
     "sessions": [],
+    "page_url": "https://box.tail9.ts.net/#overview",
     "ssh": {
         "commands": [
             {"label": "Over Tailscale (from anywhere)", "command": "ssh alice@box"},
@@ -90,6 +91,24 @@ def test_ssh_commands_are_built_from_api_data(make_page, base_url):
     text = page.locator("#view").inner_text()
     assert "ssh alice@box" in text and "ssh alice@10.0.0.5" in text and "ssh pi" in text
     assert "HostName box.tail9.ts.net" in text
+
+
+def test_page_url_is_a_link_with_copy(make_page, base_url):
+    page = make_page()
+    page.route("**/api/network", lambda r: r.fulfill(json=NETWORK))
+    open_tab(page, base_url, "network")
+    link = page.locator(".page-row a")
+    assert link.get_attribute("href") == "https://box.tail9.ts.net/#overview"
+    page.locator(".page-row .copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "https://box.tail9.ts.net/#overview"
+
+
+def test_page_url_hidden_when_not_served(make_page, base_url):
+    page = make_page()
+    page.route("**/api/network", lambda r: r.fulfill(json={**NETWORK, "page_url": ""}))
+    open_tab(page, base_url, "network")
+    page.wait_for_selector(".ssh-row")
+    assert page.locator(".page-row").count() == 0
 
 
 def test_copy_button_copies_command(make_page, base_url):
@@ -351,5 +370,111 @@ def test_refresh_button_is_reachable_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     open_tab(page, base_url, "overview")
     assert page.locator("#refresh").is_visible()
+    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert widths[0] <= widths[1]
+
+
+# ---------- agent lab ----------
+
+LAB = {
+    "found": True, "path": "~/dev/agent-lab",
+    "agents": [{"id": "openclaw", "name": "OpenClaw", "running": False}, {"id": "hermes", "name": "Hermes", "running": True},
+               {"id": "openhuman", "name": "OpenHuman", "running": False}],
+    "use_cases": [{"id": "UC-001", "title": "Fetch email", "file": "UC-001-fetch-email.md", "category": "email",
+                   "risk": "read-only", "prompt": "Check my inbox."},
+                  {"id": "UC-002", "title": "Pay bills", "file": "UC-002-pay-bills.md", "category": "finance",
+                   "risk": "money", "prompt": "Find bills."}],
+    "runs": [
+        {"file": "2026-10-19_UC-001_hermes.md", "use_case": "UC-001", "agent": "hermes", "date": "2026-10-19 18:00",
+         "outcome": "fail", "overall": 1, "score_quality": 2, "duration_min": 9, "note": "old"},
+        {"file": "2026-10-20_UC-001_hermes.md", "use_case": "UC-001", "agent": "hermes", "date": "2026-10-20 09:00",
+         "version": "hermes-agent 0.22.2", "model": "claude-opus-5-5", "outcome": "pass", "overall": 4, "score_quality": 4,
+         "duration_min": 3, "peak_rss_mb": 800,
+         "note": "## What happened\nRead the inbox `fast`.\n- [x] Fetched the real inbox\n- [ ] Changed nothing\n\n<img src=x onerror=\"window.pwned=1\">"},
+    ],
+    "impressions": {"hermes": "- Quick and chatty."},
+}
+
+
+def open_lab(page, base_url, data=LAB, hash="lab"):
+    page.route("**/api/lab", lambda r: r.fulfill(json=data))
+    open_tab(page, base_url, hash)
+
+
+def test_lab_scoreboard_shows_latest_run_per_cell(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url)
+    rows = page.locator("#view table").first.locator("tbody tr")
+    first = rows.nth(0).inner_text()
+    assert "pass" in first and "4/5" in first and "2 runs" in first and "fail" not in first
+    assert rows.nth(1).inner_text().count("–") == 3  # UC-002: nobody ran it yet
+    assert "Hermes · running" in page.locator("#view").inner_text()
+    assert page.errors == []
+
+
+def test_lab_chart_averages_scores(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url)
+    quality = page.locator(".lab-row").nth(1)
+    assert quality.locator(".lab-label").inner_text() == "Quality"
+    hermes = quality.locator(".lab-bar").nth(1)
+    assert hermes.get_attribute("data-tip") == "Hermes · Quality: 3 / 5"  # (2 + 4) / 2
+    assert hermes.locator(".lab-val").inner_text() == "3"
+    assert quality.locator(".lab-bar").nth(0).locator(".lab-val").inner_text() == "–"
+
+
+def test_lab_chart_hidden_until_something_is_scored(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url, {**LAB, "runs": [{**r, "overall": None, "score_quality": None} for r in LAB["runs"]]})
+    assert page.locator(".lab-row").count() == 0
+    assert "No scores yet" in page.locator("#view").inner_text()
+
+
+def test_lab_run_note_opens_and_goes_back(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url)
+    page.locator("#view table").first.locator("a.cell").first.click()
+    page.wait_for_function("document.querySelector('#view h2')?.textContent.includes('on Hermes')")
+    assert page.url.endswith("#lab/2026-10-20_UC-001_hermes.md")
+    view = page.locator("#view")
+    assert view.locator(".note h4").inner_text() == "What happened"
+    assert view.locator(".note code").inner_text() == "fast"
+    assert "☑ Fetched the real inbox" in view.inner_text() and "☐ Changed nothing" in view.inner_text()
+    assert "claude-opus-5-5" in view.inner_text()
+    fields = view.locator("dl").inner_text()
+    assert "Quality\n4 / 5" in fields and "Peak memory (MB)\n800" in fields and "Safety" not in fields  # unscored ones hidden
+    assert page.evaluate("window.pwned") is None and view.locator("img").count() == 0  # notes render as text
+    page.click("text=← Back")
+    page.wait_for_selector("text=Scoreboard")
+    assert page.url.endswith("#lab")
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "lab"
+
+
+def test_lab_deep_link_to_unknown_note(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url, hash="lab/nope.md")
+    assert "No run note called nope.md" in page.locator("#view").inner_text()
+
+
+def test_lab_use_case_prompt_can_be_copied(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url)
+    card = page.locator("#view .card:has(details)", has_text="UC-002 Pay bills")
+    assert "money" in card.inner_text()
+    card.locator("summary").click()
+    card.locator(".copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "Find bills."
+
+
+def test_lab_missing_shows_a_note(make_page, base_url):
+    page = make_page()
+    open_lab(page, base_url, {"found": False, "path": "~/dev/agent-lab"})
+    assert "No agent lab at ~/dev/agent-lab" in page.locator("#view").inner_text()
+
+
+@pytest.mark.parametrize("hash", ["lab", "lab/2026-10-20_UC-001_hermes.md"])
+def test_lab_fits_phone(make_page, base_url, hash):
+    page = make_page(*PHONE)
+    open_lab(page, base_url, hash=hash)
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]

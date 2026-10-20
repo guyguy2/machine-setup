@@ -11,6 +11,7 @@ from . import collect
 ROUTES = {
     "/api/status": collect.status,
     "/api/agents": collect.agents,
+    "/api/lab": collect.lab,
     "/api/docker": collect.docker,
     "/api/services": collect.services,
     "/api/processes": collect.top_processes,
