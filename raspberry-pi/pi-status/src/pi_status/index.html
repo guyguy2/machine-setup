@@ -154,7 +154,7 @@
     #conn { order: 3; }
     .version { order: 4; margin: 0; padding: 0; }
     nav { order: 5; flex: 1 1 100%; flex-direction: row; margin: 0 -8px; }
-    nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 6px; text-align: center; }
+    nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; }
     .content { padding: 16px; }
     .ssh-row, .page-row { grid-template-columns: minmax(0, 1fr) auto; }
     .ssh-label { grid-column: 1 / 3; }
@@ -525,7 +525,7 @@ function sortAgents(list, byName) {
 function agents(list, auth, dash) {
   const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
   return [
-    h("h2", {}, "Agents & assistants"),
+    h("h2", {}, "Agents & Assistants"),
     agentError && h("div", { class: "alert" }, agentError),
     !dash && h("div", { class: "sub", style: "margin-bottom:12px" }, "Dashboard status unavailable."),
     sortAgents(list, byName).map(a => agentCard(a, byName[a.name])),
@@ -594,7 +594,7 @@ function scoreChart(agents, runs) {
 function labRun(d, file) {
   const r = d.runs.find(r => r.file === file);
   const back = h("a", { class: "copy", href: "#lab", style: "text-decoration:none;display:inline-block" }, "← Back");
-  if (!r) return [h("h2", {}, "Agent lab"), back, empty(`No run note called ${file}.`)];
+  if (!r) return [h("h2", {}, "Agent Lab"), back, empty(`No run note called ${file}.`)];
   const uc = d.use_cases.find(u => u.id === r.use_case);
   const agent = d.agents.find(a => a.id === r.agent);
   const field = (label, v) => v != null && v !== "" && [h("dt", {}, label), h("dd", {}, v)];
@@ -612,14 +612,14 @@ function labRun(d, file) {
 }
 
 function lab(d) {
-  if (!d.found) return [h("h2", {}, "Agent lab"), empty(`No agent lab at ${d.path}. Its use cases and run notes show up here once it exists.`)];
+  if (!d.found) return [h("h2", {}, "Agent Lab"), empty(`No agent lab at ${d.path}. Its use cases and run notes show up here once it exists.`)];
   if (subpath) return labRun(d, subpath);
   const { agents, runs, use_cases: ucs } = d;
   const ofAgent = id => runs.filter(r => r.agent === id);
   // a function, because a header node can only sit in one table at a time
   const agentCols = () => agents.map((a, i) => ({ label: h("span", {}, h("span", { class: "swatch s" + (i + 1) }), a.name), id: a.id }));
   return [
-    h("h2", {}, "Agent lab"),
+    h("h2", {}, "Agent Lab"),
     h("div", { class: "card-head", style: "margin-bottom:12px" },
       h("span", { class: "sub" }, "Running now:"),
       agents.map(a => pill(a.name + (a.running ? " · running" : ""), a.running ? "ok" : ""))),
@@ -736,7 +736,7 @@ const TABS = [
   { id: "overview", title: "Overview", api: "/api/status", also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"],
     render: overview },
   { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
-  { id: "lab", title: "Lab", api: "/api/lab", render: lab },
+  { id: "lab", title: "Agent Lab", api: "/api/lab", render: lab },
   { id: "network", title: "Network", api: "/api/network", render: network },
   { id: "system", title: "System", sub: SYSTEM },
 ];
