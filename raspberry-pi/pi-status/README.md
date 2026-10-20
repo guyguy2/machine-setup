@@ -48,6 +48,8 @@ asks you to restart it: `systemctl --user restart pi-status`.
 - `~/.config/systemd/user/pi-status.service` starts it on `127.0.0.1:8080` and restarts it if it dies.
 - `sudo tailscale serve --bg 8080` publishes it as `https://<pi>.<tailnet>.ts.net` with a real certificate
   (enable HTTPS certificates and Serve once in the Tailscale admin console).
+- The dashboards it links to run as their own user units (`hermes-dashboard.service` on 9119,
+  `openclaw-gateway.service` on 18789), published on the tailnet at ports 8443 and 8444.
 - `restore.sh` in the parent folder sets all of this up on a fresh image (steps `tailscale` and `pi-status`).
 - `~/dev/pi-status` is a symlink to this folder, so there is only one copy.
 - `upd` runs `uv sync` and restarts the service after pulling repos.

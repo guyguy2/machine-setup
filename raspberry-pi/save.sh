@@ -14,6 +14,7 @@ dotfiles=(
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
   .config/systemd/user/openhuman.service .config/systemd/user/pi-status.service
+  .config/systemd/user/hermes-dashboard.service .config/systemd/user/openclaw-gateway.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
 )
 
