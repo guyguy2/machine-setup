@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -50,13 +51,17 @@ class Handler(BaseHTTPRequestHandler):
             pass  # the browser navigated away mid-request
 
     def do_POST(self) -> None:
+        path = self.path.split("?")[0]
         restart = False
-        if self.path.split("?")[0] != "/api/restart":
+        agent = re.fullmatch(r"/api/agents/([\w.@-]+)/(start|stop)", path)
+        if path != "/api/restart" and not agent:
             code, body = 404, {"error": "not found"}
         elif self.headers.get("X-Requested-With") != "pi-status":
             # A custom header can't be sent cross-site without a CORS preflight (which we never allow), so
-            # another website can't make your browser restart this server.
+            # another website can't make your browser restart this server or start and stop agents.
             code, body = 403, {"error": "missing X-Requested-With header"}
+        elif agent:
+            code, body = collect.control_agent(agent[1], agent[2])
         elif not collect.can_restart():
             code, body = 409, {"error": "not running under systemd; restart it by hand"}
         else:

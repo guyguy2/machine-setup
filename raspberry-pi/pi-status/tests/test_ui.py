@@ -519,3 +519,44 @@ def test_dashboards_fit_phone(make_page, base_url):
     page.wait_for_selector("#view .dashboard")
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
+
+
+SERVICE_AGENTS = [
+    {"name": "Hermes", "kind": "Agent", "unit": "hermes-dashboard.service", "unit_state": "active", "instances": [
+        {"pid": 7, "user": "guy", "cpu": 0.0, "rss": 2**20, "age_s": 9, "cwd": "~", "ports": [], "cmd": "hermes dashboard"}]},
+    {"name": "OpenClaw", "kind": "Personal assistant", "unit": "openclaw-gateway.service", "unit_state": "inactive", "instances": []},
+    {"name": "Claude Code", "kind": "Coding agent", "instances": []},
+]
+
+
+def test_agent_cards_offer_stop_and_start(make_page, base_url):
+    posts = []
+
+    def control(route):
+        posts.append((route.request.url, route.request.headers.get("x-requested-with")))
+        route.fulfill(json={"unit": "hermes-dashboard.service", "state": "inactive"})
+    page = make_page()
+    page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
+    page.route("**/api/agents/*/*", control)
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .service-btn")
+    cards = page.locator("#view .agent")
+    assert cards.filter(has_text="Hermes").locator(".service-btn").inner_text() == "Stop"
+    assert cards.filter(has_text="OpenClaw").locator(".service-btn").inner_text() == "Start"
+    assert cards.filter(has_text="Claude Code").locator(".service-btn").count() == 0  # no service to control
+    cards.filter(has_text="Hermes").locator(".service-btn").click()
+    page.wait_for_function("document.getElementById('conn').textContent.startsWith('updated')")
+    page.wait_for_timeout(300)
+    assert posts == [(f"{base_url}/api/agents/hermes-dashboard.service/stop", "pi-status")]
+    assert page.errors == []
+
+
+def test_failed_agent_control_shows_the_error(make_page, base_url):
+    page = make_page()
+    page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
+    page.route("**/api/agents/*/*", lambda r: r.fulfill(status=500, json={"error": "Unit not loaded."}))
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .service-btn")
+    page.locator("#view .agent", has_text="OpenClaw").locator(".service-btn").click()
+    page.wait_for_selector("#view .alert")
+    assert "Couldn't start openclaw-gateway.service: Unit not loaded." in page.locator("#view .alert").inner_text()

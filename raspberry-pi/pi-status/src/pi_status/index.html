@@ -363,11 +363,40 @@ function dashboards(list) {
   ];
 }
 
+let agentError = "";  // the last failed Start/Stop, shown above the cards until the next attempt
+
+async function controlAgent(btn, unit, action) {
+  agentError = "";
+  btn.disabled = true;
+  btn.textContent = action === "stop" ? "Stopping…" : "Starting…";  // a graceful stop can take a while
+  try {
+    const r = await fetch(`/api/agents/${encodeURIComponent(unit)}/${action}`,
+                          { method: "POST", headers: { "X-Requested-With": "pi-status" } });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || r.status);
+  } catch (e) {
+    agentError = `Couldn't ${action} ${unit}: ${e.message}`;
+  }
+  refresh();
+}
+
+function serviceButton(a) {
+  const up = ["active", "activating", "reloading"].includes(a.unit_state);
+  if (a.unit_state === "deactivating") return h("button", { class: "copy", type: "button", disabled: true }, "Stopping…");
+  return h("button", {
+    class: "copy service-btn", type: "button",
+    title: up ? `Stop ${a.unit} gracefully (SIGTERM, then time to clean up). It starts again at boot or with Start.`
+              : `Start ${a.unit}`,
+    onclick: e => controlAgent(e.currentTarget, a.unit, up ? "stop" : "start"),
+  }, up ? "Stop" : "Start");
+}
+
 function agents(list, auth, dash) {
   const running = a => a.instances.length > 0;
   const sorted = [...list].sort((a, b) => running(b) - running(a));
   return [
     h("h2", {}, "Agents & assistants"),
+    agentError && h("div", { class: "alert" }, agentError),
     dashboards(dash),
     signIns(auth),
     h("h3", {}, "Running agents"),
@@ -375,7 +404,8 @@ function agents(list, auth, dash) {
       h("div", { class: "card-head" },
         h("strong", {}, a.name), h("span", { class: "sub" }, a.kind),
         running(a) ? pill(`running · ${a.instances.length}`, "ok") : pill("not running"),
-        a.unit && pill(`${a.unit}: ${a.unit_state}`, a.unit_state === "active" ? "ok" : a.unit_state === "failed" ? "bad" : "")),
+        a.unit && pill(`${a.unit}: ${a.unit_state}`, a.unit_state === "active" ? "ok" : a.unit_state === "failed" ? "bad" : ""),
+        a.unit && serviceButton(a)),
       running(a)
         ? table([
             ...procCols,
