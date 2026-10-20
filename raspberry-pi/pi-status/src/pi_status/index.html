@@ -72,7 +72,8 @@
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.num, td.nowrap { white-space: nowrap; }
   .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .8125rem; }
-  .cmd { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cmd .clamp { max-width: 380px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+                overflow-wrap: anywhere; }
   .seg { display: inline-flex; border: 1px solid var(--track); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
   .seg button { border: 0; background: transparent; color: var(--text); padding: 5px 14px; font: inherit; font-size: .875rem; cursor: pointer; }
   .seg button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
@@ -134,6 +135,15 @@
     .value { font-size: 1.5rem; }
     .lab-row, .lab-axis { grid-template-columns: 76px minmax(0, 1fr); }
     .lab-axis div:last-child { display: none; }
+    /* tables: each row is a block, its first cell the title and the others "label: value" lines */
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tbody tr { padding: 8px 0; border-top: 1px solid var(--track); }
+    tbody tr:first-child { border-top: 0; padding-top: 0; }
+    td, td.num { padding: 1px 0; border-top: 0; text-align: left; overflow-wrap: anywhere; }
+    td:first-child { font-weight: 600; }
+    td:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); font: .8125rem system-ui, -apple-system, sans-serif; }
+    .cmd .clamp { display: block; max-width: none; }
   }
 </style>
 </head>
@@ -179,15 +189,22 @@ function dur(s) {
 const pill = (text, kind) => h("span", { class: "pill " + (kind || "") }, text);
 const empty = text => h("div", { class: "card empty" }, text);
 
+// On phones each row stacks into a block, its cells labelled from data-label (see the 720px media query).
 function table(cols, rows) {
+  const cells = rows.map(r => cols.map(c => c.value(r)));
+  // a column that is "–" in every row says nothing; `keep` ones stay anyway (the Lab scoreboard's agents with no runs)
+  const shown = cols.map((c, i) => c.keep || !rows.length || cells.some(row => row[i] !== "–"));
+  const pick = list => list.filter((_, i) => shown[i]);
   return h("div", { class: "scroll" }, h("table", {},
-    h("thead", {}, h("tr", {}, cols.map(c => h("th", { class: c.num ? "num" : "" }, c.label)))),
-    h("tbody", {}, rows.map(r => h("tr", {}, cols.map(c => {
-      const v = c.value(r);
-      const td = h("td", { class: [c.num && "num", c.nowrap && "nowrap", c.mono && "mono", c.cmd && "cmd"].filter(Boolean).join(" ") }, v);
+    h("thead", {}, h("tr", {}, pick(cols).map(c => h("th", { class: c.num ? "num" : "" }, c.label)))),
+    h("tbody", {}, cells.map(row => h("tr", {}, pick(cols.map((c, i) => {
+      const v = row[i];
+      const td = h("td", { class: [c.num && "num", c.nowrap && "nowrap", c.mono && "mono", c.cmd && "cmd"].filter(Boolean).join(" "),
+                           "data-label": typeof c.label === "string" ? c.label : c.label.textContent },  // Lab's labels are nodes
+                   c.cmd ? h("div", { class: "clamp" }, v) : v);
       if (c.cmd) td.title = String(v);
       return td;
-    }))))));
+    })))))));
 }
 
 function copyButton(text) {
@@ -514,7 +531,7 @@ function lab(d) {
     h("div", { class: "card" },
       table([
         { label: "Use case", value: u => h("span", {}, h("span", { class: "mono" }, u.id), " ", u.title) },
-        ...agentCols().map(c => ({ label: c.label, value: u => {
+        ...agentCols().map(c => ({ label: c.label, keep: true, value: u => {
           const mine = runs.filter(r => r.use_case === u.id && r.agent === c.id);
           const r = mine[mine.length - 1];
           return r ? runLink(r, outcomePill(r.outcome), r.overall != null ? ` ${num(r.overall)}/5` : "",
