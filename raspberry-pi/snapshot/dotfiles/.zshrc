@@ -188,7 +188,7 @@ _upd_hermes() {
   cur=$(brew list --versions hermes-agent 2>/dev/null | awk '{print $2}')
   [[ -z $cur ]] && { echo "Hermes not installed"; return 1 }
   if [[ -n $(brew outdated --formula hermes-agent 2>/dev/null) ]]; then
-    echo "Hermes $cur is outdated"; brew upgrade hermes-agent
+    echo "Hermes $cur is outdated"; brew upgrade --yes hermes-agent
   else
     echo "Hermes $cur is up to date"
   fi
@@ -224,24 +224,41 @@ _upd_repos() {
   done
 }
 
-# Per-task run counter: returns 0 on the 1st, 6th, 11th, ... call for $1, else 1.
-# Sets _upd_left to the number of runs until the next due one.
-_upd_every_5th() {
-  local f=${XDG_CACHE_HOME:-$HOME/.cache}/upd-$1-runs n
+# The status page lives in machine-setup (~/dev/pi-status is a symlink to it). Pulling updates its code;
+# this installs any new dependencies and restarts the service so the running page loads that code.
+_upd_pi_status() {
+  systemctl --user cat pi-status.service &>/dev/null || { echo "pi-status service not installed, skipped"; return 0 }
+  uv sync --quiet --project $HOME/dev/pi-status --no-dev --inexact && systemctl --user restart pi-status.service && echo "restarted"
+}
+
+# Restart each running agent service whose code changed after it started (an update above, or a launcher's
+# self-update), so it never keeps running the old version. Compares ctime: brew and npm keep packaged mtimes.
+_upd_restart_agents() {
+  local unit code started changed
+  for unit code in \
+      hermes-dashboard.service /home/linuxbrew/.linuxbrew/opt/hermes-agent \
+      openclaw-gateway.service $HOME/dev/openclaw_node/node_modules/openclaw/package.json \
+      openhuman.service /opt/openhuman-core/openhuman-core; do
+    [[ $(systemctl --user is-active $unit 2>/dev/null) == active ]] || { echo "$unit not running, skipped"; continue }
+    started=$(date -d "$(systemctl --user show -p ActiveEnterTimestamp --value $unit)" +%s 2>/dev/null) || continue
+    changed=$(stat -c %Z $code 2>/dev/null) || continue
+    if (( changed > started )); then
+      systemctl --user restart $unit && echo "$unit restarted to load the new version"
+    else
+      echo "$unit already runs the current version"
+    fi
+  done
+}
+
+# Run counter shared by the periodic steps (repo updates, settings backup). Call once per upd run:
+# sets _upd_due=1 on the 1st, 6th, 11th, ... run (else 0) and _upd_left to runs until the next due one.
+_upd_tick() {
+  local f=${XDG_CACHE_HOME:-$HOME/.cache}/upd-runs n
   mkdir -p ${f:h}
   n=0; [[ -r $f ]] && n=$(( $(<$f) % 5 ))
   echo $(( n + 1 )) > $f
   _upd_left=$(( 5 - n ))
-  (( n == 0 ))
-}
-
-# Shallow-update ~/dev repos only on every 5th upd run (1st, 6th, 11th, ...)
-_upd_maybe_repos() {
-  if _upd_every_5th repos; then
-    _upd_step "git repos in ~/dev (every 5th run)"; _upd_repos
-  else
-    _upd_step "git repos in ~/dev"; echo "skipped, next update in $_upd_left run(s)"
-  fi
+  _upd_due=$(( n == 0 ))
 }
 
 # Snapshot this machine's settings (dotfiles, package lists) into ~/dev/machine-setup/raspberry-pi
@@ -258,6 +275,8 @@ _upd_backup() {
 
 upd() {
   sudo true || return 1
+  local _upd_due _upd_left
+  _upd_tick
 
   _upd_step "apt packages + kernel"
   sudo apt-get update && sudo apt-get full-upgrade -y && sudo apt-get autoremove --purge -y && sudo apt-get clean
@@ -269,18 +288,26 @@ upd() {
 
   if command -v brew >/dev/null; then
     _upd_step "Homebrew"
-    brew update && brew upgrade && brew cleanup
+    # --yes: Homebrew 7 asks for confirmation by default (ask mode)
+    # gcloud-cli is an auto_updates cask, which plain `brew upgrade` skips
+    brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli && brew cleanup
   fi
 
   _upd_step "Agents"
   _upd_sub "Hermes"      _upd_hermes
   _upd_sub "OpenClaw"    _upd_openclaw
   _upd_sub "OpenHuman"   _upd_openhuman
+  _upd_sub "Restart updated agent services" _upd_restart_agents
 
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal
-  _upd_maybe_repos
+  if (( _upd_due )); then
+    _upd_step "git repos in ~/dev (every 5th run)"; _upd_repos
+    _upd_step "pi-status web page (restart to load pulled code)"; _upd_pi_status
+  else
+    _upd_step "git repos in ~/dev"; echo "skipped, next update in $_upd_left run(s)"
+  fi
 
-  if _upd_every_5th backup; then
+  if (( _upd_due )); then
     _upd_step "Settings backup (machine-setup/raspberry-pi, every 5th run)"
     _upd_backup || print -P "%F{yellow}settings backup failed%f (see above)"
   else
