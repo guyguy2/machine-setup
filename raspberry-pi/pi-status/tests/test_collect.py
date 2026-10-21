@@ -126,6 +126,13 @@ def test_docker_permission_error_is_reported(monkeypatch):
     assert collect.docker()["error"] == "permission denied"
 
 
+def test_docker_daemon_not_running(monkeypatch):
+    err = "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"
+    monkeypatch.setattr(collect.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr(collect.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, "", err))
+    assert collect.docker() == {"installed": True, "running": False, "containers": []}
+
+
 def fake_proc(pid, argv, rss=1000, ppid=1):
     return {"pid": pid, "ppid": ppid, "user": "guy", "cpu": 0.0, "rss": rss, "age_s": 5, "argv": argv, "ticks": 0, "start": 0}
 

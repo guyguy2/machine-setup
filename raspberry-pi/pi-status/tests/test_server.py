@@ -49,7 +49,6 @@ def test_collector_error_returns_500_json_and_server_survives(base_url, monkeypa
 def test_status_has_network_summary(base_url):
     data = json.loads(get(base_url + "/api/status")[2])
     assert data["local_ip"] and data["connection"]
-    assert isinstance(data["docker_installed"], bool)  # decides whether System shows a Docker sub-tab
 
 
 # ---------- restart endpoint ----------

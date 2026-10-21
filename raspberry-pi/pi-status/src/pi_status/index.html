@@ -272,14 +272,10 @@ const procCols = [
 ];
 const cmdCol = { label: "Command", mono: true, cmd: true, value: p => p.cmd };
 
-let dockerInstalled = false;
-
 function brand(s) {
   document.title = s.hostname + " – Pi Status";
   $("host").textContent = s.hostname;
   $("model").textContent = s.model;
-  dockerInstalled = s.docker_installed;
-  $("view").querySelector(".subtabs")?.replaceWith(subtabs());  // this can arrive after System has rendered
 }
 
 let lastVersion = null;   // from loadVersion; the attention list reads it
@@ -674,7 +670,8 @@ function lab(d) {
 }
 
 function docker(d) {
-  if (!d.installed) return empty("Docker isn't installed on this Pi. Containers will appear here once it is.");
+  if (!d.installed) return empty("No Docker found: Docker isn't installed on this Pi. Containers will appear here once it is.");
+  if (d.running === false) return empty("Docker isn't running. Start it with sudo systemctl start docker.");
   if (d.error) return h("div", { class: "card" }, pill("error", "bad"), " ", d.error);
   if (!d.containers.length) return empty("Docker is installed, but there are no containers.");
   return h("div", { class: "card" }, table([
@@ -724,12 +721,12 @@ function ports(list) {
   ];
 }
 
-// System's sub-tabs (#system/<id>); a hidden one has no link but still opens by its address
+// System's sub-tabs (#system/<id>)
 const SYSTEM = [
   { id: "services", title: "Services", api: "/api/services", render: services },
   { id: "processes", title: "Processes", api: "/api/processes", render: processes },
   { id: "ports", title: "Ports", api: "/api/ports", render: ports },
-  { id: "docker", title: "Docker", api: "/api/docker", render: docker, hidden: () => !dockerInstalled },
+  { id: "docker", title: "Docker", api: "/api/docker", render: docker },
 ];
 
 const TABS = [
@@ -785,8 +782,7 @@ let currentView = current;  // what's on screen: the tab itself, or the System s
 
 function subtabs() {
   return h("div", { class: "seg subtabs", role: "navigation", "aria-label": current.title },
-    current.sub.filter(s => s === currentView || !s.hidden?.())
-      .map(s => h("a", { href: `#${current.id}/${s.id}`, "aria-current": s === currentView ? "page" : null }, s.title)));
+    current.sub.map(s => h("a", { href: `#${current.id}/${s.id}`, "aria-current": s === currentView ? "page" : null }, s.title)));
 }
 
 $("nav").append(...TABS.map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title)));
