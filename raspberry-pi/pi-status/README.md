@@ -55,6 +55,7 @@ asks you to restart it: `systemctl --user restart pi-status`.
 
     uv run pytest                       # unit, server and browser tests (Playwright drives the system Chromium)
     uv run python screenshots.py        # PNGs of every tab (desktop + phone) in ./screenshots
+    pyright                             # type-check the Python (kept at 0 errors; install with sudo npm install -g pyright)
 
 JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/agents`, `/api/dashboards`, `/api/auth`, `/api/docker`,
 `/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
