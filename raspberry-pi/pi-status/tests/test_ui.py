@@ -812,9 +812,9 @@ def test_every_nav_link_is_on_screen_on_phone(make_page, base_url):
         assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE[0], f"{link.inner_text()} is off-screen"
 
 
-def status(docker):
+def status():
     """Just what the sidebar reads from /api/status on a System tab."""
-    return {"hostname": "box", "model": "Raspberry Pi 5", "docker_installed": docker}
+    return {"hostname": "box", "model": "Raspberry Pi 5"}
 
 
 def subtab(page):
@@ -824,7 +824,7 @@ def subtab(page):
 @pytest.mark.parametrize("sub", SYSTEM)
 def test_system_sub_tabs_mark_system_and_themselves(make_page, base_url, sub):
     page = make_page()
-    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=True)))
+    page.route("**/api/status", lambda r: r.fulfill(json=status()))
     open_tab(page, base_url, f"system/{sub}")
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "system"
     assert subtab(page) == sub.capitalize()
@@ -859,22 +859,18 @@ def test_old_hashes_redirect_to_system(make_page, base_url, old):
     assert seen.count(old) == 1   # the redirect doesn't load the view twice
 
 
-@pytest.mark.parametrize("installed, expected", [(False, ["Services", "Processes", "Ports"]),
-                                                 (True, ["Services", "Processes", "Ports", "Docker"])])
-def test_docker_sub_tab_only_when_installed(make_page, base_url, installed, expected):
+def test_docker_sub_tab_always_listed(make_page, base_url):
     page = make_page()
-    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=installed)))
+    page.route("**/api/status", lambda r: r.fulfill(json=status()))
     open_tab(page, base_url, "system/services")
-    page.wait_for_function(f"document.querySelectorAll('#view .subtabs a').length === {len(expected)}")
-    assert page.locator("#view .subtabs a").all_inner_texts() == expected
+    assert page.locator("#view .subtabs a").all_inner_texts() == ["Services", "Processes", "Ports", "Docker"]
 
 
-def test_docker_sub_tab_still_opens_by_link_when_not_installed(make_page, base_url):
+def test_docker_not_running_message(make_page, base_url):
     page = make_page()
-    page.route("**/api/status", lambda r: r.fulfill(json=status(docker=False)))
-    page.route("**/api/docker", lambda r: r.fulfill(json={"installed": False, "containers": []}))
+    page.route("**/api/docker", lambda r: r.fulfill(json={"installed": True, "running": False, "containers": []}))
     open_tab(page, base_url, "system/docker")
-    assert subtab(page) == "Docker" and "isn't installed" in page.locator("#view").inner_text()
+    assert "isn't running" in page.locator("#view").inner_text()
 
 
 # ---------- overview: needs attention and the agent strip ----------

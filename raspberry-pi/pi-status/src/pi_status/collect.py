@@ -96,7 +96,6 @@ def status() -> dict:
         "local_ip": route.get("prefsrc", ""),
         "gateway": route.get("gateway", ""),
         "connection": connection_label(route.get("dev", "")),
-        "docker_installed": shutil.which("docker") is not None,
         "time": int(time.time()),
     }
 
@@ -368,10 +367,13 @@ def docker() -> dict:
     except (OSError, subprocess.SubprocessError) as e:
         return {"installed": True, "error": str(e), "containers": []}
     if r.returncode:
+        if "Cannot connect to the Docker daemon" in r.stderr:
+            return {"installed": True, "running": False, "containers": []}
         return {"installed": True, "error": r.stderr.strip()[:300], "containers": []}
     rows = [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
     return {
         "installed": True,
+        "running": True,
         "containers": [
             {"name": c["Names"], "image": c["Image"], "state": c["State"], "status": c["Status"], "ports": c["Ports"]}
             for c in rows
