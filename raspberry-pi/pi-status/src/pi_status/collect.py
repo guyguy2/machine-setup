@@ -165,8 +165,10 @@ def scan() -> list[dict]:
     up = float(read("/proc/uptime").split()[0])
     for pid, p in second.items():
         prev = first.get(pid)
-        same = prev is not None and prev["start"] == p["start"]
-        p["cpu"] = round((p["ticks"] - prev["ticks"]) / CLK_TCK / dt * 100, 1) if same else 0.0
+        if prev is None or prev["start"] != p["start"]:  # new since the first sample, or a new process reusing the pid
+            p["cpu"] = 0.0
+        else:
+            p["cpu"] = round((p["ticks"] - prev["ticks"]) / CLK_TCK / dt * 100, 1)
         p["age_s"] = int(up - p["start"])
     return list(second.values())
 
@@ -294,6 +296,8 @@ def front_matter(text: str) -> tuple[dict, str]:
 
 
 def number(value: str | None) -> float | None:
+    if value is None:
+        return None
     try:
         return float(value)
     except (TypeError, ValueError):

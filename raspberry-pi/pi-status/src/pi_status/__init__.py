@@ -73,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
         if restart:
             collect.restart_service()  # after the reply, because this process is about to be stopped
 
-    def log_message(self, fmt: str, *args) -> None:
+    def log_message(self, format: str, *args) -> None:
         pass
 
 
