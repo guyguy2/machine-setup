@@ -1,0 +1,25 @@
+# Pi-hole (DNS ad blocker). The whole config is here plus the password in .env (not in git;
+# restore.sh's data step restores it from pi-data, or the pihole step asks for it).
+# etc-pihole/ is runtime data Pi-hole rebuilds on first start (blocklist = Pi-hole's default StevenBlack list).
+# Admin UI: 127.0.0.1:8081, published on the tailnet at https://<pi>.<tailnet>.ts.net:8445/admin/
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    hostname: pihole
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "127.0.0.1:8081:80/tcp"
+    environment:
+      TZ: "America/Chicago"
+      FTLCONF_webserver_api_password: "${FTLCONF_webserver_api_password}"
+      FTLCONF_dns_listeningMode: "ALL"
+      FTLCONF_dns_upstreams: "8.8.8.8;8.8.4.4"
+    volumes:
+      - ./etc-pihole:/etc/pihole
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+      - SYS_NICE
