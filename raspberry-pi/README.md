@@ -103,7 +103,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 |---|---|
 | `systemctl --user is-active pi-status` | `active`; `curl -s localhost:8080 \| head -1` prints HTML |
 | `docker ps` | `pihole` Up (healthy); `getent hosts example.com` resolves |
-| `tailscale serve status` | `/` → 8080, `:8443` → 9119, `:8444` → 18789, `:8445/pihole` → 8081 |
+| `tailscale serve status` | `/` → 8080, `:8443` → 9119, `:8444/openclaw` → 18789, `:8445/pihole` → 8081 |
 | `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw, openhuman; symlinks openclaw_node, pihole, pi-status, scripts |
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |
@@ -145,7 +145,7 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 |---|---|---|---|
 | pi-status website | user unit `pi-status.service` (enabled) | 127.0.0.1:8080 | `https://raspberrypi.<tailnet>.ts.net` |
 | Hermes dashboard | user unit `hermes-dashboard.service` | 127.0.0.1:9119 | `:8443` |
-| OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444` |
+| OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444/openclaw/` |
 | OpenHuman daemon | user unit `openhuman.service` | | |
 | Pi-hole | docker container `pihole` | DNS :53 (all interfaces), UI 127.0.0.1:8081 | `:8445/pihole/admin/` |
 

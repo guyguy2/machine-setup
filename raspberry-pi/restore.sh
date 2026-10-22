@@ -225,8 +225,10 @@ if want agents; then
   say "agents: OpenClaw (npm, ~/dev/openclaw_node) and OpenHuman (.deb + /opt/openhuman-core); Hermes comes from the Brewfile"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
-  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw; _upd_openhuman'"
+  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw; _upd_openhuman', then openclaw config set gateway.controlUi.basePath /openclaw"
   else zsh -ic '_upd_openclaw; _upd_openhuman' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
+    # The Control UI is published at /openclaw (see the pi-status step), so it must serve under that path.
+    "$HOME/dev/openclaw_node/node_modules/.bin/openclaw" config set gateway.controlUi.basePath /openclaw || true
   fi
 fi
 
@@ -241,12 +243,12 @@ if want pi-status; then
     run uv sync --project "$site" --no-dev --inexact
     run systemctl --user daemon-reload
     run systemctl --user enable --now pi-status.service
-    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 9119, --https=8444 18789, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"
+    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 9119, --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"
     elif tailscale status >/dev/null 2>&1; then
       sudo tailscale serve --bg 8080
       # The Hermes dashboard and OpenClaw Control UI, linked from the Agents tab (DASHBOARDS in collect.py).
       sudo tailscale serve --bg --https=8443 9119
-      sudo tailscale serve --bg --https=8444 18789
+      sudo tailscale serve --bg --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw
       sudo tailscale serve --bg --https=8445 --set-path /pihole http://127.0.0.1:8081  # Pi-hole UI (~/dev/pihole, docker-compose host port 8081)
       tailscale serve status
     else
