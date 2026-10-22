@@ -111,7 +111,7 @@ PIHOLE = {"name": "pihole", "state": "running", "ports": "53/udp, 0.0.0.0:8081->
 
 
 def serve_status(port):
-    return json.dumps({"Web": {f"box.tail1234.ts.net:{port}": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8081"}}}}})
+    return json.dumps({"Web": {f"box.tail1234.ts.net:{port}": {"Handlers": {"/pihole": {"Proxy": "http://127.0.0.1:8081"}}}}})
 
 
 def stub_tailscale(monkeypatch, serve_out):
@@ -121,12 +121,12 @@ def stub_tailscale(monkeypatch, serve_out):
 
 def test_pihole_link_is_https_when_published(monkeypatch):
     stub_tailscale(monkeypatch, serve_status(8445))
-    assert collect.pihole_link([PIHOLE]) == {"url": "https://box.tail1234.ts.net:8445/admin/", "publish": ""}
+    assert collect.pihole_link([PIHOLE]) == {"url": "https://box.tail1234.ts.net:8445/pihole/admin/", "publish": ""}
 
 
 def test_pihole_link_gives_the_publish_command_when_not_published(monkeypatch):
     stub_tailscale(monkeypatch, "{}")
-    assert collect.pihole_link([PIHOLE]) == {"url": "", "publish": "sudo tailscale serve --bg --https=8445 8081"}
+    assert collect.pihole_link([PIHOLE]) == {"url": "", "publish": "sudo tailscale serve --bg --https=8445 --set-path /pihole http://127.0.0.1:8081"}
 
 
 @pytest.mark.parametrize("containers", [
