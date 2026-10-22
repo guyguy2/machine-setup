@@ -1,6 +1,7 @@
 [Unit]
-Description=Hermes web dashboard on 127.0.0.1:9119 (HTTPS via `tailscale serve --bg --https=8443 9119`)
+Description=Hermes web dashboard on 127.0.0.1:9119 (HTTPS via hermes-proxy.service and `tailscale serve`)
 After=network-online.target
+Wants=hermes-proxy.service
 
 [Service]
 ExecStart=/home/linuxbrew/.linuxbrew/bin/hermes dashboard --no-open

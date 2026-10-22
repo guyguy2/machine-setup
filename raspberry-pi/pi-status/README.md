@@ -46,7 +46,7 @@ asks you to restart it: `systemctl --user restart pi-status`.
 - `sudo tailscale serve --bg 8080` publishes it as `https://<pi>.<tailnet>.ts.net` with a real certificate
   (enable HTTPS certificates and Serve once in the Tailscale admin console).
 - The dashboards it links to run as their own user units (`hermes-dashboard.service` on 9119,
-  `openclaw-gateway.service` on 18789), published on the tailnet at port 8443 (Hermes, at `/`) and `:8444/openclaw/` (its `gateway.controlUi.basePath` is `/openclaw`). The Pi-hole UI (Docker, host port 8081) is published at `:8445/pihole/admin/`. Hermes serves absolute `/api` and `/assets` paths with no prefix setting, so it stays at the root.
+  `openclaw-gateway.service` on 18789), published on the tailnet at `:8443/hermes/` and `:8444/openclaw/` (its `gateway.controlUi.basePath` is `/openclaw`). The Pi-hole UI (Docker, host port 8081) is published at `:8445/pihole/admin/`. Hermes has no prefix setting of its own but honours `X-Forwarded-Prefix`, so `hermes-proxy.service` (Caddy on 127.0.0.1:9120, config in `services/hermes-proxy/`, started and stopped with `hermes-dashboard.service`) adds that header and Tailscale publishes the proxy.
 - `restore.sh` in the parent folder sets all of this up on a fresh image (steps `tailscale` and `pi-status`).
 - `~/dev/pi-status` is a symlink to this folder, so there is only one copy.
 - `upd` runs `uv sync` and restarts the service after pulling repos.

@@ -455,11 +455,12 @@ def ports() -> list[dict]:
 
 # ---------- agent dashboards ----------
 # The agents' own web UIs. Each listens on 127.0.0.1 only: `tailscale serve --bg --https=<tailnet_port> <port>`
-# publishes one to the tailnet (under `path` when it has one, so the address says what it is), and an SSH tunnel reaches it from anywhere SSH does. Without a port it's a placeholder.
+# publishes one to the tailnet (under `path` when it has one, so the address says what it is; Hermes via a Caddy proxy that adds the
+# X-Forwarded-Prefix header it honours), and an SSH tunnel reaches it from anywhere SSH does. Without a port it's a placeholder.
 
 DASHBOARDS = [
     {"name": "Hermes", "what": "Web dashboard: settings, API keys, sessions",
-     "port": 9119, "tailnet_port": 8443},
+     "port": 9119, "tailnet_port": 8443, "path": "/hermes", "proxy_port": 9120},  # no prefix setting: see services/hermes-proxy
     {"name": "OpenClaw", "what": "Control UI: chat, sessions, channels, automations",
      "port": 18789, "tailnet_port": 8444, "path": "/openclaw"},  # gateway.controlUi.basePath is set to match
     {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
@@ -480,7 +481,7 @@ def dashboards() -> list[dict]:
             path = d.get("path", "")
             handlers = web.get(f"{dns_name}:{d['tailnet_port']}", {}).get("Handlers", {})
             published = dns_name and (path or "/") in handlers
-            target = f"http://127.0.0.1:{port}{path}"
+            target = f"http://127.0.0.1:{d.get('proxy_port', port)}{path}"  # a proxy port adds the prefix Hermes needs
             entry |= {
                 "running": port in listening,
                 "tailnet_url": f"https://{dns_name}:{d['tailnet_port']}{path}/" if published else "",
