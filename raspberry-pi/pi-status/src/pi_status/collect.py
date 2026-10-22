@@ -362,6 +362,7 @@ def lab() -> dict:
 
 # ---------- docker ----------
 
+PIHOLE_PATH = "/pihole"  # the path it is mounted at, so the address says what it is; Pi-hole's web prefix matches
 PIHOLE_TAILNET_PORT = 8445  # the HTTPS port `tailscale serve` publishes the Pi-hole UI on (8443 and 8444 are the agents')
 
 
@@ -376,9 +377,9 @@ def pihole_link(containers: list[dict]) -> dict:
             web = json.loads(run("tailscale", "serve", "status", "--json") or "{}").get("Web", {})
         except ValueError:
             web = {}
-        if dns_name and f"{dns_name}:{PIHOLE_TAILNET_PORT}" in web:
-            return {"url": f"https://{dns_name}:{PIHOLE_TAILNET_PORT}/admin/", "publish": ""}
-        return {"url": "", "publish": f"sudo tailscale serve --bg --https={PIHOLE_TAILNET_PORT} {port[1]}"}
+        if dns_name and PIHOLE_PATH in web.get(f"{dns_name}:{PIHOLE_TAILNET_PORT}", {}).get("Handlers", {}):
+            return {"url": f"https://{dns_name}:{PIHOLE_TAILNET_PORT}{PIHOLE_PATH}/admin/", "publish": ""}
+        return {"url": "", "publish": f"sudo tailscale serve --bg --https={PIHOLE_TAILNET_PORT} --set-path {PIHOLE_PATH} http://127.0.0.1:{port[1]}"}
     return {"url": "", "publish": ""}
 
 
