@@ -1,0 +1,12 @@
+[Unit]
+Description=Caddy: serves the Hermes dashboard under /hermes (127.0.0.1:9120 -> 9119); HTTPS via `tailscale serve --bg --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes`
+# Follows hermes-dashboard.service: its Wants= starts this, and stopping or restarting Hermes does the same here.
+PartOf=hermes-dashboard.service
+After=hermes-dashboard.service
+
+[Service]
+ExecStart=/home/linuxbrew/.linuxbrew/bin/caddy run --config %h/dev/hermes-proxy/Caddyfile --adapter caddyfile
+# Caddy wants somewhere to keep state even with the admin API and automatic HTTPS off.
+Environment=XDG_DATA_HOME=%t XDG_CONFIG_HOME=%t
+Restart=always
+RestartSec=5

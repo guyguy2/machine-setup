@@ -1,6 +1,7 @@
 tap "openclaw/tap"
 brew "bat"
 brew "btop"
+brew "caddy"
 brew "sqlite"
 brew "direnv"
 brew "entr"

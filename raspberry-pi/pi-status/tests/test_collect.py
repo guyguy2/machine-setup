@@ -526,7 +526,7 @@ def test_dashboards_link_only_what_tailscale_publishes(monkeypatch):
     result = {d["name"]: d for d in collect.dashboards()}
     assert result["OpenClaw"]["running"] and result["OpenClaw"]["tailnet_url"] == "https://box.tail9.ts.net:8444/openclaw/"
     assert not result["Hermes"]["running"] and result["Hermes"]["tailnet_url"] == ""
-    assert result["Hermes"]["publish"] == "tailscale serve --bg --https=8443 9119"
+    assert result["Hermes"]["publish"] == "tailscale serve --bg --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes"
     assert result["OpenClaw"]["publish"] == "tailscale serve --bg --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw"
     assert result["Hermes"]["tunnel"] == "ssh -N -L 9119:localhost:9119 pi"
     assert "local_url" not in result["OpenHuman"]  # placeholder: no web UI

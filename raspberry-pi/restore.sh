@@ -196,11 +196,12 @@ link_dir() {
 }
 
 if want links; then
-  say "\$HOME/dev symlinks into this repo: scripts, pi-status, pihole, openclaw_node"
+  say "\$HOME/dev symlinks into this repo: scripts, pi-status, pihole, openclaw_node, hermes-proxy"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
   link_dir "$here/services/openclaw_node" "$HOME/dev/openclaw_node"
+  link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
 fi
 
 if want pihole; then
@@ -243,11 +244,11 @@ if want pi-status; then
     run uv sync --project "$site" --no-dev --inexact
     run systemctl --user daemon-reload
     run systemctl --user enable --now pi-status.service
-    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 9119, --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"
+    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes, --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"
     elif tailscale status >/dev/null 2>&1; then
       sudo tailscale serve --bg 8080
       # The Hermes dashboard and OpenClaw Control UI, linked from the Agents tab (DASHBOARDS in collect.py).
-      sudo tailscale serve --bg --https=8443 9119
+      sudo tailscale serve --bg --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes  # via hermes-proxy (Caddy)
       sudo tailscale serve --bg --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw
       sudo tailscale serve --bg --https=8445 --set-path /pihole http://127.0.0.1:8081  # Pi-hole UI (~/dev/pihole, docker-compose host port 8081)
       tailscale serve status
