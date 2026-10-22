@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-local",
+  "version": "1.0.0",
+  "description": "Local OpenClaw install",
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "private": true,
+  "dependencies": {
+    "openclaw": "^2026.10.5"
+  },
+  "allowScripts": {
+    "openclaw": true,
+    "koffi": true,
+    "esbuild": true,
+    "protobufjs": true,
+    "@google/genai": true
+  }
+}

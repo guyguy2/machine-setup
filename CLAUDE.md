@@ -154,14 +154,26 @@ Enhanced Google Voice call launcher with multi-browser support, contacts, and ca
 
 ## Raspberry Pi (raspberry-pi/)
 
-Bash scripts that back up and restore a Raspberry Pi / Debian setup. Not macOS.
+Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a blank card. Not macOS.
+**To set up or restore a Pi, follow `raspberry-pi/README.md`**: it is the runbook, written for an AI agent to execute.
 
-- `raspberry-pi/save.sh [--push]` snapshots dotfiles, apt/Homebrew/uv/npm lists, systemd units into `raspberry-pi/snapshot/`; `--push` commits only `snapshot/`. The Pi's `upd` function runs it.
-- `raspberry-pi/restore.sh [--dry-run] [--only steps]` rebuilds a fresh image from the snapshot.
-- Text only: never put secrets, SSH keys, history or files over 100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
-- `raspberry-pi/bin/` has the Hermes, OpenClaw and OpenHuman launchers (zsh). On the Pi, `~/dev/scripts` is a symlink to it, so edit the launchers here and never keep a second copy.
-- `raspberry-pi/pi-status/` is the Pi's status web page (uv project, stdlib-only server, pytest + Playwright tests; see its README). `~/dev/pi-status` is a symlink to it, so edit it here. It runs as the user unit `pi-status.service` (saved in `snapshot/dotfiles`), published over HTTPS by `tailscale serve --bg 8080`. The page doesn't poll (it loads per tab and has a Refresh button) and offers a Restart now button when its code on disk is newer than the running server. Run `uv run pytest` in `~/dev/pi-status` after changing it. The Python is type-checked with pyright and kept at 0 errors (`pyright` there, and the `pyright-lsp` plugin reports new errors after each edit). The JavaScript is inline in `index.html`, so no language server checks it; use grep there. `save.sh --push` commits only `snapshot/`, so commit `pi-status/` changes yourself.
-- `restore.sh` steps, in order: apt-sources apt tailscale brew uv npm omzsh dotfiles links pi-status shell systemd. The `tailscale` step installs and enables Tailscale (sign-in stays manual); the `pi-status` step syncs the venv, enables the service and runs `tailscale serve`.
+- `raspberry-pi/bootstrap.sh`: `curl | bash` entry point on a fresh image (installs git, clones, runs `restore.sh`).
+- `raspberry-pi/restore.sh [--dry-run] [--only steps]`: steps apt-sources apt system tailscale brew uv npm omzsh
+  dotfiles github repos links pihole agents pi-status shell systemd. Safe to re-run.
+- `raspberry-pi/save.sh [--push]`: rewrites `raspberry-pi/snapshot/` (dotfiles, apt/Homebrew/uv/npm lists, units,
+  `system.txt`, `repos.txt`) and commits only `snapshot/`; then warns about unpushed work in `~/dev`. `upd` runs it.
+- No secrets or agent state are backed up (public repo). Never put secrets, SSH private keys, history or files over
+  100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
+- Folders symlinked from `~/dev` (edit them here, never keep a second copy): `bin/` (`~/dev/scripts`: Hermes,
+  OpenClaw, OpenHuman launchers), `pi-status/` (`~/dev/pi-status`), `services/pihole/` (`~/dev/pihole`: Pi-hole
+  docker compose; `.env` and `etc-pihole/` gitignored), `services/openclaw_node/` (`~/dev/openclaw_node`: the npm
+  project `openclaw-gateway.service` runs from; `node_modules/` gitignored).
+- `raspberry-pi/pi-status/` is the Pi's status web page (uv project, stdlib-only server, pytest + Playwright tests; see
+  its README). It runs as the user unit `pi-status.service`, published over HTTPS by `tailscale serve --bg 8080`. The
+  page doesn't poll and offers a Restart now button when its code on disk is newer than the running server. Run
+  `uv run pytest` in `~/dev/pi-status` after changing it. The Python is type-checked with pyright and kept at 0 errors.
+  The JavaScript is inline in `index.html`; use grep there. Commit `pi-status/` changes yourself.
+- After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
 
 ## Development Environment
 
