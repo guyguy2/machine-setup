@@ -11,7 +11,7 @@ What comes back automatically:
 | From | What |
 |---|---|
 | this folder | scripts, the pi-status website, the Pi-hole compose file, the OpenClaw npm project, agent launchers |
-| `snapshot/` (written by `save.sh`) | apt packages and repos, Brewfile, uv and npm tools, dotfiles (`.zshrc` with `upd`, `.gitconfig`, `authorized_keys`, Claude Code settings and skills, desktop configs), systemd user units, hostname and timezone, the list of `~/dev` repos |
+| `snapshot/` (written by `save.sh`) | apt packages and repos, Brewfile, uv and npm tools, dotfiles (`.zshrc` with `upd`, `.gitconfig`, Claude Code settings and skills, desktop configs), systemd user units, hostname and timezone, the list of `~/dev` repos |
 | `snapshot/repos.txt` | the `~/dev` git repos: `agent-lab` (private: needs the GitHub login), upstream source clones `hermes-agent`, `openclaw`, `openhuman` |
 
 ---
@@ -92,8 +92,10 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    pi-status Agents tab, with `~/dev/agent-lab/bin/lab use <agent>`, or with `systemctl --user start hermes-dashboard`
    (or `openclaw-gateway`, `openhuman`).
 6. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
-   DNS depend on it. The old Pi was 192.168.86.60 on Wi-Fi.
-7. **SSH keys** (only if needed): the Pi has no private keys; `gh` handles git over HTTPS.
+   DNS depend on it.
+7. **SSH keys**: SSH access comes only from the key given to Imager in step 1 (`authorized_keys` isn't backed up, on
+   purpose). To allow another machine, append its public key to `~/.ssh/authorized_keys`. The Pi needs no private
+   keys: `gh` handles git over HTTPS.
 
 ## 5. Check it worked
 
@@ -152,7 +154,8 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 ## Rules for changing things (humans and AI agents)
 
 - Edit in this repo; the `~/dev` symlinks point here. Never keep a second copy.
-- Never commit secrets here: the repo is public. Passwords and tokens stay on the Pi (gitignored `.env` files, tool
+- Never commit secrets or identifying details here: the repo is public. Write `<tailnet>` instead of the real
+  Tailscale name (`save.sh` refuses a snapshot containing it). Passwords and tokens stay on the Pi (gitignored `.env` files, tool
   config dirs) and get re-entered after a rebuild.
 - New setting file to keep → add it to `dotfiles` in `save.sh`. New tool → install it the usual way (see
   `~/.claude/CLAUDE.md`); the next save picks it up in the Brewfile or apt list. New repo in `~/dev` → picked up by
