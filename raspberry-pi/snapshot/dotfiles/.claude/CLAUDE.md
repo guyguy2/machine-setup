@@ -14,9 +14,18 @@ Install each tool from exactly one source. Before installing, check `whence -a <
   switching. The full list isn't kept here: `~/dev/machine-setup/raspberry-pi/snapshot/Brewfile` records what was
   installed as of the last `upd` (which regenerates it with `brew bundle dump` and pushes it), and `brew leaves`
   plus `brew list --cask` show what's installed right now.
-- **uv** (`uv tool install`) for Python CLI tools; **npm -g** only for Node tools.
+- **uv** (`uv tool install`) for Python CLI tools; **npm -g** (`sudo npm install -g`, apt's NodeSource npm) only for
+  Node tools. pyright is one (a Node tool, even though it checks Python).
 - **Manual GitHub-release installs** only when there's no package. Currently that's just OpenHuman
   (`open-human` .deb + `/opt/openhuman-core`).
+
+## Python code intelligence
+
+The `pyright-lsp` Claude Code plugin (user scope) runs pyright on Python files: after each edit Claude sees new type
+errors, and the `LSP` tool finds definitions and references by symbol. Use the LSP tool instead of grep when following
+a Python symbol across files (callers, overrides, where a name is defined), and fix new diagnostics before running
+tests. For a project's imports to resolve, its `pyproject.toml` needs `[tool.pyright]` with `venvPath = "."` and
+`venv = ".venv"`. Run `pyright` in the project for a full check.
 
 The Homebrew directories are deliberately placed *after* `/usr/bin` on PATH (see `~/.zshrc`), so brew's dependency
 formulae (util-linux, curl, bash, ncurses, ...) never shadow system commands. Don't "fix" this ordering.
@@ -33,5 +42,5 @@ CLI's `--no-launch-browser`/device-code mode when it has one.
 ## Updating
 
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
-(including Claude Code and Hermes), OpenClaw, OpenHuman, uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
+(including Claude Code and Hermes), npm global packages, OpenClaw, OpenHuman, uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.

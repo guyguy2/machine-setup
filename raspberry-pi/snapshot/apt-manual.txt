@@ -31,6 +31,8 @@ debianutils
 dhcpcd-base
 diffutils
 dmidecode
+docker-compose
+docker.io
 dosfstools
 dpkg
 e2fsprogs

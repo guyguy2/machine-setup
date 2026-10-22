@@ -14,5 +14,8 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark",
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
+  }
 }
