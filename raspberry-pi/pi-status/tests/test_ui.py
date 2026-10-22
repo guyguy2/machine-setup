@@ -113,6 +113,40 @@ def test_page_url_hidden_when_not_served(make_page, base_url):
     assert page.locator(".page-row").count() == 0
 
 
+def test_pihole_url_is_a_link_with_copy(make_page, base_url):
+    url = "https://box.tail9.ts.net:8445/admin/"
+    data = {"installed": True, "running": True, "pihole": {"url": url, "publish": ""}, "containers": [
+        {"name": "pihole", "image": "pihole/pihole", "state": "running", "status": "Up", "ports": "8081->80/tcp"}]}
+    page = make_page()
+    page.route("**/api/docker", lambda r: r.fulfill(json=data))
+    open_tab(page, base_url, "system/docker")
+    assert page.locator(".pihole-row a").get_attribute("href") == url
+    assert page.locator(".pihole-row a").get_attribute("target") == "_blank"  # opens in a new tab
+    page.locator(".pihole-row .copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == url
+
+
+def test_pihole_publish_command_when_not_published(make_page, base_url):
+    cmd = "sudo tailscale serve --bg --https=8445 8081"
+    data = {"installed": True, "running": True, "pihole": {"url": "", "publish": cmd}, "containers": [
+        {"name": "pihole", "image": "pihole/pihole", "state": "running", "status": "Up", "ports": "8081->80/tcp"}]}
+    page = make_page()
+    page.route("**/api/docker", lambda r: r.fulfill(json=data))
+    open_tab(page, base_url, "system/docker")
+    assert page.locator(".pihole-row code").inner_text() == cmd
+    assert page.locator(".pihole-row a").count() == 0
+
+
+def test_pihole_url_hidden_when_not_running(make_page, base_url):
+    data = {"installed": True, "running": True, "pihole": {"url": "", "publish": ""}, "containers": [
+        {"name": "web", "image": "nginx", "state": "running", "status": "Up", "ports": ""}]}
+    page = make_page()
+    page.route("**/api/docker", lambda r: r.fulfill(json=data))
+    open_tab(page, base_url, "system/docker")
+    page.wait_for_selector("table")
+    assert page.locator(".pihole-row").count() == 0
+
+
 def test_copy_button_copies_command(make_page, base_url):
     page = make_page()
     page.route("**/api/network", lambda r: r.fulfill(json=NETWORK))

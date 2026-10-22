@@ -161,12 +161,13 @@ if want pi-status; then
     run uv sync --project "$site" --no-dev --inexact
     run systemctl --user daemon-reload
     run systemctl --user enable --now pi-status.service
-    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 9119, --https=8444 18789 (when Tailscale is signed in)"
+    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 9119, --https=8444 18789, --https=8445 8081 (when Tailscale is signed in)"
     elif tailscale status >/dev/null 2>&1; then
       sudo tailscale serve --bg 8080
       # The Hermes dashboard and OpenClaw Control UI, linked from the Agents tab (DASHBOARDS in collect.py).
       sudo tailscale serve --bg --https=8443 9119
       sudo tailscale serve --bg --https=8444 18789
+      sudo tailscale serve --bg --https=8445 8081  # Pi-hole UI (~/dev/pihole, docker-compose host port 8081)
       tailscale serve status
     else
       echo "  Tailscale isn't signed in yet: run 'sudo tailscale up', then './restore.sh --only pi-status' to publish the page"
