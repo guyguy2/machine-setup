@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Rebuild this Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot.
+# Rebuild this Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot. README.md explains every step.
+# No secrets are backed up: logins and API keys are set up by hand afterwards (listed at the end).
 # Usage: restore.sh [--dry-run] [--only step,step,...]
-# Steps (run in this order): apt-sources apt tailscale brew uv npm omzsh dotfiles links pi-status shell systemd
-# Safe to re-run. Existing dotfiles are moved to ~/.pi-restore-backup-<timestamp>/.
+# Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
+#                            pihole agents pi-status shell systemd
+# Safe to re-run. Existing files are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt tailscale brew uv npm omzsh dotfiles links pi-status shell systemd)
+all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status shell systemd)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 
 dry=0
@@ -52,11 +54,34 @@ if want apt; then
   if need apt-manual.txt; then
     run sudo apt-get update
     # Skip names this image's repos don't offer (renamed/removed) instead of failing the lot.
-    mapfile -t avail < <(apt-cache pkgnames | sort)
-    mapfile -t pkgs < <(comm -12 "$snap/apt-manual.txt" <(printf '%s\n' "${avail[@]}"))
-    comm -23 "$snap/apt-manual.txt" <(printf '%s\n' "${avail[@]}") | sed 's/^/  not available: /'
+    # comm needs both lists sorted the same way whatever the locale of the machine that saved them.
+    mapfile -t avail < <(apt-cache pkgnames | LC_ALL=C sort)
+    mapfile -t want_pkgs < <(LC_ALL=C sort "$snap/apt-manual.txt")
+    mapfile -t pkgs < <(LC_ALL=C comm -12 <(printf '%s\n' "${want_pkgs[@]}") <(printf '%s\n' "${avail[@]}"))
+    LC_ALL=C comm -23 <(printf '%s\n' "${want_pkgs[@]}") <(printf '%s\n' "${avail[@]}") | sed 's/^/  not available: /'
     (( ${#pkgs[@]} )) && run sudo apt-get install -y "${pkgs[@]}"
   fi
+fi
+
+# snapshot_value <key>: a "key: value" line from snapshot/system.txt.
+snapshot_value() { sed -n "s/^$1: //p" "$snap/system.txt" 2>/dev/null; }
+
+if want system; then
+  say "system: hostname, timezone, docker group"
+  if need system.txt; then
+    h=$(snapshot_value hostname); tz=$(snapshot_value timezone)
+    if [[ -n $h && $h != "$(hostname)" ]]; then
+      run sudo hostnamectl set-hostname "$h"
+      run sudo sed -i "s/^127\.0\.1\.1\s.*/127.0.1.1\t$h/" /etc/hosts
+    else echo "  hostname already $(hostname)"; fi
+    if [[ -n $tz && $tz != "$(timedatectl show -p Timezone --value 2>/dev/null)" ]]; then run sudo timedatectl set-timezone "$tz"
+    else echo "  timezone already ${tz:-unset}"; fi
+  fi
+  # docker.io comes from the apt step; the group lets you run docker without sudo (after logging in again).
+  if getent group docker >/dev/null; then
+    if id -nG "$USER" | grep -qw docker; then echo "  $USER already in group docker"; else run sudo usermod -aG docker "$USER"; fi
+    run sudo systemctl enable --now docker
+  else echo "  docker not installed (run the apt step)"; fi
 fi
 
 if want tailscale; then
@@ -135,6 +160,32 @@ if want dotfiles; then
   fi
 fi
 
+if want github; then
+  say "GitHub sign-in (needed to clone the private agent-lab repo)"
+  if ! have gh; then echo "  gh not installed (run the brew step)"
+  elif gh auth status >/dev/null 2>&1; then echo "  already signed in"; run gh auth setup-git
+  elif (( dry )); then echo "  [dry-run] gh auth login --web (one-time code: open https://github.com/login/device on any computer)"
+  else
+    echo "  Open https://github.com/login/device on any computer (e.g. the Mac) and enter the code printed below."
+    gh auth login --hostname github.com --git-protocol https --web
+    gh auth setup-git
+  fi
+fi
+
+if want repos; then
+  say "git repos -> ~/dev (snapshot/repos.txt)"
+  if need repos.txt; then
+    while read -r name url; do
+      [[ -n $name ]] || continue
+      if [[ -e $HOME/dev/$name ]]; then echo "  ~/dev/$name already there"
+      elif (( dry )); then echo "  [dry-run] git clone $url ~/dev/$name"
+      elif git clone -q "$url" "$HOME/dev/$name"; then echo "  cloned $name"
+      else echo "  could not clone $url (private? run the github step first)"
+      fi
+    done < "$snap/repos.txt"
+  fi
+fi
+
 # link_dir <directory in this repo> <symlink path>: never replaces something that is already there.
 link_dir() {
   local target=$1 link=$2
@@ -145,9 +196,38 @@ link_dir() {
 }
 
 if want links; then
-  say "\$HOME/dev/scripts -> agent launchers (bin/), \$HOME/dev/pi-status -> status page (pi-status/)"
+  say "\$HOME/dev symlinks into this repo: scripts, pi-status, pihole, openclaw_node"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
+  link_dir "$here/services/pihole" "$HOME/dev/pihole"
+  link_dir "$here/services/openclaw_node" "$HOME/dev/openclaw_node"
+fi
+
+if want pihole; then
+  say "Pi-hole (docker compose in ~/dev/pihole; DNS on port 53, admin UI on 127.0.0.1:8081)"
+  ph=$here/services/pihole
+  if ! have docker-compose; then echo "  docker-compose not installed (run the apt step)"
+  else
+    if [[ ! -f $ph/.env ]]; then
+      if (( dry )); then echo "  [dry-run] ask for the Pi-hole admin password and write $ph/.env"
+      else
+        read -rsp "  choose a Pi-hole admin password: " pw; echo
+        (umask 077; printf 'FTLCONF_webserver_api_password=%s\n' "$pw" > "$ph/.env"); unset pw
+      fi
+    fi
+    if (( dry )); then echo "  [dry-run] (cd $ph && sudo docker-compose up -d)"
+    else (cd "$ph" && sudo docker-compose up -d)
+    fi
+  fi
+fi
+
+if want agents; then
+  say "agents: OpenClaw (npm, ~/dev/openclaw_node) and OpenHuman (.deb + /opt/openhuman-core); Hermes comes from the Brewfile"
+  # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
+  if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
+  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw; _upd_openhuman'"
+  else zsh -ic '_upd_openclaw; _upd_openhuman' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
+  fi
 fi
 
 if want pi-status; then
@@ -204,12 +284,16 @@ fi
 say "Restore finished. Manual follow-ups"
 cat <<'MSG'
   - Open a new terminal (or log out/in) so zsh and ~/.zshrc take effect.
-  - gh auth login        (then: gh auth setup-git)
   - sudo tailscale up    (open the link it prints), then ./restore.sh --only pi-status to publish the
                          status page over HTTPS. A brand-new tailnet must first enable HTTPS certificates
                          (https://login.tailscale.com/admin/dns) and approve Serve (the link `tailscale serve` prints).
   - claude               (log in; installed via the Brewfile cask)
-  - OpenHuman / OpenClaw: run ~/dev/scripts/openhuman and ~/dev/scripts/openclaw once;
-    each installs itself on first run (see snapshot/versions.txt for last-known versions).
-  - Re-create ~/.ssh keys and any API tokens yourself; they are intentionally not backed up.
+  - gcloud auth login --no-launch-browser
+  - gws: put the OAuth client file at ~/.config/gws/client_secret.json (Google Cloud console > APIs & Services >
+    Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
+  - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
+  - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
+  - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
+    ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
+    (or openclaw-gateway, openhuman).
 MSG

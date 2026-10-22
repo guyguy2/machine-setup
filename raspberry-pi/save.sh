@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Snapshot this Pi's settings into ./snapshot (dotfiles, package lists, units).
+# Snapshot this Pi's settings into ./snapshot (dotfiles, package lists, units, ~/dev repo list).
 # Usage: save.sh [--push]   --push: commit the snapshot and push it to origin.
 # bash, not zsh: restore.sh runs on a fresh image before zsh is installed.
 set -euo pipefail
@@ -7,15 +7,16 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
 
-# Paths under $HOME to back up. Secrets and caches are deliberately absent:
-# ~/.ssh, ~/.claude.json, ~/.hermes, ~/.openclaw, history files, ~/.cache.
+# Paths under $HOME to back up. Secrets, agent state and caches are deliberately absent:
+# SSH private keys, ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.openhuman, ~/.config/gws, history files, ~/.cache.
 dotfiles=(
-  .zshrc .gitconfig
+  .zshrc .gitconfig .ssh/authorized_keys
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
   .config/systemd/user/openhuman.service .config/systemd/user/pi-status.service
   .config/systemd/user/hermes-dashboard.service .config/systemd/user/openclaw-gateway.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
+  .claude/skills/gws .claude/skills/pihole
 )
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -42,7 +43,7 @@ for p in "${dotfiles[@]}"; do
 done
 
 say "apt: manual packages + third-party sources"
-apt-mark showmanual | sort > "$snap/apt-manual.txt"
+apt-mark showmanual | LC_ALL=C sort > "$snap/apt-manual.txt"
 # Everything except the stock Debian and Raspberry Pi lists (the image supplies those).
 for f in /etc/apt/sources.list.d/*; do
   case ${f##*/} in debian.sources|raspi.sources|raspi.list) continue ;; esac
@@ -72,6 +73,21 @@ fi
 say "systemd enabled units"
 systemctl list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print $1}' | sort > "$snap/systemd-system-enabled.txt"
 systemctl --user list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print $1}' | sort > "$snap/systemd-user-enabled.txt"
+
+say "system settings (hostname, timezone)"
+{
+  echo "hostname: $(hostname)"
+  echo "timezone: $(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone)"
+} > "$snap/system.txt"
+
+say "git repos in ~/dev (restore.sh clones the missing ones)"
+# "<dir> <origin url>" for real directories; symlinks into this repo are recreated by the links step.
+for g in "$HOME"/dev/*/.git; do
+  d=${g%/.git}
+  [[ -L $d ]] && continue
+  u=$(git -C "$d" remote get-url origin 2>/dev/null) || { echo "  no origin, not listed: ${d##*/}" >&2; continue; }
+  echo "${d##*/} $u"
+done | sort > "$snap/repos.txt"
 
 say "versions (reference only)"
 {
@@ -110,4 +126,19 @@ if (( push )); then
     git -C "$root" push -q && echo "  pushed"
   fi
 fi
+
+# A restore only gets what is on GitHub, so flag work that isn't there yet (save.sh never commits code).
+say "unpushed work in ~/dev"
+clean=1
+for g in "$HOME"/dev/*/.git; do
+  d=${g%/.git}
+  [[ -L $d ]] && continue
+  dirty=$(git -C "$d" status --porcelain 2>/dev/null | wc -l)
+  ahead=$(git -C "$d" rev-list --count '@{u}..HEAD' 2>/dev/null || echo "no upstream")
+  if (( dirty )) || [[ $ahead != 0 ]]; then
+    clean=0
+    printf '  \033[1;33m%s\033[0m: %s uncommitted file(s), %s unpushed commit(s)\n' "${d/#$HOME/~}" "$dirty" "$ahead"
+  fi
+done
+(( clean )) && echo "  none"
 say "done: $snap"

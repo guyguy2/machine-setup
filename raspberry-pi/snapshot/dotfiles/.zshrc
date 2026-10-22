@@ -207,9 +207,17 @@ gpull() {
     print -P "%F{red}skipped%f (unpushed commits)"; return 1
   fi
   before=$(git -C $repo rev-parse HEAD)
-  git -C $repo fetch --depth 1 --quiet && git -C $repo reset --hard --quiet '@{u}' || {
-    print -P "%F{red}update failed%f"; return 1
+  # Big repos take minutes with no output, so say we're working; the note is erased once there's a result
+  local note="fetching... "
+  print -n $note
+  # Only the tracked branch: a bare `fetch --depth 1` grabs every remote branch and tag (thousands in hermes-agent)
+  local up=$(git -C $repo rev-parse --abbrev-ref '@{u}')
+  git -C $repo fetch --depth 1 --no-tags --quiet ${up%%/*} ${up#*/} && git -C $repo reset --hard --quiet '@{u}' || {
+    print -n "\e[${#note}D\e[K"; print -P "%F{red}update failed%f"; return 1
   }
+  print -n "\e[${#note}D\e[K"
+  # Each shallow fetch adds a pack and strands the previous commit's objects; drop them or .git grows forever
+  git -C $repo reflog expire --expire=now --all && git -C $repo gc --prune=now --quiet
   after=$(git -C $repo rev-parse HEAD)
   [[ $before == $after ]] && echo "up to date" || echo "updated ${before[1,7]} -> ${after[1,7]}"
 }

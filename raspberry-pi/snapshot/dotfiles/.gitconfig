@@ -12,3 +12,6 @@
 [credential "https://gist.github.com"]
 	helper = 
 	helper = !/home/linuxbrew/.linuxbrew/bin/gh auth git-credential
+[user]
+	name = Guy
+	email = 2052736+guyguy2@users.noreply.github.com
