@@ -107,6 +107,39 @@ def test_page_url_empty_when_not_served(monkeypatch, dns_name, serve_out):
     assert collect.page_url(dns_name) == ""
 
 
+PIHOLE = {"name": "pihole", "state": "running", "ports": "53/udp, 0.0.0.0:8081->80/tcp, :::8081->80/tcp"}
+
+
+def serve_status(port):
+    return json.dumps({"Web": {f"box.tail1234.ts.net:{port}": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8081"}}}}})
+
+
+def stub_tailscale(monkeypatch, serve_out):
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail1234.ts.net"})
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: serve_out)
+
+
+def test_pihole_link_is_https_when_published(monkeypatch):
+    stub_tailscale(monkeypatch, serve_status(8445))
+    assert collect.pihole_link([PIHOLE]) == {"url": "https://box.tail1234.ts.net:8445/admin/", "publish": ""}
+
+
+def test_pihole_link_gives_the_publish_command_when_not_published(monkeypatch):
+    stub_tailscale(monkeypatch, "{}")
+    assert collect.pihole_link([PIHOLE]) == {"url": "", "publish": "sudo tailscale serve --bg --https=8445 8081"}
+
+
+@pytest.mark.parametrize("containers", [
+    [],                                              # no containers
+    [{**PIHOLE, "state": "exited"}],                 # stopped
+    [{**PIHOLE, "name": "other"}],                   # some other container
+    [{**PIHOLE, "ports": "53/udp"}],                 # web port not published
+])
+def test_pihole_link_empty(monkeypatch, containers):
+    stub_tailscale(monkeypatch, serve_status(8445))
+    assert collect.pihole_link(containers) == {"url": "", "publish": ""}
+
+
 def test_docker_not_installed(monkeypatch):
     monkeypatch.setattr(collect.shutil, "which", lambda name: None)
     assert collect.docker() == {"installed": False, "containers": []}

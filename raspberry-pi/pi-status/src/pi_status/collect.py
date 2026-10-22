@@ -362,6 +362,26 @@ def lab() -> dict:
 
 # ---------- docker ----------
 
+PIHOLE_TAILNET_PORT = 8445  # the HTTPS port `tailscale serve` publishes the Pi-hole UI on (8443 and 8444 are the agents')
+
+
+def pihole_link(containers: list[dict]) -> dict:
+    """The Pi-hole admin UI as an HTTPS tailnet address, while a `pihole` container runs and Tailscale Serve publishes
+    its published web port (host port -> 80/tcp). When it isn't published yet, the command that does it instead."""
+    for c in containers:
+        if c["name"] != "pihole" or c["state"] != "running" or not (port := re.search(r":(\d+)->80/tcp", c["ports"])):
+            continue
+        dns_name = tailscale_info().get("dns_name", "")
+        try:
+            web = json.loads(run("tailscale", "serve", "status", "--json") or "{}").get("Web", {})
+        except ValueError:
+            web = {}
+        if dns_name and f"{dns_name}:{PIHOLE_TAILNET_PORT}" in web:
+            return {"url": f"https://{dns_name}:{PIHOLE_TAILNET_PORT}/admin/", "publish": ""}
+        return {"url": "", "publish": f"sudo tailscale serve --bg --https={PIHOLE_TAILNET_PORT} {port[1]}"}
+    return {"url": "", "publish": ""}
+
+
 def docker() -> dict:
     exe = shutil.which("docker")
     if not exe:
@@ -375,14 +395,11 @@ def docker() -> dict:
             return {"installed": True, "running": False, "containers": []}
         return {"installed": True, "error": r.stderr.strip()[:300], "containers": []}
     rows = [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
-    return {
-        "installed": True,
-        "running": True,
-        "containers": [
-            {"name": c["Names"], "image": c["Image"], "state": c["State"], "status": c["Status"], "ports": c["Ports"]}
-            for c in rows
-        ],
-    }
+    containers = [
+        {"name": c["Names"], "image": c["Image"], "state": c["State"], "status": c["Status"], "ports": c["Ports"]}
+        for c in rows
+    ]
+    return {"installed": True, "running": True, "containers": containers, "pihole": pihole_link(containers)}
 
 
 # ---------- services ----------

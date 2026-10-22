@@ -674,13 +674,24 @@ function docker(d) {
   if (d.running === false) return empty("Docker isn't running. Start it with sudo systemctl start docker.");
   if (d.error) return h("div", { class: "card" }, pill("error", "bad"), " ", d.error);
   if (!d.containers.length) return empty("Docker is installed, but there are no containers.");
-  return h("div", { class: "card" }, table([
-    { label: "Name", value: c => c.name },
-    { label: "State", value: c => pill(c.state, c.state === "running" ? "ok" : c.state === "exited" ? "" : "warn") },
-    { label: "Image", mono: true, value: c => c.image },
-    { label: "Status", value: c => c.status },
-    { label: "Ports", mono: true, value: c => c.ports || "–" },
-  ], d.containers));
+  const pihole = d.pihole || {};
+  return [
+    pihole.url && h("div", { class: "card" }, h("div", { class: "page-row pihole-row" },
+      h("div", { class: "ssh-label" }, "Pi-hole admin UI"),
+      h("a", { class: "mono ssh-cmd", href: pihole.url, target: "_blank", rel: "noopener" }, pihole.url),
+      copyButton(pihole.url, "Pi-hole address"))),
+    pihole.publish && h("div", { class: "card" }, h("div", { class: "page-row pihole-row" },
+      h("div", { class: "ssh-label" }, "Pi-hole admin UI isn't published on the tailnet yet. Run:"),
+      h("code", { class: "mono ssh-cmd" }, pihole.publish),
+      copyButton(pihole.publish, "Pi-hole publish command"))),
+    h("div", { class: "card" }, table([
+      { label: "Name", value: c => c.name },
+      { label: "State", value: c => pill(c.state, c.state === "running" ? "ok" : c.state === "exited" ? "" : "warn") },
+      { label: "Image", mono: true, value: c => c.image },
+      { label: "Status", value: c => c.status },
+      { label: "Ports", mono: true, value: c => c.ports || "–" },
+    ], d.containers)),
+  ];
 }
 
 function services(s) {
