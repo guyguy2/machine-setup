@@ -8,9 +8,9 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
 
 # Paths under $HOME to back up. Secrets, agent state and caches are deliberately absent:
-# SSH private keys, ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.openhuman, ~/.config/gws, history files, ~/.cache.
+# ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.openhuman, ~/.config/gws, history files, ~/.cache.
 dotfiles=(
-  .zshrc .gitconfig .ssh/authorized_keys
+  .zshrc .gitconfig
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
   .config/systemd/user/openhuman.service .config/systemd/user/pi-status.service
@@ -110,6 +110,12 @@ fi
 pat='(api[_-]?key|token|secret|passw(or)?d)["'"'"']?[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_./+-]{16,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|BEGIN [A-Z ]*PRIVATE KEY'
 if grep -rEIn --exclude='*.gpg' --exclude='*.asc' "$pat" "$snap"; then
   echo "save.sh: possible secrets in the snapshot (above); not committing." >&2
+  exit 1
+fi
+# The repo is public: keep the tailnet's name out (write <tailnet> instead).
+tailnet=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix // empty' 2>/dev/null || true)
+if [[ -n $tailnet ]] && grep -rIlF "$tailnet" "$snap"; then
+  echo "save.sh: the tailnet name $tailnet appears in the files above; replace it with <tailnet>. Not committing." >&2
   exit 1
 fi
 echo "  clean"
