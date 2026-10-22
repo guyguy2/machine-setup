@@ -293,6 +293,18 @@ upd() {
     brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli && brew cleanup
   fi
 
+  if command -v npm >/dev/null; then
+    _upd_step "npm global packages (e.g. pyright)"
+    # npm and corepack come with apt's nodejs, so apt updates them
+    local -a _npm_pkgs=(${(f)"$(npm ls -g --depth=0 --json 2>/dev/null | jq -r '.dependencies // {} | keys[]' | grep -vxE 'npm|corepack')"})
+    if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]/%/@latest}"; else echo "none"; fi
+  fi
+
+  if [[ -f ~/dev/pihole/docker-compose.yml ]]; then
+    _upd_step "Pi-hole (docker image)"
+    (cd ~/dev/pihole && sudo docker-compose pull && sudo docker-compose up -d && sudo docker image prune -f)
+  fi
+
   _upd_step "Agents"
   _upd_sub "Hermes"      _upd_hermes
   _upd_sub "OpenClaw"    _upd_openclaw

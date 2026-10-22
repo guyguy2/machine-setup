@@ -12,10 +12,13 @@ cloud-init-local.service
 cloud-init-main.service
 cloud-init-network.service
 console-setup.service
+containerd.service
 cron.service
 cups.path
 cups.service
 cups.socket
+docker.service
+docker.socket
 dpkg-db-backup.timer
 e2scrub_all.timer
 e2scrub_reap.service
