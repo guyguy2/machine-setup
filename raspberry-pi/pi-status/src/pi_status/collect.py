@@ -455,13 +455,13 @@ def ports() -> list[dict]:
 
 # ---------- agent dashboards ----------
 # The agents' own web UIs. Each listens on 127.0.0.1 only: `tailscale serve --bg --https=<tailnet_port> <port>`
-# publishes one to the tailnet, and an SSH tunnel reaches it from anywhere SSH does. Without a port it's a placeholder.
+# publishes one to the tailnet (under `path` when it has one, so the address says what it is), and an SSH tunnel reaches it from anywhere SSH does. Without a port it's a placeholder.
 
 DASHBOARDS = [
     {"name": "Hermes", "what": "Web dashboard: settings, API keys, sessions",
      "port": 9119, "tailnet_port": 8443},
     {"name": "OpenClaw", "what": "Control UI: chat, sessions, channels, automations",
-     "port": 18789, "tailnet_port": 8444},
+     "port": 18789, "tailnet_port": 8444, "path": "/openclaw"},  # gateway.controlUi.basePath is set to match
     {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
 ]
 
@@ -477,11 +477,15 @@ def dashboards() -> list[dict]:
     for d in DASHBOARDS:
         entry = {"name": d["name"], "what": d["what"]}
         if port := d.get("port"):
-            published = dns_name and f"{dns_name}:{d['tailnet_port']}" in web
+            path = d.get("path", "")
+            handlers = web.get(f"{dns_name}:{d['tailnet_port']}", {}).get("Handlers", {})
+            published = dns_name and (path or "/") in handlers
+            target = f"http://127.0.0.1:{port}{path}"
             entry |= {
                 "running": port in listening,
-                "tailnet_url": f"https://{dns_name}:{d['tailnet_port']}/" if published else "",
-                "publish": f"tailscale serve --bg --https={d['tailnet_port']} {port}",
+                "tailnet_url": f"https://{dns_name}:{d['tailnet_port']}{path}/" if published else "",
+                "publish": f"tailscale serve --bg --https={d['tailnet_port']} "
+                           + (f"--set-path {path} {target}" if path else str(port)),
                 "tunnel": f"ssh -N -L {port}:localhost:{port} pi",
                 "local_url": f"http://localhost:{port}/",
             }
