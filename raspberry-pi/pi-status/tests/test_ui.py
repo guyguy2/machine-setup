@@ -4,7 +4,7 @@ import pytest
 
 TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
 NAV = ["Overview", "Agents", "Agent Lab", "Network", "System"]
-SYSTEM = ["services", "processes", "ports", "docker"]
+SYSTEM = ["docker", "services", "processes", "ports"]
 PHONE = (390, 844)
 
 NETWORK = {
@@ -865,13 +865,14 @@ def test_system_sub_tabs_mark_system_and_themselves(make_page, base_url, sub):
     assert page.locator("#view h2").inner_text() == "System"
 
 
-def test_system_opens_on_services(make_page, base_url):
+def test_system_opens_on_docker(make_page, base_url):
     page = make_page()
+    page.route("**/api/docker", lambda r: r.fulfill(json={"installed": True, "running": False, "containers": []}))
     seen = count_api_requests(page)
     open_tab(page, base_url, "system")
     page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
-    assert subtab(page) == "Services" and "Your user services" in page.locator("#view").inner_text()
-    assert seen.count("services") == 1
+    assert subtab(page) == "Docker" and "isn't running" in page.locator("#view").inner_text()
+    assert seen.count("docker") == 1
 
 
 def test_sub_tab_links_switch_views(make_page, base_url):
@@ -897,7 +898,7 @@ def test_docker_sub_tab_always_listed(make_page, base_url):
     page = make_page()
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
     open_tab(page, base_url, "system/services")
-    assert page.locator("#view .subtabs a").all_inner_texts() == ["Services", "Processes", "Ports", "Docker"]
+    assert page.locator("#view .subtabs a").all_inner_texts() == ["Docker", "Services", "Processes", "Ports"]
 
 
 def test_docker_not_running_message(make_page, base_url):

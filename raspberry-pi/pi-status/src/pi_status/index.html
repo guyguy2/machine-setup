@@ -734,10 +734,10 @@ function ports(list) {
 
 // System's sub-tabs (#system/<id>)
 const SYSTEM = [
+  { id: "docker", title: "Docker", api: "/api/docker", render: docker },
   { id: "services", title: "Services", api: "/api/services", render: services },
   { id: "processes", title: "Processes", api: "/api/processes", render: processes },
   { id: "ports", title: "Ports", api: "/api/ports", render: ports },
-  { id: "docker", title: "Docker", api: "/api/docker", render: docker },
 ];
 
 const TABS = [
