@@ -1,1 +1,5 @@
+agent-browser
+chrome-devtools-mcp
+@playwright/cli
+@playwright/mcp
 pyright
