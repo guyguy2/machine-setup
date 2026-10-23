@@ -11,7 +11,7 @@ Pi-hole runs as the Docker container `pihole`, not on the host, so there is no `
 - Project dir: `~/dev/pihole`, a symlink to `~/dev/machine-setup/raspberry-pi/services/pihole` (`docker-compose.yml`,
   `.env`, `.env.example`, `etc-pihole/` as the persistent volume). `.env` is gitignored.
 - Web UI/API: bound to `127.0.0.1:8081` (`/admin`, `/api`, API reference at `/api/docs`). The user reaches it from
-  the Mac over Tailscale (`https://raspberrypi.<tailnet>.ts.net:8445/admin/`; get the name with `tailscale status --json | jq -r .Self.DNSName`) or an SSH tunnel.
+  the Mac over Tailscale (`https://raspberrypi.<tailnet>.ts.net:8445/pihole/admin/`; get the name with `tailscale status --json | jq -r .Self.DNSName`) or an SSH tunnel.
 - DNS: port 53 tcp/udp on all interfaces.
 - There is one admin account and no username, only a password.
 
