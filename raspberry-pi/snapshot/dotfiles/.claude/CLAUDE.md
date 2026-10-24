@@ -16,8 +16,7 @@ Install each tool from exactly one source. Before installing, check `whence -a <
   plus `brew list --cask` show what's installed right now.
 - **uv** (`uv tool install`) for Python CLI tools; **npm -g** (`sudo npm install -g`, apt's NodeSource npm) only for
   Node tools. pyright is one (a Node tool, even though it checks Python).
-- **Manual GitHub-release installs** only when there's no package. Currently that's just OpenHuman
-  (`open-human` .deb + `/opt/openhuman-core`).
+- **Manual GitHub-release installs** only when there's no package. Currently there are none.
 
 ## Python code intelligence
 
@@ -42,5 +41,5 @@ CLI's `--no-launch-browser`/device-code mode when it has one.
 ## Updating
 
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
-(including Claude Code and Hermes), npm global packages, OpenClaw, OpenHuman, uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
+(including Claude Code and Hermes), npm global packages, OpenClaw, uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.

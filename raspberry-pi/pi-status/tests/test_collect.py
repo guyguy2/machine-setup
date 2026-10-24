@@ -18,7 +18,7 @@ def test_redact(raw, expected):
 
 
 def test_exe_names_native_binary():
-    assert collect.exe_names(["/opt/openhuman-core/openhuman-core", "run"]) == {"openhuman-core"}
+    assert collect.exe_names(["/opt/example/example-core", "run"]) == {"example-core"}
 
 
 def test_exe_names_node_script_includes_package_folder():
@@ -47,7 +47,7 @@ def test_exposure(address, expected):
 
 def test_ports_parses_ss_output(monkeypatch):
     ss = "\n".join([
-        'LISTEN 0 128 127.0.0.1:7788 0.0.0.0:* users:(("openhuman-core",pid=54003,fd=15))',
+        'LISTEN 0 128 127.0.0.1:7788 0.0.0.0:* users:(("example-core",pid=54003,fd=15))',
         "LISTEN 0 128 0.0.0.0:22 0.0.0.0:*",
         "LISTEN 0 128 [::]:22 [::]:*",
         "LISTEN 0 4096 [fd7a:115c:a1e0::1]%tailscale0:443 [::]:*",
@@ -56,7 +56,7 @@ def test_ports_parses_ss_output(monkeypatch):
     result = collect.ports()
     assert [(p["port"], p["exposure"]) for p in result] == [(22, "all interfaces"), (443, "tailnet"), (7788, "local only")]
     assert result[1]["address"] == "fd7a:115c:a1e0::1"  # no brackets or %iface
-    assert result[2]["process"] == "openhuman-core" and result[2]["pid"] == 54003
+    assert result[2]["process"] == "example-core" and result[2]["pid"] == 54003
 
 
 def test_sessions_parse(monkeypatch):
@@ -184,7 +184,8 @@ def test_agents_matches_running_and_hides_optional(monkeypatch):
     assert result["OpenClaw"]["instances"][0]["ports"] == ["127.0.0.1:18789"]
     assert result["Hermes"]["instances"] == []       # the zsh -c string must not count
     assert "Ollama" not in result and "Codex" not in result  # optional + not running
-    assert result["OpenHuman"]["unit_state"] == "active"
+    assert "OpenHuman" not in result  # removed from the Pi
+    assert result["Hermes"]["unit_state"] == "active"
 
 
 def test_agents_skips_the_servers_own_child_processes(monkeypatch):
@@ -473,6 +474,21 @@ RESULTS = """# Results
 """
 
 
+RESULTS_WITH_HISTORY = """# Results
+
+<!-- table:start -->
+| Use case | OpenClaw | Hermes | Gone |
+|---|---|---|---|
+| UC-001 Fetch and triage email | – | – | – |
+<!-- table:end -->
+
+## Overall impressions
+
+### Gone
+- Retired.
+"""
+
+
 def test_front_matter_drops_comments_and_keeps_body():
     meta, body = collect.front_matter(RUN_NOTE)
     assert meta["outcome"] == "partial" and meta["score_quality"] == "4" and meta["score_ux"] == ""
@@ -511,7 +527,27 @@ def test_lab_reads_use_cases_runs_and_impressions(lab_dir):
     assert run["score_ux"] is None and run["duration_min"] is None  # blank or missing fields aren't zeros
     assert "missed two emails" in run["note"]
     assert d["impressions"] == {"hermes": "- Quick and chatty."}  # empty template bullets and other sections ignored
-    assert {a["id"]: a["running"] for a in d["agents"]} == {"openclaw": False, "hermes": True, "openhuman": False}
+    assert {a["id"]: (a["running"], a["installed"]) for a in d["agents"]} == {"openclaw": (False, True), "hermes": (True, True)}
+
+
+def test_lab_hides_removed_agents_from_the_tab(lab_dir):
+    """Agents no longer installed stay in results.md and the run notes as history, but the tab shows installed ones."""
+    (lab_dir / "results.md").write_text(RESULTS_WITH_HISTORY)
+    (lab_dir / "runs" / "2026-10-19_UC-001_gone.md").write_text(RUN_NOTE.replace("agent: hermes", "agent: Gone").replace("2026-10-20 09:00", "2026-10-18 09:00"))
+    (lab_dir / "runs" / "2026-10-17_UC-001_other.md").write_text(RUN_NOTE.replace("agent: hermes", "agent: nobody-listed"))
+    d = collect.lab()
+    assert [(a["id"], a["name"], a["installed"], a["running"]) for a in d["agents"]] == [
+        ("openclaw", "OpenClaw", True, False), ("hermes", "Hermes", True, True)]
+    assert {r["agent"] for r in d["runs"]} == {"hermes"}  # note ids are normalised; removed agents' runs are dropped
+    assert "gone" not in d["impressions"]
+
+
+def test_lab_without_results_md_uses_installed_agents(lab_dir):
+    (lab_dir / "results.md").unlink()
+    for f in (lab_dir / "runs").glob("*.md"):
+        f.unlink()
+    assert [a["id"] for a in collect.lab()["agents"]] == ["hermes", "openclaw"]
+    assert collect.lab()["impressions"] == {}
 
 
 def test_lab_missing(tmp_path, monkeypatch):
@@ -529,7 +565,7 @@ def test_dashboards_link_only_what_tailscale_publishes(monkeypatch):
     assert result["Hermes"]["publish"] == "tailscale serve --bg --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes"
     assert result["OpenClaw"]["publish"] == "tailscale serve --bg --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw"
     assert result["Hermes"]["tunnel"] == "ssh -N -L 9119:localhost:9119 pi"
-    assert "local_url" not in result["OpenHuman"]  # placeholder: no web UI
+    assert "OpenHuman" not in result
     assert "start" not in result["Hermes"]  # its service has a Start button; a manual start would clash over the port
 
 
@@ -545,7 +581,8 @@ def test_control_agent_refuses_units_that_are_not_agents(monkeypatch):
     monkeypatch.setattr(collect.subprocess, "run", lambda *a, **k: called.append(a))
     assert collect.control_agent("ssh.service", "stop")[0] == 404
     assert collect.control_agent("pi-status.service", "stop")[0] == 404
-    assert collect.control_agent("openhuman.service", "restart")[0] == 404
+    assert collect.control_agent("openhuman.service", "stop")[0] == 404  # removed agent: no longer controllable
+    assert collect.control_agent("hermes-dashboard.service", "restart")[0] == 404
     assert called == []
 
 

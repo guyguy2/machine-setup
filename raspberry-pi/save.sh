@@ -8,12 +8,12 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
 
 # Paths under $HOME to back up. Secrets, agent state and caches are deliberately absent:
-# ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.openhuman, ~/.config/gws, history files, ~/.cache.
+# ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.config/gws, history files, ~/.cache.
 dotfiles=(
   .zshrc .gitconfig
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
-  .config/systemd/user/openhuman.service .config/systemd/user/pi-status.service
+  .config/systemd/user/pi-status.service
   .config/systemd/user/hermes-dashboard.service .config/systemd/user/hermes-proxy.service .config/systemd/user/openclaw-gateway.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
   .claude/skills/gws .claude/skills/pihole
@@ -94,7 +94,6 @@ say "versions (reference only)"
   # shellcheck disable=SC1091
   echo "os: $(. /etc/os-release && echo "$PRETTY_NAME")"
   echo "tailscale: $(tailscale version 2>/dev/null | head -1 || echo none)"
-  echo "open-human: $(dpkg-query -W -f='${Version}' open-human 2>/dev/null || echo none)"
   echo "openclaw: $(jq -r .version "$HOME/dev/openclaw_node/node_modules/openclaw/package.json" 2>/dev/null || echo none)"
   echo "hermes-agent: $(brew list --versions hermes-agent 2>/dev/null | awk '{print $2}' || true)"
 } > "$snap/versions.txt"

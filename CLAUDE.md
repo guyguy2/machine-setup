@@ -165,7 +165,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 - No secrets or agent state are backed up (public repo). Never put secrets, SSH private keys, history or files over
   100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
 - Folders symlinked from `~/dev` (edit them here, never keep a second copy): `bin/` (`~/dev/scripts`: Hermes,
-  OpenClaw, OpenHuman launchers), `pi-status/` (`~/dev/pi-status`), `services/pihole/` (`~/dev/pihole`: Pi-hole
+  OpenClaw launchers), `pi-status/` (`~/dev/pi-status`), `services/pihole/` (`~/dev/pihole`: Pi-hole
   docker compose; `.env` and `etc-pihole/` gitignored), `services/hermes-proxy/` (`~/dev/hermes-proxy`: Caddyfile that serves Hermes under `/hermes` on the tailnet), `services/openclaw_node/` (`~/dev/openclaw_node`: the npm
   project `openclaw-gateway.service` runs from; `node_modules/` gitignored).
 - `raspberry-pi/pi-status/` is the Pi's status web page (uv project, stdlib-only server, pytest + Playwright tests; see
@@ -174,6 +174,8 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
   `uv run pytest` in `~/dev/pi-status` after changing it. The Python is type-checked with pyright and kept at 0 errors.
   The JavaScript is inline in `index.html`; use grep there. Commit `pi-status/` changes yourself.
 - After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
+- `raspberry-pi/IDEAS.md` is the backlog of possible new uses for the Pi (none set up yet). When one gets built, move
+  it into the runbook and delete its row there.
 
 ## Development Environment
 

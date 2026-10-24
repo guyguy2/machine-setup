@@ -1,7 +1,7 @@
 # raspberry-pi
 
 Rebuild this Raspberry Pi 5 from a blank SD card: packages, shell, settings, the pi-status website, Pi-hole, and
-the AI agents (Hermes, OpenClaw, OpenHuman). Everything comes from public GitHub, so no login is needed to start.
+the AI agents (Hermes, OpenClaw). Everything comes from public GitHub, so no login is needed to start.
 
 **No secrets and no agent state are backed up, on purpose.** Logins, the Pi-hole password and agent onboarding are
 done by hand at the end (section 4). It takes about 15 minutes and gives clean agents.
@@ -12,7 +12,7 @@ What comes back automatically:
 |---|---|
 | this folder | scripts, the pi-status website, the Pi-hole compose file, the OpenClaw npm project, agent launchers |
 | `snapshot/` (written by `save.sh`) | apt packages and repos, Brewfile, uv and npm tools, dotfiles (`.zshrc` with `upd`, `.gitconfig`, Claude Code settings and skills, desktop configs), systemd user units, hostname and timezone, the list of `~/dev` repos |
-| `snapshot/repos.txt` | the `~/dev` git repos: `agent-lab` (private: needs the GitHub login), upstream source clones `hermes-agent`, `openclaw`, `openhuman` |
+| `snapshot/repos.txt` | the `~/dev` git repos: `agent-lab` (private: needs the GitHub login), upstream source clones `hermes-agent`, `openclaw` |
 
 ---
 
@@ -72,7 +72,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
 | `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node}` → folders in this repo | |
 | `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
-| `agents` | installs OpenClaw (npm) and OpenHuman (.deb + `/opt/openhuman-core`) with `upd`'s own functions; Hermes came from the Brewfile | `~/.zshrc` |
+| `agents` | installs OpenClaw (npm) with `upd`'s own functions; Hermes came from the Brewfile | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `shell` | login shell → zsh | |
 | `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |
@@ -90,7 +90,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 5. **Agents**: onboard each one the way `~/dev/agent-lab/agents.md` records (each uses the `claude` CLI login, no
    API keys). They're installed but not enabled, on purpose: 8 GB of RAM means one at a time. Start one from the
    pi-status Agents tab, with `~/dev/agent-lab/bin/lab use <agent>`, or with `systemctl --user start hermes-dashboard`
-   (or `openclaw-gateway`, `openhuman`).
+   (or `openclaw-gateway`).
 6. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
    DNS depend on it.
 7. **SSH keys**: SSH access comes only from the key given to Imager in step 1 (`authorized_keys` isn't backed up, on
@@ -104,7 +104,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `systemctl --user is-active pi-status` | `active`; `curl -s localhost:8080 \| head -1` prints HTML |
 | `docker ps` | `pihole` Up (healthy); `getent hosts example.com` resolves |
 | `tailscale serve status` | `/` → 8080, `:8443/hermes` → 9120 (Caddy) → 9119, `:8444/openclaw` → 18789, `:8445/pihole` → 8081 |
-| `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw, openhuman; symlinks openclaw_node, pihole, pi-status, scripts |
+| `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw; symlinks openclaw_node, pihole, pi-status, scripts |
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |
 | `upd` | runs to "All done." |
@@ -127,6 +127,7 @@ raspberry-pi/
   bootstrap.sh            curl | bash entry point for a fresh image
   restore.sh              rebuild (steps in section 3)
   save.sh                 refresh snapshot/ (upd runs it)
+  IDEAS.md                backlog of things this Pi could do next (not set up)
   bin/                    agent launchers                    ~/dev/scripts -> here
   pi-status/              the status website (own README)    ~/dev/pi-status -> here
   services/pihole/        docker-compose.yml, .env.example    ~/dev/pihole -> here
@@ -147,7 +148,6 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 | pi-status website | user unit `pi-status.service` (enabled) | 127.0.0.1:8080 | `https://raspberrypi.<tailnet>.ts.net` |
 | Hermes dashboard | user unit `hermes-dashboard.service` | 127.0.0.1:9119 | `:8443/hermes/` (through `hermes-proxy.service`, Caddy on 127.0.0.1:9120) |
 | OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444/openclaw/` |
-| OpenHuman daemon | user unit `openhuman.service` | | |
 | Pi-hole | docker container `pihole` | DNS :53 (all interfaces), UI 127.0.0.1:8081 | `:8445/pihole/admin/` |
 
 `tailscale serve` settings belong to the machine and aren't backed up; the `pi-status` step recreates them.

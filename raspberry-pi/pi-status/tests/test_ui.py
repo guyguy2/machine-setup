@@ -398,8 +398,9 @@ def test_refresh_button_is_reachable_on_phone(make_page, base_url):
 
 LAB = {
     "found": True, "path": "~/dev/agent-lab",
-    "agents": [{"id": "openclaw", "name": "OpenClaw", "running": False}, {"id": "hermes", "name": "Hermes", "running": True},
-               {"id": "openhuman", "name": "OpenHuman", "running": False}],
+    "agents": [{"id": "openclaw", "name": "OpenClaw", "running": False, "installed": True},
+               {"id": "hermes", "name": "Hermes", "running": True, "installed": True},
+               {"id": "gone", "name": "Gone", "running": False, "installed": False}],  # removed, but still in results.md
     "use_cases": [{"id": "UC-001", "title": "Fetch email", "file": "UC-001-fetch-email.md", "category": "email",
                    "risk": "read-only", "prompt": "Check my inbox."},
                   {"id": "UC-002", "title": "Pay bills", "file": "UC-002-pay-bills.md", "category": "finance",
@@ -419,6 +420,14 @@ LAB = {
 def open_lab(page, base_url, data=LAB, hash="lab"):
     page.route("**/api/lab", lambda r: r.fulfill(json=data))
     open_tab(page, base_url, hash)
+
+
+def test_lab_copes_with_many_agents(make_page, base_url):
+    data = {**LAB, "agents": LAB["agents"] + [{"id": f"x{i}", "name": f"X{i}", "running": False, "installed": False} for i in range(3)]}
+    page = make_page()
+    open_lab(page, base_url, data)
+    assert page.locator("#view table").first.locator("thead th").count() == 7
+    assert page.errors == []
 
 
 def test_lab_scoreboard_shows_latest_run_per_cell(make_page, base_url):
@@ -507,7 +516,6 @@ def proc(pid, cwd="~", ports=(), cmd="x", age_s=900, rss=400 * 2**20):
 AGENTS = [
     {"name": "Claude Code", "kind": "Coding agent", "instances": [
         proc(11, "~/dev/pi-status", cmd="claude --model=opus"), proc(12, "~/dev", cmd="claude --model=sonnet", age_s=60)]},
-    {"name": "OpenHuman", "kind": "Personal assistant", "unit": "openhuman.service", "unit_state": "inactive", "instances": []},
     {"name": "Hermes", "kind": "Agent", "unit": "hermes-dashboard.service", "unit_state": "active",   # up, port not open yet
      "instances": [proc(21, cmd="hermes dashboard --no-open")]},
     {"name": "OpenClaw", "kind": "Personal assistant", "unit": "openclaw-gateway.service", "unit_state": "active",
@@ -519,7 +527,6 @@ DASHBOARDS = [
      "publish": "tailscale serve --bg --https=8443 9119", "tunnel": "ssh -N -L 9119:localhost:9119 pi", "local_url": "http://localhost:9119/"},
     {"name": "OpenClaw", "what": "Control UI", "running": True, "tailnet_url": "https://box.tail9.ts.net:8444/",
      "publish": "tailscale serve --bg --https=8444 18789", "tunnel": "ssh -N -L 18789:localhost:18789 pi", "local_url": "http://localhost:18789/"},
-    {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
 ]
 
 SIGNED_IN = {"checked_at": 0, "services": [{**s, "state": "signed_in"} for s in AUTH["services"]]}
@@ -538,12 +545,19 @@ def test_each_agent_appears_once(make_page, base_url):
     page = make_page()
     cards = open_agents(page, base_url)
     names = page.locator("#view .agent .card-head h4").all_inner_texts()
-    assert sorted(names) == sorted({"Claude Code", "OpenHuman", "Hermes", "OpenClaw"})
-    assert names[-1] == "OpenHuman"   # running ones first, stopped last
+    assert sorted(names) == sorted({"Claude Code", "Hermes", "OpenClaw"})
     assert page.locator("#view .dashboard").count() == 0
     assert "Start it on the Pi" not in page.locator("#view").text_content()  # the Start button replaces it
     after = page.evaluate("[...document.querySelectorAll('#view .agent')].pop().compareDocumentPosition(document.querySelector('#view .signins'))")
     assert after & 4, "sign-ins come after the agent cards"
+    assert page.errors == []
+
+
+def test_stopped_agent_is_listed_last(make_page, base_url):
+    page = make_page()
+    stopped = [{**a, "unit_state": "inactive", "instances": []} if a["name"] == "Hermes" else a for a in AGENTS]
+    open_agents(page, base_url, stopped)
+    assert page.locator("#view .agent .card-head h4").all_inner_texts()[-1] == "Hermes"
     assert page.errors == []
 
 
@@ -552,8 +566,7 @@ def test_agent_status_words(make_page, base_url):
     cards = open_agents(page, base_url)
     pills = {name: c.locator(".card-head .pill").all_inner_texts() for name, c in cards.items()}
     assert pills == {"Claude Code": ["running · 2"], "OpenClaw": ["running"],
-                     "Hermes": ["starting"],      # its unit is active, its dashboard port isn't listening yet
-                     "OpenHuman": ["stopped"]}    # one pill each: no separate unit-state pill
+                     "Hermes": ["starting"]}      # its unit is active, its dashboard port isn't listening yet; one pill each
 
 
 def test_published_dashboards_link_to_their_tailnet_url(make_page, base_url):
@@ -599,12 +612,6 @@ def test_agent_reference_details_are_under_more(make_page, base_url):
     assert claw.locator("table").count() == 1               # the process table
 
 
-def test_no_web_ui_agent_says_so(make_page, base_url):
-    page = make_page()
-    human = open_agents(page, base_url)["OpenHuman"]
-    assert "no web dashboard yet" in human.inner_text() and "ssh" not in human.text_content()
-
-
 def test_claude_code_has_one_row_per_session(make_page, base_url):
     page = make_page()
     claude = open_agents(page, base_url)["Claude Code"]
@@ -640,14 +647,14 @@ def test_agents_tab_survives_dashboard_failure(make_page, base_url):
     open_tab(page, base_url, "agents")
     page.wait_for_selector("#view .agent")
     assert "Dashboard status unavailable" in page.locator("#view").inner_text()
-    assert page.locator("#view .agent").count() == 4
+    assert page.locator("#view .agent").count() == 3
     assert page.locator("#view .agent", has_text="Hermes").locator(".card-head .pill").inner_text() == "running"  # the unit says so
 
 
 def test_status_stays_next_to_its_button_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     cards = open_agents(page, base_url)
-    for name in ("OpenClaw", "OpenHuman", "Hermes"):
+    for name in ("OpenClaw", "Hermes"):
         # both boxes in one call: the sidebar loading in between can shift the whole view
         middles = cards[name].evaluate("""c => [".card-head .pill", ".service-btn"].map(s => {
             const b = c.querySelector(s).getBoundingClientRect(); return b.top + b.height / 2; })""")
@@ -789,7 +796,7 @@ def test_cell_labels_use_the_header_text(make_page, base_url):
     page = make_page(*PHONE)
     open_lab(page, base_url)
     cells = page.locator("#view table").first.locator("tbody tr").first.locator("td")
-    assert [cells.nth(i).get_attribute("data-label") for i in range(4)] == ["Use case", "OpenClaw", "Hermes", "OpenHuman"]
+    assert [cells.nth(i).get_attribute("data-label") for i in range(4)] == ["Use case", "OpenClaw", "Hermes", "Gone"]
 
 
 def test_long_command_wraps_to_two_lines_on_desktop(make_page, base_url):
@@ -815,19 +822,19 @@ def test_columns_with_no_values_are_hidden(make_page, base_url):
 
 def test_columns_with_some_values_are_kept(make_page, base_url):
     rows = [{"port": 22, "address": "0.0.0.0", "exposure": "all interfaces", "process": "", "pid": None},
-            {"port": 7788, "address": "127.0.0.1", "exposure": "local only", "process": "openhuman-core", "pid": 9}]
+            {"port": 7788, "address": "127.0.0.1", "exposure": "local only", "process": "example-core", "pid": 9}]
     page = make_page()
     page.route("**/api/ports", lambda r: r.fulfill(json=rows))
     open_tab(page, base_url, "system/ports")
     assert "PROCESS" in page.locator("#view thead").inner_text().upper()
-    assert "openhuman-core (9)" in page.locator("#view tbody").inner_text()
+    assert "example-core (9)" in page.locator("#view tbody").inner_text()
 
 
 def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
     page = make_page()
     open_lab(page, base_url)
     head = page.locator("#view table").first.locator("thead").inner_text().upper()
-    assert "OPENCLAW" in head and "OPENHUMAN" in head  # neither has a run yet; the "–" cells are the point
+    assert "OPENCLAW" in head and "GONE" in head  # none has a run yet; the "–" cells are the point
 
 
 # ---------- navigation ----------
@@ -975,11 +982,11 @@ def test_overview_strip_shows_each_agent_with_its_status(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, agents=AGENTS)
     rows = page.locator("#view .strip .strip-row")
-    assert rows.count() == 4
+    assert rows.count() == 3
     text = page.locator("#view .strip").inner_text()
-    for word in ["Claude Code", "running · 2", "Hermes", "starting", "OpenClaw", "running", "OpenHuman", "stopped"]:
+    for word in ["Claude Code", "running · 2", "Hermes", "starting", "OpenClaw", "running"]:
         assert word in text
-    assert page.locator("#view .strip a[href='#agents']").count() == 4   # each name opens the Agents tab
+    assert page.locator("#view .strip a[href='#agents']").count() == 3   # each name opens the Agents tab
 
 
 def test_overview_strip_start_posts_to_the_unit(make_page, base_url):

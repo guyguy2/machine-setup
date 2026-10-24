@@ -223,11 +223,11 @@ if want pihole; then
 fi
 
 if want agents; then
-  say "agents: OpenClaw (npm, ~/dev/openclaw_node) and OpenHuman (.deb + /opt/openhuman-core); Hermes comes from the Brewfile"
+  say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes comes from the Brewfile"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
-  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw; _upd_openhuman', then openclaw config set gateway.controlUi.basePath /openclaw"
-  else zsh -ic '_upd_openclaw; _upd_openhuman' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
+  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"
+  else zsh -ic '_upd_openclaw' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
     # The Control UI is published at /openclaw (see the pi-status step), so it must serve under that path.
     "$HOME/dev/openclaw_node/node_modules/.bin/openclaw" config set gateway.controlUi.basePath /openclaw || true
   fi
@@ -298,5 +298,5 @@ cat <<'MSG'
   - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
   - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
     ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
-    (or openclaw-gateway, openhuman).
+    (or openclaw-gateway).
 MSG
