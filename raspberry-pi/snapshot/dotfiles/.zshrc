@@ -139,9 +139,16 @@ _upd_step() { print -P "\n%F{cyan}==>%f %B$1%b" }
 
 # Sub-step under a group heading: indented title, command output indented beneath it
 _upd_sub() {
-  print -P "  %F{magenta}->%f %B$1%b"; shift
+  local title=$1 rc
+  print -P "  %F{magenta}->%f %B$title%b"; shift
   "$@" 2>&1 | sed -u 's/^/     /'
+  rc=${pipestatus[1]}
+  (( rc )) && _upd_note "$title failed (exit $rc)"
+  return $rc
 }
+
+# Record something that went wrong, for the end-of-run summary. A file, not an array: _upd_sub runs steps in a pipe subshell.
+_upd_note() { print -r -- "$1" >> $_upd_log }
 
 # OpenClaw: npm install in ~/dev/openclaw_node (~/dev/openclaw is the source checkout)
 _upd_openclaw() {
@@ -197,7 +204,7 @@ _upd_repos() {
   for git_dir in $HOME/dev/{*,*/*}/.git(N/); do
     repo=${git_dir:h}
     print -n "${repo/#$HOME/~}: "
-    gpull $repo
+    gpull $repo || _upd_note "${repo/#$HOME/~} not updated (see git repos step)"
   done
 }
 
@@ -205,7 +212,7 @@ _upd_repos() {
 # this installs any new dependencies and restarts the service so the running page loads that code.
 _upd_pi_status() {
   systemctl --user cat pi-status.service &>/dev/null || { echo "pi-status service not installed, skipped"; return 0 }
-  uv sync --quiet --project $HOME/dev/pi-status --no-dev --inexact && systemctl --user restart pi-status.service && echo "restarted"
+  uv sync --quiet --project $HOME/dev/pi-status --no-dev --inexact && systemctl --user restart pi-status.service && echo "restarted" || _upd_note "pi-status update failed"
 }
 
 # Restart each running agent service whose code changed after it started (an update above, or a launcher's
@@ -224,6 +231,7 @@ _upd_restart_agents() {
       echo "$unit already runs the current version"
     fi
   done
+  return 0
 }
 
 # Run counter shared by the periodic steps (repo updates, settings backup). Call once per upd run:
@@ -249,13 +257,88 @@ _upd_backup() {
   fi
 }
 
+# End-of-run summary: work out what is still needed to be fully up to date, list it, and offer to do each item.
+# Reads $_upd_log (failures noted by the steps) and $_upd_claude_before / $_upd_omz_before (versions at the start).
+_upd_summary() {
+  local running=$(uname -r) newest m pid unit uunit comm i claude_now
+  local -a todo acts svcs sess heavy reasons
+  local -A seen
+  local stale_re='\.so[^ ]* \(deleted\)|/usr/s?bin/[^ ]+ \(deleted\)'
+
+  # Reboot reasons: a newer kernel of the running flavour (e.g. rpt-rpi-2712), or packages that ask for it
+  newest=$(ls /lib/modules | grep -F -- "+${running#*+}" | sort -V | tail -1)
+  [[ -n $newest && $newest != $running ]] && reasons+=("kernel $newest installed, running $running")
+  [[ -f /var/run/reboot-required.pkgs ]] && reasons+=("${(j:, :)${(uf)"$(</var/run/reboot-required.pkgs)"}} asked for it")
+  [[ -f /var/run/reboot-required && -z $reasons ]] && reasons+=("a package asked for it")
+
+  # Bootloader firmware: applied only on request, and takes effect at the next boot
+  if command -v rpi-eeprom-update >/dev/null && sudo rpi-eeprom-update 2>&1 | grep -q 'update available'; then
+    todo+=("Apply the bootloader firmware update (takes effect at the next boot)"); acts+=("sudo rpi-eeprom-update -a")
+    reasons+=("bootloader update pending")
+  fi
+
+  # Processes still running with libraries or binaries that this run replaced on disk
+  for m in ${(f)"$(sudo grep -lE $stale_re /proc/[0-9]*/maps 2>/dev/null)"}; do
+    pid=${${m#/proc/}%/maps}
+    ps -o unit=,uunit=,comm= -p $pid 2>/dev/null | read -r unit uunit comm
+    [[ -n $unit && -z $seen[$unit$uunit] ]] || continue
+    seen[$unit$uunit]=1
+    case $unit in
+      ssh.service|sshd.service|systemd-*|dbus.service) heavy+=($unit) ;;
+      user@*.service|session-*.scope) sess+=($comm) ;;
+      *.service) svcs+=($unit) ;;
+    esac
+  done
+  if (( $#reasons )); then
+    [[ -n $svcs$sess$heavy ]] && reasons+=("also refreshes ${#svcs} service(s) and ${#sess} desktop process(es) on old libraries")
+  else
+    if (( $#svcs )); then
+      todo+=("Restart services running old libraries: ${svcs}. Docker or Pi-hole may drop briefly")
+      acts+=("sudo systemctl restart $svcs")
+    fi
+    if [[ -n $sess$heavy ]]; then
+      reasons=(${(u)sess} ${(u)heavy})
+      todo+=("Log out and back in (or reboot): ${(j:, :)reasons} run old libraries"); reasons=()
+      acts+=("")
+    fi
+  fi
+
+  claude_now=$(brew list --cask --versions claude-code@latest 2>/dev/null)
+  [[ -n $_upd_claude_before && $claude_now != $_upd_claude_before ]] &&
+    { todo+=("Restart Claude Code sessions: ${_upd_claude_before#* } -> ${claude_now#* }"); acts+=("") }
+  if [[ -n $_upd_omz_before && $_upd_omz_before != $(git -C ${ZSH:-$HOME/.oh-my-zsh} rev-parse HEAD 2>/dev/null) ]] && (( ! $#reasons )); then
+    todo+=("Reload the shell, Oh My Zsh was updated"); acts+=("exec zsh")
+  fi
+  [[ -s $_upd_log ]] && for m in ${(f)"$(<$_upd_log)"}; do todo+=("Needs attention: $m"); acts+=(""); done
+  (( $#reasons )) && { todo+=("Reboot: ${(j:; :)reasons}"); acts+=("sudo reboot") }
+
+  if (( ! $#todo )); then
+    print -P "\n%F{green}All done.%f Nothing else to do."
+    return 0
+  fi
+  print -P "\n%F{cyan}==>%f %BTo get fully up to date%b"
+  for i in {1..$#todo}; do
+    print -r -- "  $i. ${todo[i]}${acts[i]:+  [${acts[i]}]}"
+  done
+  [[ -t 0 ]] || return 0
+  print
+  for i in {1..$#todo}; do
+    [[ -n ${acts[i]} ]] || continue
+    if read -q "?Do item $i now? [y/N] "; then print; eval ${acts[i]}; else print; fi
+  done
+}
+
 upd() {
   sudo true || return 1
   local _upd_due _upd_left
+  local _upd_log=$(mktemp) _upd_claude_before _upd_omz_before
+  _upd_claude_before=$(command -v brew >/dev/null && brew list --cask --versions claude-code@latest 2>/dev/null)
+  _upd_omz_before=$(git -C ${ZSH:-$HOME/.oh-my-zsh} rev-parse HEAD 2>/dev/null)
   _upd_tick
 
   _upd_step "apt packages + kernel"
-  sudo apt-get update && sudo apt-get full-upgrade -y && sudo apt-get autoremove --purge -y && sudo apt-get clean
+  sudo apt-get update && sudo apt-get full-upgrade -y && sudo apt-get autoremove --purge -y && sudo apt-get clean ||
+    _upd_note "apt update failed"
 
   if command -v rpi-eeprom-update >/dev/null; then
     _upd_step "Raspberry Pi bootloader firmware (status only; apply with: sudo rpi-eeprom-update -a)"
@@ -266,24 +349,25 @@ upd() {
     _upd_step "Homebrew"
     # --yes: Homebrew 7 asks for confirmation by default (ask mode)
     # gcloud-cli is an auto_updates cask, which plain `brew upgrade` skips
-    brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli && brew cleanup
+    brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli && brew cleanup ||
+      _upd_note "Homebrew update failed"
   fi
 
   if command -v npm >/dev/null; then
     _upd_step "npm global packages (e.g. pyright)"
     # npm and corepack come with apt's nodejs, so apt updates them
     local -a _npm_pkgs=(${(f)"$(npm ls -g --depth=0 --json 2>/dev/null | jq -r '.dependencies // {} | keys[]' | grep -vxE 'npm|corepack')"})
-    if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]/%/@latest}"; else echo "none"; fi
+    if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]/%/@latest}" || _upd_note "npm global update failed"; else echo "none"; fi
   fi
 
   if command -v uv >/dev/null && [[ -n "$(uv tool list 2>/dev/null | grep -v '^No tools')" ]]; then
     _upd_step "uv tools (e.g. sqlite-web)"
-    uv tool upgrade --all
+    uv tool upgrade --all || _upd_note "uv tool upgrade failed"
   fi
 
   if [[ -f ~/dev/pihole/docker-compose.yml ]]; then
     _upd_step "Pi-hole (docker image)"
-    (cd ~/dev/pihole && sudo docker-compose pull && sudo docker-compose up -d && sudo docker image prune -f)
+    (cd ~/dev/pihole && sudo docker-compose pull && sudo docker-compose up -d && sudo docker image prune -f) || _upd_note "Pi-hole image update failed"
   fi
 
   _upd_step "Agents"
@@ -301,17 +385,11 @@ upd() {
 
   if (( _upd_due )); then
     _upd_step "Settings backup (machine-setup/raspberry-pi, every 5th run)"
-    _upd_backup || print -P "%F{yellow}settings backup failed%f (see above)"
+    _upd_backup || { print -P "%F{yellow}settings backup failed%f (see above)"; _upd_note "settings backup failed" }
   else
     _upd_step "Settings backup (machine-setup/raspberry-pi)"; echo "skipped, next backup in $_upd_left run(s)"
   fi
 
-  # Reboot needed if a newer kernel of the running flavour (e.g. rpt-rpi-2712) is installed
-  local running=$(uname -r) newest
-  newest=$(ls /lib/modules | grep -F -- "+${running#*+}" | sort -V | tail -1)
-  if [[ -f /var/run/reboot-required || ( -n $newest && $newest != $running ) ]]; then
-    print -P "\n%F{yellow}Reboot required%f (running $running, installed $newest)"
-  else
-    print -P "\n%F{green}All done.%f"
-  fi
+  _upd_summary
+  rm -f $_upd_log
 }

@@ -141,8 +141,13 @@ Write output files to the scratchpad directory, not the working directory.
 - **401 "No credentials provided"** means not logged in: `gws auth login` (or `gws auth setup --project gws-cli-guy --login`
   if `~/.config/gws/client_secret.json` is missing).
 - **Logging in over SSH:** the user usually works from a Mac over SSH, so the login's redirect to
-  `http://localhost:<port>` fails in the Mac's browser. Ask the user to paste the failed redirect URL, confirm `gws`
-  is still listening (`ss -ltnp | grep <port>`), then run `curl '<that URL>'` on this machine right away. The code
-  is single-use and expires within minutes.
+  `http://localhost:<port>` fails in the Mac's browser. Easiest: have the user run `! ~/dev/agent-lab/bin/gws-login`
+  (keeps the current scopes; `--full` or `--scopes A,B` to change them). It runs `gws auth login` in the background,
+  prints the URL, asks for the failed redirect address, delivers it on the Pi and checks the result; the old login
+  stays until the new one works. By hand: ask the user to paste the failed redirect URL, confirm `gws` is still
+  listening (`ss -ltnp | grep <port>`), then `curl '<that URL>'` on this machine right away. The code is single-use
+  and expires within minutes.
+- **Weekly expiry:** if the OAuth app in project `gws-cli-guy` is in "Testing" (Google Auth Platform → Audience),
+  Google expires its refresh tokens after 7 days. Publishing it ("In production") and logging in once more stops that.
 - APIs are enabled in GCP project `gws-cli-guy`. A 403 saying an API "has not been used in project ... or it is
   disabled" means enabling it there: `gcloud services enable <name>.googleapis.com --project gws-cli-guy`.
