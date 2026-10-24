@@ -16,7 +16,10 @@ Install each tool from exactly one source. Before installing, check `whence -a <
   plus `brew list --cask` show what's installed right now.
 - **uv** (`uv tool install`) for Python CLI tools; **npm -g** (`sudo npm install -g`, apt's NodeSource npm) only for
   Node tools. pyright is one (a Node tool, even though it checks Python).
-- **Manual GitHub-release installs** only when there's no package. Currently there are none.
+- **Manual installs** only when there's no package. Currently that's just Hermes: the Homebrew formula (0.22.4) was
+  missing the `anthropic` library, so Hermes crashed at startup. It's installed with its official installer
+  (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`, a git checkout in `~/.hermes/hermes-agent`,
+  command in `~/.local/bin`) and updated with `hermes update --yes`. Switch back to brew if the formula is fixed.
 
 ## Python code intelligence
 
@@ -38,8 +41,18 @@ desktop: have me paste the failed redirect URL, confirm the CLI is still listeni
 away. Alternative for next time: `ssh -L <port>:localhost:<port>` from the Mac before opening the link. Prefer a
 CLI's `--no-launch-browser`/device-code mode when it has one.
 
+## Personal data store (`me`)
+
+The user's personal details (name, address, email, phone, family, accounts) live in a SQLite store at
+`/home/guy/.local/share/agent-lab/me/facts.db` (with `pending.db` for agents' proposals), not in any repo and not backed up by choice. Built and
+documented in `~/dev/agent-lab/me.md`: read that first. Look things up with `~/dev/agent-lab/tools/bin/me get|search|show`
+or browse with `~/dev/agent-lab/bin/me-admin view`; only the user changes values (`bin/me-admin set|edit|review`).
+Don't read the database files directly or copy its values into docs, commits or memory notes unless asked.
+If a task needs a personal detail the store lacks, or `me get` returns CHOOSE/MISSING, tell the user what to add and the
+`bin/me-admin set` command (or record it with `me propose --missing`); `bin/me-admin gaps` ranks what's been missed.
+
 ## Updating
 
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
-(including Claude Code and Hermes), npm global packages, OpenClaw, uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
+(including Claude Code), npm global packages, OpenClaw, Hermes (its own `hermes update`), uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.
