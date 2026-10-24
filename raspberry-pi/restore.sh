@@ -223,13 +223,22 @@ if want pihole; then
 fi
 
 if want agents; then
-  say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes comes from the Brewfile"
+  say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes (official installer, not Homebrew)"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
   elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"
+    echo "  [dry-run] curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use"
   else zsh -ic '_upd_openclaw' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
     # The Control UI is published at /openclaw (see the pi-status step), so it must serve under that path.
     "$HOME/dev/openclaw_node/node_modules/.bin/openclaw" config set gateway.controlUi.basePath /openclaw || true
+  fi
+  # Hermes: the Homebrew formula (0.22.4) lacked the anthropic library and crashed at startup, so it comes from the
+  # official installer (git checkout in ~/.hermes/hermes-agent, command in ~/.local/bin). Non-interactive.
+  # ~/.hermes (config, API keys, sessions) is not backed up, by design: set Hermes up again by hand afterwards.
+  if (( dry )); then :
+  elif [[ -x $HOME/.local/bin/hermes ]]; then echo "  Hermes already installed ($HOME/.local/bin/hermes)"
+  else curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use \
+    || echo "  Hermes install failed; re-run: ./restore.sh --only agents"
   fi
 fi
 

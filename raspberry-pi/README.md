@@ -64,7 +64,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `apt` | installs the manually-installed packages (zsh, docker.io, docker-compose, nodejs, git, build tools, ...) | `snapshot/apt-manual.txt` |
 | `system` | hostname, timezone, adds you to the `docker` group, enables docker | `snapshot/system.txt` |
 | `tailscale` | installs and enables tailscaled (sign-in is section 4) | |
-| `brew` | Homebrew + all formulae and casks (gh, uv, hermes-agent, claude-code, gcloud-cli, googleworkspace-cli, ...) | `snapshot/Brewfile` |
+| `brew` | Homebrew + all formulae and casks (gh, uv, claude-code, gcloud-cli, googleworkspace-cli, ...) | `snapshot/Brewfile` |
 | `uv`, `npm` | uv tools, global npm packages (pyright) | `snapshot/uv-tools.txt`, `npm-global.txt` |
 | `omzsh` | Oh My Zsh | |
 | `dotfiles` | copies `snapshot/dotfiles/` into `$HOME` | `snapshot/dotfiles/` |
@@ -72,7 +72,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
 | `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node}` → folders in this repo | |
 | `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
-| `agents` | installs OpenClaw (npm) with `upd`'s own functions; Hermes came from the Brewfile | `~/.zshrc` |
+| `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data is not restored, by design | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `shell` | login shell → zsh | |
 | `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |

@@ -9,6 +9,7 @@ snap=$here/snapshot
 
 # Paths under $HOME to back up. Secrets, agent state and caches are deliberately absent:
 # ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.config/gws, history files, ~/.cache.
+# (~/.hermes holds Hermes's data and its installer checkout: restore.sh reinstalls Hermes with the official installer instead.)
 dotfiles=(
   .zshrc .gitconfig
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
@@ -95,7 +96,7 @@ say "versions (reference only)"
   echo "os: $(. /etc/os-release && echo "$PRETTY_NAME")"
   echo "tailscale: $(tailscale version 2>/dev/null | head -1 || echo none)"
   echo "openclaw: $(jq -r .version "$HOME/dev/openclaw_node/node_modules/openclaw/package.json" 2>/dev/null || echo none)"
-  echo "hermes-agent: $(brew list --versions hermes-agent 2>/dev/null | awk '{print $2}' || true)"
+  echo "hermes: $(hermes --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
 } > "$snap/versions.txt"
 
 # Keep the snapshot small and free of credentials: text and scripts only.

@@ -1,4 +1,4 @@
 #!/usr/bin/env zsh
-# Run Hermes. Installed via Homebrew (formula hermes-agent); `upd` keeps it current.
+# Run Hermes. Installed with its official installer (not Homebrew); `upd` keeps it current (`hermes update --yes`).
 # Absolute path so this wrapper can't shadow itself if scripts/ is on PATH.
-exec /home/linuxbrew/.linuxbrew/bin/hermes "$@"
+exec "$HOME/.local/bin/hermes" "$@"
