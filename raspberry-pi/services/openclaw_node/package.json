@@ -7,7 +7,7 @@
   "type": "commonjs",
   "private": true,
   "dependencies": {
-    "openclaw": "^2026.10.6"
+    "openclaw": "^2026.10.7"
   },
   "allowScripts": {
     "openclaw": true,
