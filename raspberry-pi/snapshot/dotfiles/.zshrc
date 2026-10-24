@@ -148,29 +148,6 @@ _upd_gh_latest() {
   curl -fsSL "https://api.github.com/repos/$1/releases/latest" | jq -er '.tag_name | ltrimstr("v")'
 }
 
-# OpenHuman: desktop app (.deb) + core/tui tarball in /opt/openhuman-core
-_upd_openhuman() {
-  local repo=tinyhumansai/openhuman cur latest base core tmp
-  latest=$(_upd_gh_latest $repo) || { echo "could not fetch latest OpenHuman release"; return 1 }
-  cur=$(dpkg-query -W -f='${Version}' open-human 2>/dev/null)
-  [[ $cur == $latest ]] && { echo "OpenHuman $cur is up to date"; return 0 }
-
-  echo "OpenHuman ${cur:-not installed} -> $latest"
-  base=https://github.com/$repo/releases/download/v$latest
-  core=openhuman-core-$latest-$(uname -m)-unknown-linux-gnu.tar.gz
-  tmp=$(mktemp -d) && chmod 755 $tmp || return 1
-  {
-    curl -fsSL -o $tmp/openhuman.deb $base/OpenHuman_${latest}_$(dpkg --print-architecture).deb &&
-    curl -fsSL -o $tmp/$core $base/$core &&
-    echo "$(curl -fsSL $base/$core.sha256 | awk '{print $1}')  $tmp/$core" | sha256sum -c --quiet &&
-    sudo apt-get install -y $tmp/openhuman.deb &&
-    sudo rm -rf /opt/openhuman-core.new && sudo mkdir /opt/openhuman-core.new &&
-    sudo tar xzf $tmp/$core -C /opt/openhuman-core.new --no-same-owner &&
-    sudo rm -rf /opt/openhuman-core && sudo mv /opt/openhuman-core.new /opt/openhuman-core &&
-    echo "OpenHuman updated to $latest (restart the app to pick it up)"
-  } always { rm -rf $tmp }
-}
-
 # OpenClaw: npm install in ~/dev/openclaw_node (~/dev/openclaw is the source checkout)
 _upd_openclaw() {
   local dir=$HOME/dev/openclaw_node cur latest
@@ -245,8 +222,7 @@ _upd_restart_agents() {
   local unit code started changed
   for unit code in \
       hermes-dashboard.service /home/linuxbrew/.linuxbrew/opt/hermes-agent \
-      openclaw-gateway.service $HOME/dev/openclaw_node/node_modules/openclaw/package.json \
-      openhuman.service /opt/openhuman-core/openhuman-core; do
+      openclaw-gateway.service $HOME/dev/openclaw_node/node_modules/openclaw/package.json; do
     [[ $(systemctl --user is-active $unit 2>/dev/null) == active ]] || { echo "$unit not running, skipped"; continue }
     started=$(date -d "$(systemctl --user show -p ActiveEnterTimestamp --value $unit)" +%s 2>/dev/null) || continue
     changed=$(stat -c %Z $code 2>/dev/null) || continue
@@ -316,7 +292,6 @@ upd() {
   _upd_step "Agents"
   _upd_sub "Hermes"      _upd_hermes
   _upd_sub "OpenClaw"    _upd_openclaw
-  _upd_sub "OpenHuman"   _upd_openhuman
   _upd_sub "Restart updated agent services" _upd_restart_agents
 
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal

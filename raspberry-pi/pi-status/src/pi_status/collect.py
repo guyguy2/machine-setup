@@ -197,7 +197,6 @@ def top_processes() -> dict:
 # `match` is compared (prefix) with the executable name and, for interpreters, the script's name and folders.
 AGENTS = [
     {"name": "Claude Code", "kind": "Coding agent", "match": ("claude",)},
-    {"name": "OpenHuman", "kind": "Personal assistant", "match": ("openhuman", "open-human"), "unit": "openhuman.service"},
     {"name": "Hermes", "kind": "Agent", "match": ("hermes",), "unit": "hermes-dashboard.service"},
     {"name": "OpenClaw", "kind": "Personal assistant", "match": ("openclaw",), "unit": "openclaw-gateway.service"},
     # not installed here; listed only while running
@@ -274,7 +273,6 @@ def control_agent(unit: str, action: str) -> tuple[int, dict]:
 # files with "key: value" front matter; they stay the one source of truth, so this only ever reads them.
 
 LAB = Path(HOME) / "dev" / "agent-lab"
-LAB_AGENTS = [("openclaw", "OpenClaw"), ("hermes", "Hermes"), ("openhuman", "OpenHuman")]  # (id in notes, AGENTS name)
 LAB_NUMBERS = ("score_outcome", "score_quality", "score_autonomy", "score_safety", "score_ux", "score_happiness",
                "overall", "duration_min", "my_effort_min", "followups", "peak_rss_mb", "avg_cpu_pct")
 NOTE_LIMIT = 50_000  # characters of a run note's body sent to the page
@@ -309,8 +307,12 @@ def lab_prompt(body: str) -> str:
     return m[1] if m else ""
 
 
+def lab_agent_id(name: str) -> str:
+    return name.strip().strip("*_` ").lower()
+
+
 def lab_impressions(results: Path) -> dict[str, str]:
-    """My running opinion per agent: the "### <Agent>" parts of results.md's "Overall impressions"."""
+    """My running opinion per agent: the "### <Agent>" parts of results.md's "Overall impressions", by agent id."""
     try:
         text = results.read_text(errors="replace")
     except OSError:
@@ -319,10 +321,44 @@ def lab_impressions(results: Path) -> dict[str, str]:
     found = {}
     for name, body in re.findall(r"^### ([^\n]+)\n(.*?)(?=^### |\Z)", section[1] if section else "", re.S | re.M):
         lines = [l for l in body.strip().splitlines() if l.strip() not in ("-", "*")]  # skip the template's empty bullets
-        agent = next((a for a, n in LAB_AGENTS if n.lower() == name.strip().lower()), None)
-        if agent and lines:
-            found[agent] = "\n".join(lines)
+        if lines and lab_agent_id(name):
+            found[lab_agent_id(name)] = "\n".join(lines)
     return found
+
+
+def lab_scoreboard_agents(results: Path) -> list[str]:
+    """The agent columns of results.md's scoreboard table (between the table markers), in order, as written."""
+    try:
+        text = results.read_text(errors="replace")
+    except OSError:
+        return []
+    block = re.search(r"<!-- table:start -->\n(.*?)<!-- table:end -->", text, re.S)
+    header = next((l for l in (block[1] if block else "").splitlines() if l.lstrip().startswith("|")), "")
+    return [c.strip().strip("*_` ") for c in header.strip().strip("|").split("|")[1:] if c.strip()]
+
+
+def lab_agents(results: Path, runs: list[dict], running: set[str]) -> list[dict]:
+    """Every agent the lab knows about, not only the installed ones: results.md and the run notes keep the history
+    of agents that were removed later. Order: the scoreboard's columns, then installed agents with a service that
+    have no runs yet, then anyone only named in the impressions or run notes. `installed` is False for the removed."""
+    installed = {s["name"].lower(): s["name"] for s in AGENTS if "unit" in s}
+    names: dict[str, str] = {}  # id -> display name, in order
+
+    def add(name: str) -> None:
+        if lab_agent_id(name):
+            names.setdefault(lab_agent_id(name), installed.get(lab_agent_id(name), name.strip().strip("*_` ")))
+
+    for name in lab_scoreboard_agents(results):
+        add(name)
+    for name in installed.values():
+        add(name)
+    for name in lab_impressions(results):
+        add(name)
+    for r in runs:
+        add(r["agent"])
+    for r in runs:  # normalise ids in the notes so a cell lookup by id matches however the note spells it
+        r["agent"] = lab_agent_id(r["agent"])
+    return [{"id": i, "name": n, "running": n in running, "installed": i in installed} for i, n in names.items()]
 
 
 def lab() -> dict:
@@ -350,13 +386,16 @@ def lab() -> dict:
         })
     runs.sort(key=lambda r: (r["date"], r["file"]))  # oldest first, so the last one per cell is the latest
 
+    # Removed agents stay in results.md and the run notes as history, but the page shows installed agents only.
+    agents = [a for a in lab_agents(LAB / "results.md", runs, running) if a["installed"]]
+    ids = {a["id"] for a in agents}
     return {
         "found": True,
         "path": path,
-        "agents": [{"id": a, "name": n, "running": n in running} for a, n in LAB_AGENTS],
+        "agents": agents,
         "use_cases": use_cases,
-        "runs": runs,
-        "impressions": lab_impressions(LAB / "results.md"),
+        "runs": [r for r in runs if r["agent"] in ids],
+        "impressions": {n: t for n, t in lab_impressions(LAB / "results.md").items() if lab_agent_id(n) in ids},
     }
 
 
@@ -463,7 +502,6 @@ DASHBOARDS = [
      "port": 9119, "tailnet_port": 8443, "path": "/hermes", "proxy_port": 9120},  # no prefix setting: see services/hermes-proxy
     {"name": "OpenClaw", "what": "Control UI: chat, sessions, channels, automations",
      "port": 18789, "tailnet_port": 8444, "path": "/openclaw"},  # gateway.controlUi.basePath is set to match
-    {"name": "OpenHuman", "what": "Desktop app and TUI only; no web dashboard yet"},
 ]
 
 

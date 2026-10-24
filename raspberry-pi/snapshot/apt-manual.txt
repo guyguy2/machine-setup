@@ -172,7 +172,6 @@ network-manager
 nftables
 nodejs
 ntfs-3g
-open-human
 openssl
 openssl-provider-legacy
 p7zip-full

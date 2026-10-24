@@ -136,6 +136,6 @@ def test_agent_control_passes_unit_and_action(base_url, controls):
 
 
 def test_agent_control_only_start_and_stop(base_url, controls):
-    assert post(base_url + "/api/agents/openhuman.service/restart", {"X-Requested-With": "pi-status"})[0] == 404
-    assert get(base_url + "/api/agents/openhuman.service/stop")[0] == 404
+    assert post(base_url + "/api/agents/ssh.service/restart", {"X-Requested-With": "pi-status"})[0] == 404
+    assert get(base_url + "/api/agents/ssh.service/stop")[0] == 404
     assert controls == []

@@ -5,7 +5,7 @@ Setup, backup and restore scripts for my machines, plus a few utilities.
 | Directory | For | What it does |
 |---|---|---|
 | repo root (`*.zsh`) | macOS | Back up and restore Claude Code / Antigravity settings and dotfiles, set up a new Mac with Homebrew, and a Google Voice launcher |
-| [`raspberry-pi/`](raspberry-pi/README.md) | Raspberry Pi OS / Debian | Snapshot and restore the whole Pi setup (shell config, apt and Homebrew packages, Tailscale, app settings), plus the Hermes / OpenClaw / OpenHuman launchers and the [`pi-status`](raspberry-pi/pi-status/README.md) status web page |
+| [`raspberry-pi/`](raspberry-pi/README.md) | Raspberry Pi OS / Debian | Snapshot and restore the whole Pi setup (shell config, apt and Homebrew packages, Tailscale, app settings), plus the Hermes / OpenClaw launchers and the [`pi-status`](raspberry-pi/pi-status/README.md) status web page |
 
 ## Raspberry Pi
 
