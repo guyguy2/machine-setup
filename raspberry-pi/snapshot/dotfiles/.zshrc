@@ -143,11 +143,6 @@ _upd_sub() {
   "$@" 2>&1 | sed -u 's/^/     /'
 }
 
-# Latest GitHub release tag for owner/repo, without the leading "v"
-_upd_gh_latest() {
-  curl -fsSL "https://api.github.com/repos/$1/releases/latest" | jq -er '.tag_name | ltrimstr("v")'
-}
-
 # OpenClaw: npm install in ~/dev/openclaw_node (~/dev/openclaw is the source checkout)
 _upd_openclaw() {
   local dir=$HOME/dev/openclaw_node cur latest
@@ -159,16 +154,13 @@ _upd_openclaw() {
     echo "OpenClaw updated to $latest"
 }
 
-# Hermes: Homebrew formula (already upgraded by the Homebrew step); just report
+# Hermes: official installer checkout, updated with its own command
 _upd_hermes() {
-  local cur
-  cur=$(brew list --versions hermes-agent 2>/dev/null | awk '{print $2}')
-  [[ -z $cur ]] && { echo "Hermes not installed"; return 1 }
-  if [[ -n $(brew outdated --formula hermes-agent 2>/dev/null) ]]; then
-    echo "Hermes $cur is outdated"; brew upgrade --yes hermes-agent
-  else
-    echo "Hermes $cur is up to date"
-  fi
+  # Official installer (git checkout in ~/.hermes/hermes-agent); not Homebrew: its package lacked the anthropic library.
+  # Call the launcher by path so a shell with a stale PATH (started before ~/.local/bin was added) still finds it
+  local bin=$HOME/.local/bin/hermes
+  [[ -x $bin ]] || { echo "Hermes not installed ($bin missing)"; return 1 }
+  $bin update --yes
 }
 
 # Shallow-update the git repo in the current dir (or $1): fetch only the newest
@@ -221,7 +213,7 @@ _upd_pi_status() {
 _upd_restart_agents() {
   local unit code started changed
   for unit code in \
-      hermes-dashboard.service /home/linuxbrew/.linuxbrew/opt/hermes-agent \
+      hermes-dashboard.service $HOME/.hermes/hermes-agent \
       openclaw-gateway.service $HOME/dev/openclaw_node/node_modules/openclaw/package.json; do
     [[ $(systemctl --user is-active $unit 2>/dev/null) == active ]] || { echo "$unit not running, skipped"; continue }
     started=$(date -d "$(systemctl --user show -p ActiveEnterTimestamp --value $unit)" +%s 2>/dev/null) || continue
@@ -282,6 +274,11 @@ upd() {
     # npm and corepack come with apt's nodejs, so apt updates them
     local -a _npm_pkgs=(${(f)"$(npm ls -g --depth=0 --json 2>/dev/null | jq -r '.dependencies // {} | keys[]' | grep -vxE 'npm|corepack')"})
     if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]/%/@latest}"; else echo "none"; fi
+  fi
+
+  if command -v uv >/dev/null && [[ -n "$(uv tool list 2>/dev/null | grep -v '^No tools')" ]]; then
+    _upd_step "uv tools (e.g. sqlite-web)"
+    uv tool upgrade --all
   fi
 
   if [[ -f ~/dev/pihole/docker-compose.yml ]]; then

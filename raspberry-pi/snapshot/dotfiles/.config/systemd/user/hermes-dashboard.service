@@ -4,9 +4,9 @@ After=network-online.target
 Wants=hermes-proxy.service
 
 [Service]
-ExecStart=/home/linuxbrew/.linuxbrew/bin/hermes dashboard --no-open
+ExecStart=%h/.local/bin/hermes dashboard --no-open
 # User services get a minimal PATH; Hermes runs its tools from Homebrew.
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin
 Restart=always
 RestartSec=5
 
