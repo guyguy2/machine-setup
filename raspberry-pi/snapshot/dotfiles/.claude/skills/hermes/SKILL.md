@@ -37,8 +37,8 @@ The newest file in `~/dev/agent-lab/docs/` says where the work stands.
   the default `~/.profile`/`~/.bash_profile`/`~/.bashrc` auto-source, so list those too). Here it sources
   `~/dev/agent-lab/tools/hermes-env.sh`, which puts the lab's wrappers first. Check with a oneshot that runs
   `echo $PATH; command -v gws`.
-- **Skills**: `skills.external_dirs: [~/.agents/skills]` (shared skills, copied there by
-  `~/dev/agent-lab/bin/lab skills`); the agent loads one with its `skill_view` tool. `skill_manage` can write skills
+- **Skills**: `skills.external_dirs: [~/.agents/skills]` (shared skills, copied to `~/.agents/skills/mine/` by
+  `~/dev/agent-lab/bin/lab skills`; the parent folder is the category, so they show as "mine"); the agent loads one with its `skill_view` tool. `skill_manage` can write skills
   to `~/.hermes/skills`.
 - **No exec allowlist**: the terminal only has a denylist of dangerous patterns plus `approvals.deny` globs. Wrappers
   on PATH are a convention, not a barrier; in lab runs `bin/loop` limits Hermes to the `terminal,skills` toolsets and

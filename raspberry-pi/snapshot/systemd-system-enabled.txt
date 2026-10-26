@@ -20,6 +20,7 @@ cups.socket
 docker.service
 docker.socket
 dpkg-db-backup.timer
+dreambase-cert.timer
 e2scrub_all.timer
 e2scrub_reap.service
 fstrim.timer

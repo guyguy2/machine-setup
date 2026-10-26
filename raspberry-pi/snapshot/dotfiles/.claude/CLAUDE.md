@@ -56,3 +56,12 @@ If a task needs a personal detail the store lacks, or `me get` returns CHOOSE/MI
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
 (including Claude Code), npm global packages, OpenClaw, Hermes (its own `hermes update`), uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.
+
+## Code over LLM judgment
+
+Use LLMs where judgment is needed (understanding a request, talking to the user, reading unstructured text), not for
+everything. Anything that can be deterministic code should be code: queries and filters, counts, parsing, checks and
+verification, safety gates (e.g. "dry run before --yes"), and repeatable steps in a runbook, skill or my own
+workflow. A skill or prompt then says which command to run and what to tell the user, and the command enforces the
+rest. When I notice a mechanical step being left to a model (an agent's or my own), turn it into a script, or a check
+in an existing one.
