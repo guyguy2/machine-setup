@@ -373,6 +373,7 @@ upd() {
   _upd_step "Agents"
   _upd_sub "Hermes"      _upd_hermes
   _upd_sub "OpenClaw"    _upd_openclaw
+  _upd_sub "Shared skills (agent-lab/skills -> Hermes + OpenClaw)" ~/dev/agent-lab/bin/lab skills
   _upd_sub "Restart updated agent services" _upd_restart_agents
 
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal

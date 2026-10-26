@@ -1,4 +1,6 @@
 dirmngr.socket
+dreambase-proxy.service
+dreambase.service
 fbd-alert-slider.service
 filter-chain.service
 gcr-ssh-agent.service
