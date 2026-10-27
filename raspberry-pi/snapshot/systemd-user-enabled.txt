@@ -1,4 +1,5 @@
 dirmngr.socket
+dreambase-photos.timer
 dreambase-proxy.service
 dreambase.service
 fbd-alert-slider.service

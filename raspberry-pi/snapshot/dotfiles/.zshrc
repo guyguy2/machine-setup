@@ -167,7 +167,16 @@ _upd_hermes() {
   # Call the launcher by path so a shell with a stale PATH (started before ~/.local/bin was added) still finds it
   local bin=$HOME/.local/bin/hermes
   [[ -x $bin ]] || { echo "Hermes not installed ($bin missing)"; return 1 }
-  $bin update --yes
+  # Stop the dashboard during the update: Hermes counts its restart as a running gateway and then waits a silent
+  # 120s for a gateway version row the dashboard never writes (looked like a hang after "Tip:"). Hermes doesn't
+  # start a stopped dashboard, so start it again here; it then runs the new code.
+  local dash=hermes-dashboard.service was_active=0 rc
+  [[ $(systemctl --user is-active $dash 2>/dev/null) == active ]] && was_active=1 && systemctl --user stop $dash
+  $bin update --yes; rc=$?
+  if (( was_active )); then
+    systemctl --user start $dash && echo "Started $dash" || { echo "could not start $dash"; rc=1 }
+  fi
+  return $rc
 }
 
 # Shallow-update the git repo in the current dir (or $1): fetch only the newest
