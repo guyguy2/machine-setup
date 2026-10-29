@@ -33,13 +33,10 @@ man-db.timer
 NetworkManager-dispatcher.service
 NetworkManager.service
 NetworkManager-wait-online.service
-nfs-blkmap.service
 nfs-client.target
 regenerate_ssh_host_keys.service
 remote-fs.target
 rp1-test.service
-rpcbind.service
-rpcbind.socket
 rpi-eeprom-update.service
 sshd-keygen.service
 ssh.service
