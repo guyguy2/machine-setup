@@ -62,7 +62,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 |---|---|---|
 | `apt-sources` | NodeSource and Tailscale apt repos and keys | `snapshot/apt-sources/` |
 | `apt` | installs the manually-installed packages (zsh, docker.io, docker-compose, nodejs, git, build tools, ...) | `snapshot/apt-manual.txt` |
-| `system` | hostname, timezone, adds you to the `docker` group, enables docker | `snapshot/system.txt` |
+| `system` | hostname, timezone, adds you to the `docker` group, enables docker, persistent journal, `PermitRootLogin no` (`sshd_config.d/10-hardening.conf`), masks rpcbind (NFS unused) | `snapshot/system.txt` |
 | `tailscale` | installs and enables tailscaled (sign-in is section 4) | |
 | `brew` | Homebrew + all formulae and casks (gh, uv, claude-code, gcloud-cli, googleworkspace-cli, ...) | `snapshot/Brewfile` |
 | `uv`, `npm` | uv tools, global npm packages (pyright) | `snapshot/uv-tools.txt`, `npm-global.txt` |

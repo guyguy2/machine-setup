@@ -67,7 +67,7 @@ fi
 snapshot_value() { sed -n "s/^$1: //p" "$snap/system.txt" 2>/dev/null; }
 
 if want system; then
-  say "system: hostname, timezone, docker group, persistent journal"
+  say "system: hostname, timezone, docker group, persistent journal, sshd root logins, rpcbind"
   if need system.txt; then
     h=$(snapshot_value hostname); tz=$(snapshot_value timezone)
     if [[ -n $h && $h != "$(hostname)" ]]; then
@@ -92,6 +92,23 @@ if want system; then
   else
     sudo mkdir -p "${jconf%/*}" && printf '%s\n' "$jwant" | sudo tee "$jconf" >/dev/null
     sudo systemctl restart systemd-journald && sudo journalctl --flush
+  fi
+  # No root logins over SSH, even with a key (the OpenSSH default, prohibit-password, allows key logins).
+  sconf=/etc/ssh/sshd_config.d/10-hardening.conf
+  swant=$(printf '%s\n' '# No root logins over SSH, even with a key (the OpenSSH default allows key logins).' \
+    '# Written by machine-setup/raspberry-pi/restore.sh (system step).' 'PermitRootLogin no')
+  if [[ $(sudo cat "$sconf" 2>/dev/null) == "$swant" ]]; then echo "  sshd already refuses root logins"
+  elif (( dry )); then echo "  [dry-run] write $sconf (PermitRootLogin no), reload ssh"
+  else
+    printf '%s\n' "$swant" | sudo tee "$sconf" >/dev/null && sudo chmod 600 "$sconf"
+    sudo sshd -t && sudo systemctl reload ssh
+  fi
+  # rpcbind comes with nfs-common (required by the desktop's rpd-common) and listens on the LAN on port 111.
+  # NFS isn't used, so mask it rather than purge it (that would remove rpd-common). Unmask to mount NFS.
+  if [[ $(systemctl is-enabled rpcbind.service 2>/dev/null) == masked ]]; then echo "  rpcbind already masked"
+  else
+    run sudo systemctl disable --now rpcbind.service rpcbind.socket nfs-blkmap.service
+    run sudo systemctl mask rpcbind.service rpcbind.socket nfs-blkmap.service
   fi
 fi
 
