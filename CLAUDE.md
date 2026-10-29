@@ -174,6 +174,12 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
   `uv run pytest` in `~/dev/pi-status` after changing it. The Python is type-checked with pyright and kept at 0 errors.
   The JavaScript is inline in `index.html`; use grep there. Commit `pi-status/` changes yourself.
 - After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
+- `raspberry-pi/docker/README.md`: notes on the Docker setup, how to add a container service, and Caddy 2 as a
+  possible single reverse proxy later.
+- `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates security agents
+  drift), OK/INFO/WARN lines, exit 1 on warnings. The `pi-checkup` skill (`checkup/skill/`) runs it and sends an agent per
+  domain with warnings. Add mechanical checks here, not to the skill; accepted warnings go in its `ACCEPTED` list.
+- `save.sh --to DIR` writes a snapshot to a new DIR instead (pi-checkup's drift check compares it with `snapshot/`).
 - `raspberry-pi/IDEAS.md` is the backlog of possible new uses for the Pi (none set up yet). When one gets built, move
   it into the runbook and delete its row there.
 

@@ -32,7 +32,8 @@ here is set up yet. When one gets done, move it into the runbook (`README.md`, `
 ## New services
 
 Each would go in its own folder under `services/`, published with `tailscale serve` on a new port like Pi-hole, and
-added to `restore.sh`, pi-status and `upd`.
+added to `restore.sh`, pi-status and `upd`. For containers, see `docker/README.md`; before a fifth port, consider Caddy 2 as one
+front door (same file, "Later").
 
 | # | Idea | Why | Cost |
 |---|---|---|---|

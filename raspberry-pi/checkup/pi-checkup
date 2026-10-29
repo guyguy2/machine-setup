@@ -1,0 +1,476 @@
+#!/usr/bin/env bash
+# Read-only checkup of this Pi, one domain per section: prints OK / INFO / WARN lines and exits 1 if anything warns.
+# Usage: pi-checkup [--warn-only] [--no-fetch] [domain...]     pi-checkup --list
+# The /pi-checkup Claude Code skill runs this, then sends one agent per domain with warnings to investigate.
+# It changes nothing, apart from `git fetch` in the repos domain (skip with --no-fetch).
+# When a scan turns up something mechanical that this misses, add a check here rather than leaving it to an agent.
+# shellcheck disable=SC2088  # "~/..." in messages is display text, not a path
+set -uo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+pi=${here%/checkup}  # machine-setup/raspberry-pi
+
+DOMAINS=(health services docker repos updates security agents drift)
+
+# ---------- what this Pi is supposed to look like ----------
+SYSTEM_UNITS=(ssh.service docker.service tailscaled.service)
+USER_UNITS=(pi-status.service dreambase.service dreambase-proxy.service dreambase-photos.timer)
+# Agents run one at a time (agent-lab), started and stopped from pi-status, so their units are disabled by design.
+# name|units|port
+AGENTS=("Hermes|hermes-dashboard.service hermes-proxy.service|9119" "OpenClaw|openclaw-gateway.service|18789")
+# Ports meant to be reachable from the LAN; everything else should listen on 127.0.0.1 or the tailnet.
+LAN_PORTS=(22 53 8090 8091)
+# Pages on the LAN to probe, name|url; {ts} is this Pi's tailnet DNS name (connections go to 127.0.0.1).
+WEBSITES=("DreamBase|https://{ts}:8091/ellie/")
+# Files holding credentials: must not be readable by group or others.
+SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev/pihole/.env ~/.config/gh/hosts.yml
+  ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc)
+# Warnings the user has looked at and accepted, by key (shown as INFO "accepted"). Add keys here, not in your head.
+ACCEPTED=()
+
+# ---------- output ----------
+warn_only=0 fetch=1 total=0 n=0
+declare -A per_domain=()
+if [[ -t 1 ]]; then G=$'\e[32m' Y=$'\e[33m' B=$'\e[1;34m' D=$'\e[2m' Z=$'\e[0m'; else G='' Y='' B='' D='' Z=''; fi
+ok()   { (( warn_only )) || printf '  %sOK%s    %s\n' "$G" "$Z" "$*"; }
+info() { (( warn_only )) || printf '  %sINFO%s  %s\n' "$D" "$Z" "$*"; }
+# warn <key> <message>: the key names the check, so it can be accepted in ACCEPTED.
+warn() {
+  local key=$1; shift
+  if [[ " ${ACCEPTED[*]} " == *" $key "* ]]; then info "accepted ($key): $*"; return; fi
+  n=$((n + 1)); printf '  %sWARN%s  %s %s[%s]%s\n' "$Y" "$Z" "$*" "$D" "$key" "$Z"
+}
+section() { printf '%s== %s%s\n' "$B" "$1" "$Z"; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+S() { sudo -n "$@" 2>/dev/null; }  # privileged read; empty output without passwordless sudo
+can_sudo() { sudo -n true 2>/dev/null; }
+days_since() { echo $(( ($(date +%s) - $1) / 86400 )); }
+gt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'; }
+ts_name() { tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//'; }
+# HTTP status of a URL ("000" when nothing answers); extra args go to curl.
+http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
+listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
+
+# ---------- health: CPU, memory, disk, temperature, kernel, logs ----------
+check_health() {
+  local l1 l5 l15 cores up temp th
+  read -r l1 l5 l15 _ < /proc/loadavg; cores=$(nproc); up=$(uptime -p)
+  if gt "$l15" "$cores"; then warn health.load "15-min load $l15 is above $cores cores ($up)"
+  else ok "load $l1 / $l5 / $l15 on $cores cores, $up"; fi
+
+  if have vcgencmd; then
+    temp=$(vcgencmd measure_temp | grep -oE '[0-9.]+')
+    if gt "$temp" 75; then warn health.temp "SoC at ${temp}°C (throttles at 80-85°C): check the fan/case"
+    else ok "SoC ${temp}°C at $(( $(vcgencmd measure_clock arm | cut -d= -f2) / 1000000 )) MHz"; fi
+    th=$(vcgencmd get_throttled | cut -d= -f2)
+    if [[ $th == 0x0 ]]; then ok "never under-voltage or throttled since boot"
+    else warn health.throttled "get_throttled=$th (bit 16/0 = under-voltage, 18/2 = throttled): check the power supply"; fi
+  fi
+
+  local total avail stotal sfree
+  total=$(awk '/^MemTotal/ {print $2}' /proc/meminfo); avail=$(awk '/^MemAvailable/ {print $2}' /proc/meminfo)
+  stotal=$(awk '/^SwapTotal/ {print $2}' /proc/meminfo); sfree=$(awk '/^SwapFree/ {print $2}' /proc/meminfo)
+  if (( avail * 100 / total < 15 )); then warn health.memory "only $((avail / 1024)) MB of $((total / 1024)) MB RAM available"
+  else ok "RAM $(( (total - avail) / 1024 )) MB used, $((avail / 1024)) MB available of $((total / 1024)) MB"; fi
+  if (( stotal > 0 && (stotal - sfree) * 100 / stotal > 50 )); then warn health.swap "swap $(( (stotal - sfree) / 1024 )) MB of $((stotal / 1024)) MB in use"
+  else ok "swap $(( (stotal - sfree) / 1024 )) MB of $((stotal / 1024)) MB in use"; fi
+
+  local mnt pct ipct
+  while read -r mnt pct ipct; do
+    pct=${pct%\%} ipct=${ipct%\%}
+    if (( pct > 85 )); then warn health.disk "$mnt is $pct% full"
+    elif [[ $ipct != - ]] && (( ipct > 85 )); then warn health.inodes "$mnt has used $ipct% of its inodes"
+    else ok "$mnt $pct% full (inodes $ipct%)"; fi
+  done < <(df --output=target,pcent,ipcent / /boot/firmware 2>/dev/null | tail -n +2)
+
+  # Pi kernels keep the same `uname -r` across updates, so compare the image's date with the boot time instead.
+  local boot img
+  boot=$(( $(date +%s) - $(cut -d. -f1 /proc/uptime) ))
+  img=/boot/firmware/kernel_2712.img; [[ -f $img ]] || img=/boot/firmware/kernel8.img
+  if [[ -f /run/reboot-required ]]; then warn health.reboot "reboot required ($(tr '\n' ' ' < /run/reboot-required.pkgs 2>/dev/null))"
+  elif [[ -f $img ]] && (( $(stat -c %Y "$img") > boot )); then warn health.reboot "kernel ${img##*/} updated $(date -d @"$(stat -c %Y "$img")" '+%F %R') after boot: reboot to load it"
+  else ok "running the installed kernel $(uname -r)"; fi
+
+  if ! can_sudo; then info "journal and dmesg checks skipped (need passwordless sudo)"; return; fi
+  local oom mmc
+  oom=$(S journalctl -k -b -q -o cat | grep -ci 'out of memory')
+  if (( oom )); then warn health.oom "$oom out-of-memory kill(s) since boot (sudo journalctl -k -b | grep -i 'out of memory')"
+  else ok "no out-of-memory kills since boot"; fi
+  mmc=$(S dmesg | grep -ciE 'mmc[0-9].*(error|timeout|crc)|I/O error')
+  if (( mmc )); then warn health.sdcard "$mmc SD card / I/O errors in dmesg since boot (sudo dmesg | grep -iE 'mmc|I/O error')"
+  else ok "no SD card or I/O errors since boot"; fi
+  if [[ -d /var/log/journal ]]; then ok "journal is persistent ($(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMG]'))"
+  else warn health.journal "journal is in RAM only: logs of a crashed boot are lost (restore.sh system step fixes it)"; fi
+
+  local errs top
+  errs=$(S journalctl -p err --since -24h -q -o json | jq -r '._SYSTEMD_USER_UNIT // ._SYSTEMD_UNIT // .SYSLOG_IDENTIFIER // "?"' 2>/dev/null)
+  if [[ -z $errs ]]; then ok "no error-level log lines in the last 24h"
+  else
+    top=$(sort <<<"$errs" | uniq -c | sort -rn | head -5 | awk '{printf "%s%s ×%s", sep, $2, $1; sep=", "}')
+    info "$(wc -l <<<"$errs") error-level log lines in 24h: $top"
+  fi
+}
+
+# ---------- services: systemd units, timers, tailnet routes, websites ----------
+check_services() {
+  local u state en f
+  f=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}'; systemctl --user --failed --no-legend --plain 2>/dev/null | awk '{print $1}')
+  if [[ -n ${f//[$'\n ']/} ]]; then warn services.failed "failed units: $(echo $f)"; else ok "no failed units (system or user)"; fi
+
+  for u in "${SYSTEM_UNITS[@]}"; do
+    state=$(systemctl is-active "$u" 2>/dev/null); en=$(systemctl is-enabled "$u" 2>/dev/null)
+    if [[ $state == active && $en == enabled ]]; then ok "$u active"; else warn services.unit "$u is $state / $en (should be active / enabled)"; fi
+  done
+  for u in "${USER_UNITS[@]}"; do
+    state=$(systemctl --user is-active "$u" 2>/dev/null); en=$(systemctl --user is-enabled "$u" 2>/dev/null)
+    if [[ $state == active && $en == enabled ]]; then ok "$u (user) active"; else warn services.unit "$u (user) is $state / $en (should be active / enabled)"; fi
+  done
+
+  # Units that keep failing, even if the latest run worked (a timer that fails every 15 minutes stays "inactive").
+  # "<count> <unit> <epoch of last failure>"
+  local fails unit count last
+  fails=$( { S journalctl --since -24h -q -o short-unix || journalctl --user --since -24h -q -o short-unix; } 2>/dev/null \
+    | grep -E ": [A-Za-z0-9@._-]+\.(service|timer|socket): Failed with result" \
+    | sed -E 's/^([0-9]+)\.[0-9]+ .*: ([A-Za-z0-9@._-]+\.(service|timer|socket)): Failed with result.*/\2 \1/' \
+    | awk '{c[$1]++; t[$1]=$2} END {for (u in c) print c[u], u, t[u]}')
+  while read -r count unit last; do
+    [[ -n $unit ]] && (( count >= 3 )) || continue
+    state=$(systemctl --user show -p Result --value "$unit" 2>/dev/null); [[ -n $state ]] || state=$(systemctl show -p Result --value "$unit" 2>/dev/null)
+    if [[ $state == success ]] && (( $(date +%s) - last > 7200 )); then
+      info "$unit failed $count times in 24h, last at $(date -d @"$last" '+%a %R'); working since"
+    else warn services.flapping "$unit failed $count times in 24h, last at $(date -d @"$last" '+%a %R') (latest result: ${state:-unknown})"; fi
+  done <<<"$fails"
+
+  # Every `tailscale serve` route should have a backend that answers.
+  local host path proxy code spec agent_off
+  while read -r host path proxy; do
+    [[ -n $proxy ]] || continue
+    code=$(http_code "$proxy")
+    agent_off=""
+    for spec in "${AGENTS[@]}"; do  # an agent's route is down whenever the agent is (one runs at a time)
+      [[ $proxy == *":${spec##*|}"* ]] && ! systemctl --user is-active -q "$(cut -d'|' -f2 <<<"$spec" | cut -d' ' -f1)" && agent_off=${spec%%|*}
+    done
+    if [[ $code == 000 || $code == 5* ]]; then
+      if [[ -n $agent_off ]]; then info "tailnet :${host##*:}$path down while $agent_off is off"
+      else warn services.route "tailnet https://…:${host##*:}$path -> $proxy: backend not answering (HTTP $code)"; fi
+    else ok "tailnet :${host##*:}$path -> $proxy (HTTP $code)"; fi
+  done < <(tailscale serve status --json 2>/dev/null \
+    | jq -r '.Web // {} | to_entries[] | .key as $h | .value.Handlers | to_entries[] | "\($h) \(.key) \(.value.Proxy // "")"')
+
+  # LAN websites: answer, and their certificate isn't about to expire.
+  local ts name url hp end left
+  ts=$(ts_name)
+  for f in "${WEBSITES[@]}"; do
+    name=${f%%|*} url=${f#*|} url=${url//\{ts\}/$ts}
+    hp=${url#https://}; hp=${hp%%/*}
+    code=$(http_code --resolve "$hp:127.0.0.1" "$url")
+    if [[ $code == 000 || $code == 5* ]]; then warn services.website "$name ($url) not answering (HTTP $code)"; continue; fi
+    end=$(openssl s_client -connect "127.0.0.1:${hp##*:}" -servername "${hp%:*}" </dev/null 2>/dev/null | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)
+    if [[ -z $end ]]; then ok "$name answers (HTTP $code)"; continue; fi
+    left=$(( ($(date -d "$end" +%s) - $(date +%s)) / 86400 ))
+    if (( left < 14 )); then warn services.cert "$name certificate expires in $left days ($end)"
+    else ok "$name answers (HTTP $code), certificate valid $left more days"; fi
+  done
+}
+
+# ---------- docker: daemon, containers, compose services, images ----------
+check_docker() {
+  if ! systemctl is-active -q docker; then warn docker.daemon "docker.service is not running"; return; fi
+  if ! docker info >/dev/null 2>&1; then warn docker.access "docker info failed (is $USER in the docker group?)"; return; fi
+  ok "docker $(docker version -f '{{.Server.Version}}' 2>/dev/null) running"
+
+  local name state status restarts
+  while IFS='|' read -r name state status; do
+    restarts=$(docker inspect -f '{{.RestartCount}}' "$name" 2>/dev/null)
+    if [[ $state != running ]]; then warn docker.container "container $name is $state ($status)"
+    elif [[ $status == *unhealthy* ]]; then warn docker.health "container $name is unhealthy ($status)"
+    elif (( restarts > 3 )); then warn docker.restarts "container $name restarted $restarts times"
+    else ok "container $name: $status"; fi
+  done < <(docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}')
+
+  local compose svc running
+  for compose in "$pi"/services/*/docker-compose.yml; do
+    [[ -f $compose ]] || continue
+    running=$(docker compose -f "$compose" ps --services --status running 2>/dev/null)
+    for svc in $(docker compose -f "$compose" config --services 2>/dev/null); do
+      grep -qx "$svc" <<<"$running" || warn docker.compose "compose service $svc (${compose#"$pi"/}) is not running"
+    done
+  done
+
+  # Images no container uses: `upd` only refreshes Pi-hole's, so the rest go stale.
+  local used unused
+  used=$(docker ps -a -q | xargs -r docker inspect -f '{{.Image}}' 2>/dev/null)
+  unused=$(docker images --no-trunc --format '{{.ID}} {{.Repository}}:{{.Tag}} {{.Size}}' | while read -r id ref size; do
+    grep -qx "$id" <<<"$used" || echo "$ref ($size)"; done)
+  if [[ -n $unused ]]; then warn docker.images "images no container uses: $(echo $unused | sed 's/) /), /g') (docker image rm <name>)"
+  else ok "every image is in use"; fi
+
+  # Pi-hole reports its own components' latest versions.
+  local line
+  if docker ps --format '{{.Names}}' | grep -qx pihole; then
+    while read -r line; do
+      [[ $line =~ ^([A-Za-z]+)\ version\ is\ (v[^ ]+)\ \(Latest:\ ([^\)]+)\) ]] || continue
+      if [[ ${BASH_REMATCH[2]} == "${BASH_REMATCH[3]}" || ${BASH_REMATCH[3]} == null ]]; then ok "Pi-hole ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} is current"
+      else warn docker.pihole "Pi-hole ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} < ${BASH_REMATCH[3]} (upd pulls the image)"; fi
+    done < <(docker exec pihole pihole version 2>/dev/null)
+  fi
+  info "disk: $(docker system df --format '{{.Type}} {{.Size}} ({{.Reclaimable}} reclaimable)' | paste -sd ';' | sed 's/;/; /g')"
+}
+
+# ---------- repos: git state of ~/dev, stray directories, broken links ----------
+check_repos() {
+  local email g d name dirty ahead behind stash oldest own f t
+  email=$(git config --global user.email)
+  for g in "$HOME"/dev/*/.git "$HOME"/dev/*/*/.git; do
+    [[ -d $g ]] || continue
+    d=${g%/.git}; [[ -L $d || -L ${d%/*} ]] && continue
+    name=${d#"$HOME"/dev/}
+    (( fetch )) && timeout 30 git -C "$d" fetch -q 2>/dev/null
+    own=$(git -C "$d" log -1 --author="$email" --format=%h 2>/dev/null)  # repos you commit to, vs upstream clones
+    dirty=$(git -C "$d" status --porcelain | wc -l)
+    stash=$(git -C "$d" stash list | wc -l)
+    if ! git -C "$d" rev-parse -q --verify '@{u}' >/dev/null; then warn repos.upstream "$name: branch $(git -C "$d" branch --show-current) has no upstream"; continue; fi
+    read -r behind ahead < <(git -C "$d" rev-list --left-right --count '@{u}...HEAD')
+    if (( dirty )); then
+      oldest=$(date +%s)
+      while IFS= read -r f; do
+        f=${f:3}; f=${f#*-> }; f=${f%\"}; f=${f#\"}
+        [[ -e $d/$f ]] && t=$(stat -c %Y "$d/$f") && (( t < oldest )) && oldest=$t
+      done < <(git -C "$d" status --porcelain)
+      if (( $(days_since "$oldest") >= 1 )); then warn repos.uncommitted "$name: $dirty uncommitted file(s), oldest change $(days_since "$oldest") day(s) ago"
+      else info "$name: $dirty uncommitted file(s) from today (work in progress?)"; fi
+    fi
+    (( ahead )) && warn repos.unpushed "$name: $ahead commit(s) not pushed (a rebuild only gets what's on GitHub)"
+    if (( behind )); then
+      if [[ -n $own ]]; then warn repos.behind "$name: $behind commit(s) behind origin (git -C ~/dev/$name pull --ff-only)"
+      else info "$name: upstream clone, $behind commit(s) behind (upd pulls every 5th run)"; fi
+    fi
+    (( stash )) && info "$name: $stash stash entr(y/ies)"
+    (( dirty || ahead || behind || stash )) || ok "$name clean and in sync"
+  done
+
+  # Real directories in ~/dev that aren't repos are not backed up anywhere.
+  for d in "$HOME"/dev/*/; do
+    d=${d%/}; [[ -L $d || -e $d/.git ]] && continue
+    find "$d" -mindepth 2 -maxdepth 2 -name .git -print -quit | grep -q . \
+      && warn repos.untracked "~/dev/${d##*/} holds repos but isn't one; check each is pushed" \
+      || warn repos.untracked "~/dev/${d##*/} is not in git, so a rebuild won't bring it back"
+  done
+
+  local broken
+  broken=$(find "$HOME/dev" -maxdepth 2 -xtype l 2>/dev/null; find "$HOME/.local/bin" /usr/local/bin "$HOME/.claude/skills" -maxdepth 1 -xtype l 2>/dev/null)
+  for f in $broken; do warn repos.symlink "broken symlink ${f/#$HOME/~} -> $(readlink "$f")"; done
+  [[ -n $broken ]] || ok "no broken symlinks in ~/dev, ~/.local/bin, /usr/local/bin, ~/.claude/skills"
+
+  # npm run through ~/dev/<x> (a relative symlink into this repo) records bogus ../machine-setup/... paths.
+  local lock c
+  for lock in "$pi"/services/*/package-lock.json; do
+    [[ -f $lock ]] || continue
+    c=$(grep -c '^    "\.\./' "$lock")
+    if (( c )); then warn repos.lockfile "${lock#"$pi"/}: $c entries with bogus ../ paths (npm ran through a symlink; regenerate from the real directory)"
+    else ok "${lock#"$pi"/} has no bogus entries"; fi
+  done
+}
+
+# ---------- updates: what upd would install ----------
+check_updates() {
+  local f=${XDG_CACHE_HOME:-$HOME/.cache}/upd-runs age list
+  if [[ -f $f ]]; then
+    age=$(days_since "$(stat -c %Y "$f")")
+    if (( age > 7 )); then warn updates.upd "upd last ran $age days ago"; else ok "upd last ran $age day(s) ago"; fi
+  else warn updates.upd "no record of upd having run"; fi
+
+  list=$(apt list --upgradable 2>/dev/null | tail -n +2 | cut -d/ -f1)
+  if [[ -n $list ]]; then warn updates.apt "$(wc -l <<<"$list") apt package(s) upgradable: $(head -8 <<<"$list" | paste -sd ' ')"
+  else ok "apt: nothing to upgrade (package lists from $(date -r /var/lib/apt/lists +%F 2>/dev/null))"; fi
+
+  if have rpi-eeprom-update && can_sudo; then
+    if S rpi-eeprom-update | grep -q 'UPDATE AVAILABLE'; then warn updates.bootloader "bootloader update available (sudo rpi-eeprom-update -a, then reboot)"
+    else ok "bootloader up to date"; fi
+  fi
+
+  if have brew; then
+    list=$(HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --formula --quiet 2>/dev/null; HOMEBREW_NO_AUTO_UPDATE=1 brew outdated --cask --greedy --quiet 2>/dev/null)
+    if [[ -n $list ]]; then warn updates.brew "Homebrew outdated: $(echo $list)"; else ok "Homebrew: nothing outdated (as of the last brew update)"; fi
+  fi
+
+  if have npm; then
+    list=$(npm outdated -g --json 2>/dev/null | jq -r 'to_entries[] | select(.key != "npm" and .key != "corepack") | "\(.key) \(.value.current)->\(.value.latest)"' 2>/dev/null)
+    if [[ -n $list ]]; then warn updates.npm "npm -g outdated: $(echo $list)"; else ok "npm -g packages current (npm itself comes with apt's nodejs)"; fi
+  fi
+
+  if have uv; then
+    list=$(uv tool list --outdated 2>/dev/null | grep -E '^[^-].*latest' || true)
+    if [[ -n $list ]]; then warn updates.uv "uv tools outdated: $(echo $list)"; else ok "uv tools current"; fi
+  fi
+
+  local cur latest
+  cur=$(jq -r .version "$HOME/dev/openclaw_node/node_modules/openclaw/package.json" 2>/dev/null)
+  latest=$(timeout 20 npm view openclaw version 2>/dev/null)
+  if [[ -n $latest && $cur != "$latest" ]]; then warn updates.openclaw "OpenClaw ${cur:-not installed} < $latest"
+  elif [[ -n $cur ]]; then ok "OpenClaw $cur is the latest"; fi
+  if have hermes; then
+    if timeout 60 hermes update --check 2>/dev/null | grep -q 'Up to date'; then ok "Hermes $(hermes --version 2>/dev/null | grep -oE 'v[0-9.]+' | head -1) is the latest"
+    else warn updates.hermes "Hermes update available (hermes update --check; upd runs hermes update --yes)"; fi
+  fi
+}
+
+# ---------- security: exposure, firewall, ssh, secrets, tailnet ----------
+check_security() {
+  # Listeners on every interface (or the LAN address) that aren't meant for the LAN.
+  local line addr port proc seen=" "
+  while read -r line; do
+    addr=$(awk '{print $4}' <<<"$line"); port=${addr##*:}; addr=${addr%:*}; addr=${addr%%\%*}; addr=${addr//[\[\]]/}
+    [[ $addr == 127.* || $addr == ::1 || $addr == 100.* || $addr == fd7a:* ]] && continue
+    [[ " ${LAN_PORTS[*]} " == *" $port "* || $seen == *" $port "* ]] && continue
+    seen+="$port "
+    proc=$(grep -oE '\("[^"]+",pid=[0-9]+' <<<"$line" | head -1 | tr -d '("' | sed 's/,pid=/ pid /')
+    warn security.listener "port $port (${proc:-unknown process}) listens on ${addr:-all interfaces}, not just localhost/tailnet"
+  done < <(S ss -ltnHp || ss -ltnH)
+  [[ $seen == " " ]] && ok "only ports ${LAN_PORTS[*]} are open to the LAN"
+
+  # Ad-hoc file servers left behind by earlier sessions.
+  local pid
+  for pid in $(pgrep -f 'http\.server|SimpleHTTPServer|npx (http-)?serve|live-server'); do
+    warn security.adhoc-server "pid $pid: $(ps -o args= -p "$pid" | cut -c1-80), up $(ps -o etime= -p "$pid" | tr -d ' '), serving $(readlink "/proc/$pid/cwd" 2>/dev/null)"
+  done
+
+  if systemctl is-active -q rpcbind.service rpcbind.socket 2>/dev/null && ! grep -qE '\snfs4?\s' /etc/fstab && [[ ! -s /etc/exports ]]; then
+    warn security.rpcbind "rpcbind runs with no NFS in use (sudo systemctl disable --now rpcbind.service rpcbind.socket nfs-blkmap; sudo systemctl mask rpcbind.service rpcbind.socket nfs-blkmap)"
+  fi
+
+  if can_sudo; then
+    if S nft list ruleset | grep -E 'hook input' | grep -v ts-input | grep -q 'policy drop'; then ok "host firewall drops unsolicited input"
+    else warn security.firewall "no host firewall (input policy accept): every LAN listener is reachable"; fi
+    local sshd
+    sshd=$(S sshd -T)
+    grep -qx 'passwordauthentication yes' <<<"$sshd" && warn security.ssh-password "sshd allows password logins"
+    grep -qx 'kbdinteractiveauthentication yes' <<<"$sshd" && warn security.ssh-password "sshd allows keyboard-interactive logins"
+    grep -qx 'permitrootlogin no' <<<"$sshd" || warn security.ssh-root "sshd $(grep '^permitrootlogin' <<<"$sshd") (set PermitRootLogin no)"
+    grep -qx 'x11forwarding yes' <<<"$sshd" && info "sshd X11Forwarding yes (unused over SSH from the Mac?)"
+    grep -qx 'passwordauthentication no' <<<"$sshd" && ok "sshd: keys only"
+    local bad
+    bad=$(S journalctl -u ssh --since -7d -q -o cat | grep -E 'Failed |Invalid user' | grep -oE 'from [0-9a-f.:]+' | sort | uniq -c | sort -rn | head -3)
+    if [[ -n $bad ]]; then warn security.ssh-failed "failed SSH logins in 7 days: $(echo $bad)"; else ok "no failed SSH logins in 7 days"; fi
+  fi
+
+  dpkg -s unattended-upgrades >/dev/null 2>&1 && ok "unattended-upgrades installed" \
+    || warn security.autoupdate "security updates arrive only when upd runs (unattended-upgrades not installed)"
+
+  local mode bad_perm=0 file
+  mode=$(stat -c %a "$HOME"); [[ $mode == 700 || $mode == 750 ]] || warn security.home "home directory is mode $mode"
+  for file in "${SECRET_FILES[@]}"; do
+    [[ -e $file ]] || continue
+    mode=$(stat -c %a "$file")
+    (( 8#$mode & 8#077 )) && { bad_perm=1; warn security.secret-perms "${file/#$HOME/~} is mode $mode (chmod 600)"; }
+  done
+  (( bad_perm )) || ok "credential files are private (mode 600)"
+
+  local stale
+  stale=$(tailscale status --json 2>/dev/null | jq -r --arg now "$(date -u +%s)" '.Peer // {} | .[]
+    | select(.Online | not) | select(.LastSeen != null and (.LastSeen | sub("\\.[0-9]+";"") | fromdateiso8601) < (($now|tonumber) - 90*86400))
+    | "\(.DNSName | split(".")[0]) (\(.LastSeen[:10]))"' 2>/dev/null)
+  if [[ -n $stale ]]; then warn security.tailnet-stale "tailnet devices offline 90+ days (remove in the admin console): $(echo $stale)"
+  else ok "no long-dead tailnet devices"; fi
+}
+
+# ---------- agents: Hermes and OpenClaw ----------
+check_agents() {
+  local spec name units port u state up=0 code
+  for spec in "${AGENTS[@]}"; do
+    IFS='|' read -r name units port <<<"$spec"
+    state=$(systemctl --user is-active ${units%% *} 2>/dev/null)
+    if [[ $state == active ]]; then
+      up=$((up + 1))
+      code=$(http_code "http://127.0.0.1:$port/")
+      if [[ $code == 000 || $code == 5* ]]; then warn agents.port "$name is running but 127.0.0.1:$port does not answer (HTTP $code)"
+      else ok "$name running, 127.0.0.1:$port answers (HTTP $code)"; fi
+      for u in ${units#* }; do
+        [[ $u == "${units%% *}" ]] && continue
+        systemctl --user is-active -q "$u" || warn agents.unit "$name is up but $u is $(systemctl --user is-active "$u")"
+      done
+    elif [[ $state == failed ]]; then warn agents.failed "$name's ${units%% *} failed (journalctl --user -u ${units%% *} -n 50)"
+    else info "$name off (${units%% *} $state; start it from pi-status when needed)"; fi
+  done
+  (( up )) || info "no agent running"
+
+  # Shared skills (agent-lab/skills) installed and current in both agents.
+  local lab=$HOME/dev/agent-lab/bin/lab
+  if [[ -x $lab ]]; then
+    if "$lab" skills --check >/dev/null 2>&1; then ok "shared skills in sync in both agents"
+    else warn agents.skills "shared skills out of sync (~/dev/agent-lab/bin/lab skills --check; fix: lab skills)"; fi
+  fi
+
+  # Logins the agents' tools need. `gws auth status` only reads local files, so make a real (read-only) call:
+  # an OAuth app left in Testing mode has its refresh token expire after 7 days.
+  local out
+  if have gws; then
+    out=$(timeout 20 gws gmail users getProfile --params '{"userId":"me"}' 2>&1)
+    if grep -q emailAddress <<<"$out"; then ok "Google (gws) login works"
+    elif grep -qE 'invalid_grant|expired|revoked' <<<"$out"; then warn agents.gws-login "Google (gws) token expired or revoked: Gmail tools (clean-gmail, pay-bills) fail; sign in with ~/dev/agent-lab/bin/gws-login"
+    else warn agents.gws-login "Google (gws) test call failed: $(grep -m1 -iE 'error|message' <<<"$out" | cut -c1-120)"; fi
+  fi
+  if have gh; then gh auth status >/dev/null 2>&1 && ok "GitHub (gh) login works" || warn agents.gh-login "gh is not signed in (gh auth login)"; fi
+  if have claude; then
+    out=$(timeout 20 claude auth status 2>/dev/null | jq -r '.loggedIn // empty' 2>/dev/null)
+    [[ $out == false ]] && warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
+  fi
+}
+
+# ---------- drift: live machine vs the machine-setup snapshot and backups ----------
+check_drift() {
+  local tmp diffs f
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  if "$pi/save.sh" --to "$tmp/snap" >/dev/null 2>&1; then
+    diffs=$(diff -rq "$pi/snapshot" "$tmp/snap" 2>/dev/null | sed -e "s#$pi/snapshot/##g" -e "s#$tmp/snap/##g")
+    if [[ -n $diffs ]]; then
+      while read -r f; do warn drift.snapshot "snapshot out of date: $f"; done <<<"$diffs"
+      info "refresh with ~/dev/machine-setup/raspberry-pi/save.sh --push (upd runs it)"
+    else ok "snapshot/ matches this machine"; fi
+  else warn drift.snapshot "save.sh --to failed (run it by hand to see why)"; fi
+
+  # User units and dotfiles that exist here but that save.sh doesn't back up.
+  local listed
+  listed=$(sed -n '/^dotfiles=(/,/^)/p' "$pi/save.sh")
+  for f in "$HOME"/.config/systemd/user/*.{service,timer} "$HOME"/.config/systemd/user/*.d "$HOME"/.zprofile "$HOME"/.zshenv; do
+    [[ -e $f ]] || continue
+    f=${f#"$HOME"/}
+    grep -qF "$f" <<<"$listed" || warn drift.backup "~/$f is not in save.sh's dotfiles list"
+  done
+
+  local dups
+  dups=$(zsh -ic 'print -l $path' 2>/dev/null | sort | uniq -d)
+  [[ -n $dups ]] && info "PATH lists these more than once: $(echo $dups) (~/.zshrc adds them unconditionally)"
+
+  if have brew && [[ -f $pi/snapshot/Brewfile ]]; then
+    if HOMEBREW_NO_AUTO_UPDATE=1 brew bundle check --no-upgrade --file="$pi/snapshot/Brewfile" >/dev/null 2>&1; then ok "everything in the Brewfile is installed"
+    else warn drift.brew "brew bundle check: Brewfile entries missing here"; fi
+  fi
+}
+
+# ---------- main ----------
+domains=()
+while (( $# )); do
+  case $1 in
+    --list) printf '%s\n' "${DOMAINS[@]}"; exit 0 ;;
+    --warn-only) warn_only=1 ;;
+    --no-fetch) fetch=0 ;;
+    -h|--help) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown option $1" >&2; exit 2 ;;
+    *) [[ " ${DOMAINS[*]} " == *" $1 "* ]] || { echo "unknown domain $1 (one of: ${DOMAINS[*]})" >&2; exit 2; }; domains+=("$1") ;;
+  esac
+  shift
+done
+(( ${#domains[@]} )) || domains=("${DOMAINS[@]}")
+
+for d in "${domains[@]}"; do
+  section "$d"; n=0
+  "check_$d"
+  per_domain[$d]=$n; total=$((total + n))
+done
+
+summary=""
+for d in "${domains[@]}"; do (( per_domain[$d] )) && summary+=" $d=${per_domain[$d]}"; done
+if (( total )); then printf '\n%sWARNINGS%s%s\n' "$Y" "$Z" "$summary"; exit 1; fi
+printf '\n%sALL OK%s\n' "$G" "$Z"

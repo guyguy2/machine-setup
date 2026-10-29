@@ -128,6 +128,8 @@ raspberry-pi/
   restore.sh              rebuild (steps in section 3)
   save.sh                 refresh snapshot/ (upd runs it)
   IDEAS.md                backlog of things this Pi could do next (not set up)
+  checkup/                pi-checkup command + /pi-checkup skill (own README)
+  docker/                 notes: Docker setup, adding a container, Caddy 2 later
   bin/                    agent launchers                    ~/dev/scripts -> here
   pi-status/              the status website (own README)    ~/dev/pi-status -> here
   services/pihole/        docker-compose.yml, .env.example    ~/dev/pihole -> here
