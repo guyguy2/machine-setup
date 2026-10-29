@@ -2,3 +2,4 @@ agent-lab https://github.com/guyguy2/agent-lab.git
 hermes-agent https://github.com/NousResearch/hermes-agent.git
 machine-setup https://github.com/guyguy2/machine-setup.git
 openclaw https://github.com/openclaw/openclaw.git
+websites https://github.com/guyguy2/websites.git
