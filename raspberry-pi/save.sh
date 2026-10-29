@@ -11,13 +11,13 @@ snap=$here/snapshot
 # ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.config/gws, history files, ~/.cache.
 # (~/.hermes holds Hermes's data and its installer checkout: restore.sh reinstalls Hermes with the official installer instead.)
 dotfiles=(
-  .zshrc .gitconfig
+  .zshrc .zprofile .gitconfig
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
   .config/systemd/user/pi-status.service
   .config/systemd/user/hermes-dashboard.service .config/systemd/user/hermes-proxy.service .config/systemd/user/openclaw-gateway.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
-  .claude/skills/gws .claude/skills/pihole .claude/skills/openclaw .claude/skills/hermes
+  .claude/skills/gws .claude/skills/pihole .claude/skills/openclaw .claude/skills/hermes .claude/skills/train-agents
 )
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -26,8 +26,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 push=0
 case "${1:-}" in
   --push) push=1 ;;
+  # --to DIR: write the snapshot to a new DIR instead, to compare with ./snapshot (bin/pi-checkup drift does).
+  --to)
+    snap=${2:?usage: ${0##*/} --to DIR}
+    [[ ! -e $snap ]] || { echo "save.sh: $snap already exists; --to needs a new directory" >&2; exit 2; } ;;
   "") ;;
-  *) echo "usage: ${0##*/} [--push]" >&2; exit 2 ;;
+  *) echo "usage: ${0##*/} [--push | --to DIR]" >&2; exit 2 ;;
 esac
 
 # Start clean so files deleted on this machine disappear from the snapshot.

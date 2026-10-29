@@ -67,7 +67,7 @@ fi
 snapshot_value() { sed -n "s/^$1: //p" "$snap/system.txt" 2>/dev/null; }
 
 if want system; then
-  say "system: hostname, timezone, docker group"
+  say "system: hostname, timezone, docker group, persistent journal"
   if need system.txt; then
     h=$(snapshot_value hostname); tz=$(snapshot_value timezone)
     if [[ -n $h && $h != "$(hostname)" ]]; then
@@ -82,6 +82,17 @@ if want system; then
     if id -nG "$USER" | grep -qw docker; then echo "  $USER already in group docker"; else run sudo usermod -aG docker "$USER"; fi
     run sudo systemctl enable --now docker
   else echo "  docker not installed (run the apt step)"; fi
+  # Raspberry Pi OS keeps the journal in RAM, so a power cut erases the logs of the boot that failed.
+  jconf=/etc/systemd/journald.conf.d/90-persistent-storage.conf
+  jwant=$(printf '%s\n' '# Raspberry Pi OS keeps the journal in RAM (/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf),' \
+    '# so a power cut erases the logs of the boot that failed. Keep it on disk instead; this file sorts later and wins.' \
+    '# Written by machine-setup/raspberry-pi/restore.sh (system step).' '[Journal]' 'Storage=persistent' 'SystemMaxUse=200M')
+  if [[ $(cat "$jconf" 2>/dev/null) == "$jwant" ]]; then echo "  journal already persistent"
+  elif (( dry )); then echo "  [dry-run] write $jconf (persistent journal), restart journald"
+  else
+    sudo mkdir -p "${jconf%/*}" && printf '%s\n' "$jwant" | sudo tee "$jconf" >/dev/null
+    sudo systemctl restart systemd-journald && sudo journalctl --flush
+  fi
 fi
 
 if want tailscale; then
@@ -196,12 +207,14 @@ link_dir() {
 }
 
 if want links; then
-  say "\$HOME/dev symlinks into this repo: scripts, pi-status, pihole, openclaw_node, hermes-proxy"
+  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
   link_dir "$here/services/openclaw_node" "$HOME/dev/openclaw_node"
   link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
+  link_dir "$here/checkup/pi-checkup" "$HOME/.local/bin/pi-checkup"
+  link_dir "$here/checkup/skill" "$HOME/.claude/skills/pi-checkup"
 fi
 
 if want pihole; then
