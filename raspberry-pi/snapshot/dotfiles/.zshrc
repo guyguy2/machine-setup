@@ -112,6 +112,7 @@ if [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
   path=(${path:#/home/linuxbrew/.linuxbrew/*} /home/linuxbrew/.linuxbrew/bin /home/linuxbrew/.linuxbrew/sbin)
 fi
 export PATH="$HOME/.local/bin:$PATH"
+typeset -U path PATH  # drop duplicates (~/.zprofile, written by the Hermes installer, also adds ~/.local/bin)
 
 # Dev tool shell integrations
 command -v fzf >/dev/null && source <(fzf --zsh)
@@ -152,7 +153,9 @@ _upd_note() { print -r -- "$1" >> $_upd_log }
 
 # OpenClaw: npm install in ~/dev/openclaw_node (~/dev/openclaw is the source checkout)
 _upd_openclaw() {
+  # Resolve the symlink (into machine-setup/services): npm run through it writes ../ paths into package-lock.json
   local dir=$HOME/dev/openclaw_node cur latest
+  dir=${dir:A}
   latest=$(npm view openclaw version 2>/dev/null) || { echo "could not fetch latest OpenClaw version"; return 1 }
   cur=$(jq -r .version $dir/node_modules/openclaw/package.json 2>/dev/null)
   [[ $cur == $latest ]] && { echo "OpenClaw $cur is up to date"; return 0 }
