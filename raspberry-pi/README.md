@@ -151,6 +151,7 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 | Hermes dashboard | user unit `hermes-dashboard.service` | 127.0.0.1:9119 | `:8443/hermes/` (through `hermes-proxy.service`, Caddy on 127.0.0.1:9120) |
 | OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444/openclaw/` |
 | Pi-hole | docker container `pihole` | DNS :53 (all interfaces), UI 127.0.0.1:8081 | `:8445/pihole/admin/` |
+| DreamBase (family site) | user units `dreambase*` from the private repo `~/dev/websites` (its `install.sh`, run by the systemd step; manual steps in its README) | 127.0.0.1:8092 | not `tailscale serve`: its own Caddy on :8091 (HTTPS, Wi-Fi and tailnet), :8090 redirects |
 
 `tailscale serve` settings belong to the machine and aren't backed up; the `pi-status` step recreates them.
 

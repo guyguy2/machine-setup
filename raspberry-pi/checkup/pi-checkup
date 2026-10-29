@@ -435,6 +435,8 @@ check_drift() {
   listed=$(sed -n '/^dotfiles=(/,/^)/p' "$pi/save.sh")
   for f in "$HOME"/.config/systemd/user/*.{service,timer} "$HOME"/.config/systemd/user/*.d "$HOME"/.zprofile "$HOME"/.zshenv; do
     [[ -e $f ]] || continue
+    # A symlink into a git repo is backed up by that repo (e.g. ~/dev/websites/systemd/user)
+    [[ -L $f ]] && git -C "$(dirname "$(readlink -f "$f")")" rev-parse --git-dir >/dev/null 2>&1 && continue
     f=${f#"$HOME"/}
     grep -qF "$f" <<<"$listed" || warn drift.backup "~/$f is not in save.sh's dotfiles list"
   done

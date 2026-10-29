@@ -291,6 +291,10 @@ fi
 
 if want systemd; then
   say "systemd"
+  # Units that live in their own (private) repo, cloned by the repos step: ~/dev/websites (DreamBase)
+  if [[ -x $HOME/dev/websites/install.sh ]]; then
+    if (( dry )); then "$HOME/dev/websites/install.sh" --dry-run; else "$HOME/dev/websites/install.sh"; fi
+  else echo "  ~/dev/websites not cloned (private; run the github and repos steps): DreamBase not set up"; fi
   if need systemd-user-enabled.txt; then
     run systemctl --user daemon-reload
     # Only enable user units whose file we restored; stock ones come with the image.
