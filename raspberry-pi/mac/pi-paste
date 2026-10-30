@@ -1,0 +1,19 @@
+#!/bin/zsh
+# pi-paste: send the Mac clipboard image to the Pi and print its remote path.
+# Triggered by Ctrl+Opt+V in Ghostty (~/.hammerspoon/init.lua), which types
+# the printed path into the terminal.
+set -euo pipefail
+
+f="shot-$(date +%Y%m%d-%H%M%S)-$$.png"
+remote="/home/guy/screenshots/$f"
+
+tmp="$(mktemp -t pi-paste)"
+trap 'rm -f "$tmp"' EXIT
+
+/opt/homebrew/bin/pngpaste "$tmp" 2>/dev/null \
+  || { print -u2 "pi-paste: no image on clipboard"; exit 1; }
+
+/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=5 pi "mkdir -p ~/screenshots && cat > $remote && [ -s $remote ] || { rm -f $remote; exit 1; }" < "$tmp" \
+  || { print -u2 "pi-paste: upload to Pi failed"; exit 1; }
+
+print -n "$remote"
