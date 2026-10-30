@@ -276,3 +276,9 @@ Single-page status site for this Pi: overview, agents and sign-ins, Agent Lab, n
 commands, services, processes, ports, Docker. It's a uv project with no runtime dependencies; see its
 [README](pi-status/README.md). `upd` restarts it after pulling, and the page shows a **Restart now** button when its
 code on disk is newer than the running server. It doesn't poll. Tests: `cd ~/dev/pi-status && uv run pytest`.
+
+## Mac side
+
+`mac/` holds scripts that run on the Mac and talk to the Pi over `ssh pi`. Keep them out of `bin/`, which is on the Pi.
+
+`mac/pi-paste` sends the clipboard image to `~/screenshots` on the Pi and prints its remote path. Ctrl+Opt+V in Ghostty runs it through `~/.hammerspoon/init.lua` and types that path into the terminal.
