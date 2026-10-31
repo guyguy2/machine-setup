@@ -12,6 +12,7 @@ gpg-agent-browser.socket
 gpg-agent-extra.socket
 gpg-agent.socket
 gpg-agent-ssh.socket
+hermes-gateway.service
 keyboxd.socket
 mpris-proxy.service
 pipewire-pulse.service
