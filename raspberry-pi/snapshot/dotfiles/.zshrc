@@ -73,7 +73,7 @@ ZSH_THEME="robbyrussell"
 # Custom plugins may be added to $ZSH_CUSTOM/plugins/
 # Example format: plugins=(rails git textmate ruby lighthouse)
 # Add wisely, as too many plugins slow down shell startup.
-plugins=(git)
+plugins=(git zsh-autosuggestions zsh-completions zsh-syntax-highlighting)  # zsh-syntax-highlighting must stay last
 
 source $ZSH/oh-my-zsh.sh
 
@@ -389,6 +389,11 @@ upd() {
   _upd_sub "Restart updated agent services" _upd_restart_agents
 
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal
+  _upd_step "Oh My Zsh custom plugins"
+  local _upd_plugin
+  for _upd_plugin in ${ZSH_CUSTOM:-$ZSH/custom}/plugins/*(N/); do
+    [[ -d $_upd_plugin/.git ]] && { git -C $_upd_plugin pull --ff-only -q || _upd_note "plugin ${_upd_plugin:t} pull failed"; }
+  done
   if (( _upd_due )); then
     _upd_step "git repos in ~/dev (every 5th run)"; _upd_repos
     _upd_step "pi-status web page (restart to load pulled code)"; _upd_pi_status
