@@ -399,10 +399,10 @@ check_agents() {
   done
   (( up )) || info "no agent running"
 
-  # Shared skills (agent-lab/skills) installed and current in both agents.
+  # Shared skills (agent-lab/skills) installed and current in every agent not on hold.
   local lab=$HOME/dev/agent-lab/bin/lab
   if [[ -x $lab ]]; then
-    if "$lab" skills --check >/dev/null 2>&1; then ok "shared skills in sync in both agents"
+    if "$lab" skills --check >/dev/null 2>&1; then ok "shared skills in sync"
     else warn agents.skills "shared skills out of sync (~/dev/agent-lab/bin/lab skills --check; fix: lab skills)"; fi
   fi
 
