@@ -307,9 +307,13 @@ check_updates() {
 
   local cur latest
   cur=$(jq -r .version "$HOME/dev/openclaw_node/node_modules/openclaw/package.json" 2>/dev/null)
-  latest=$(timeout 20 npm view openclaw version 2>/dev/null)
-  if [[ -n $latest && $cur != "$latest" ]]; then warn updates.openclaw "OpenClaw ${cur:-not installed} < $latest"
-  elif [[ -n $cur ]]; then ok "OpenClaw $cur is the latest"; fi
+  # upd leaves an agent on hold alone, so being behind is expected: no version check, no warning
+  if grep -qx openclaw "$HOME/dev/agent-lab/on-hold" 2>/dev/null; then info "OpenClaw on hold, staying on ${cur:-not installed}"
+  else
+    latest=$(timeout 20 npm view openclaw version 2>/dev/null)
+    if [[ -n $latest && $cur != "$latest" ]]; then warn updates.openclaw "OpenClaw ${cur:-not installed} < $latest"
+    elif [[ -n $cur ]]; then ok "OpenClaw $cur is the latest"; fi
+  fi
   if have hermes; then
     if timeout 60 hermes update --check 2>/dev/null | grep -q 'Up to date'; then ok "Hermes $(hermes --version 2>/dev/null | grep -oE 'v[0-9.]+' | head -1) is the latest"
     else warn updates.hermes "Hermes update available (hermes update --check; upd runs hermes update --yes)"; fi
