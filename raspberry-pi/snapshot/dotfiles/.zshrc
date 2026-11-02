@@ -148,6 +148,9 @@ _upd_sub() {
   return $rc
 }
 
+# Is this agent paused? ~/dev/agent-lab/on-hold lists them, one per line; delete a line to resume that agent.
+_upd_on_hold() { grep -qx "$1" $HOME/dev/agent-lab/on-hold 2>/dev/null }
+
 # Record something that went wrong, for the end-of-run summary. A file, not an array: _upd_sub runs steps in a pipe subshell.
 _upd_note() { print -r -- "$1" >> $_upd_log }
 
@@ -216,6 +219,7 @@ _upd_repos() {
   for git_dir in $HOME/dev/{*,*/*}/.git(N/); do
     repo=${git_dir:h}
     print -n "${repo/#$HOME/~}: "
+    _upd_on_hold ${repo:t} && { echo "on hold, skipped"; continue }
     gpull $repo || _upd_note "${repo/#$HOME/~} not updated (see git repos step)"
   done
 }
@@ -384,8 +388,10 @@ upd() {
 
   _upd_step "Agents"
   _upd_sub "Hermes"      _upd_hermes
-  _upd_sub "OpenClaw"    _upd_openclaw
-  _upd_sub "Shared skills (agent-lab/skills -> Hermes + OpenClaw)" ~/dev/agent-lab/bin/lab skills
+  # On hold: no update. restore.sh calls _upd_openclaw directly, so a rebuild still installs it.
+  _upd_on_hold openclaw || _upd_sub "OpenClaw"    _upd_openclaw
+  _upd_sub "Shared skills (agent-lab/skills)" ~/dev/agent-lab/bin/lab skills
+  _upd_sub "Todoist skill (td -> Claude Code)" td skill update claude-code
   _upd_sub "Restart updated agent services" _upd_restart_agents
 
   _upd_step "Oh My Zsh";   ZSH=$ZSH command zsh -f $ZSH/tools/upgrade.sh -v minimal

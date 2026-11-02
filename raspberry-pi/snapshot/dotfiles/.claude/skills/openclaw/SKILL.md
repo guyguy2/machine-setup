@@ -1,9 +1,12 @@
 ---
 name: openclaw
-description: Find your way around the OpenClaw agent installed on this Pi (where its docs, source, config and state live, its CLI, and the gotchas already learned) before changing or debugging it. Use whenever a task touches OpenClaw (gateway, workspace, AGENTS.md, skills, exec allowlist/approvals, tools.fs, models, channels), or the user mentions OpenClaw, the agent lab or "both agents".
+description: Find your way around the OpenClaw agent installed on this Pi (where its docs, source, config and state live, its CLI, and the gotchas already learned) before changing or debugging it. Use whenever a task touches OpenClaw (gateway, workspace, AGENTS.md, skills, exec allowlist/approvals, tools.fs, models, channels), or the user mentions OpenClaw by name.
 ---
 
 # OpenClaw on this Pi
+
+**On hold since 2026-11-02** (`~/dev/agent-lab/on-hold`; agents.md, "OpenClaw on hold"). When the hold is lifted, add
+"the agent lab or "both agents"" back to this skill's description and delete this note.
 
 OpenClaw is one of the two agents the user trains and compares in `~/dev/agent-lab` (the other is Hermes; see the
 `hermes` skill). **Start with `~/dev/agent-lab/agents.md`**: it records how OpenClaw is installed, configured and

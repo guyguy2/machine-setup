@@ -54,7 +54,7 @@ If a task needs a personal detail the store lacks, or `me get` returns CHOOSE/MI
 ## Updating
 
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
-(including Claude Code), npm global packages, OpenClaw, Hermes (its own `hermes update`), uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
+(including Claude Code), npm global packages, Hermes (its own `hermes update`), OpenClaw (skipped while it's listed in `~/dev/agent-lab/on-hold`), uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.
 
 ## Code over LLM judgment

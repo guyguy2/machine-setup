@@ -1,10 +1,15 @@
 ---
 name: train-agents
-description: Teach the user's two agents on this Pi, OpenClaw and Hermes, a new real-world task (or fix how they do one), the same way for both. Covers exploring routes, building a deterministic command, one shared skill, wiring each agent, and verifying with real lab runs. Use when the user says "train/teach the agents (or Hermes / OpenClaw) to ...", "add a skill for both agents", "make the agents able to ...", "explore how the agents could ...", or runs /train-agents.
+description: Teach the user's agents on this Pi a new real-world task (or fix how they do one). OpenClaw is on hold, so this means Hermes only for now. Covers exploring routes, building a deterministic command, one shared skill, wiring each agent, and verifying with real lab runs. Use when the user says "train/teach the agents (or Hermes / OpenClaw) to ...", "add a skill for both agents", "make the agents able to ...", "explore how the agents could ...", or runs /train-agents.
 argument-hint: <the task, in the user's words>
 ---
 
 # Train the agents: $ARGUMENTS
+
+**OpenClaw is on hold** (`~/dev/agent-lab/on-hold`, since 2026-11-02): build for Hermes only. Wherever this skill or
+`briefs.md` says "both agents", read "Hermes": don't load the `openclaw` skill, don't explore its native route, and
+don't touch its allowlist, workspace or runs. `bin/lab` and `bin/loop` already leave it out. Skip this paragraph when
+`on-hold` no longer lists it.
 
 You are the **orchestrator**. The user wants OpenClaw and Hermes to learn the task above so that it works the same
 way in both, as one shared skill and one shared command. You own the conversation with the user, every decision,
