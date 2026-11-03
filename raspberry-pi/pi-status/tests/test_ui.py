@@ -1386,11 +1386,14 @@ def test_rei_running_links_out_with_version_and_sync(make_page, base_url):
     assert page.errors == []
 
 
-def test_rei_address_has_copy(make_page, base_url):
+def test_rei_address_is_a_link_with_copy(make_page, base_url):
     page = make_page()
     card = open_rei(page, base_url)
     row = card.locator(".ssh-row").first
-    assert row.locator(".ssh-cmd").inner_text() == "https://box.tail9.ts.net:8446/"
+    link = row.locator("a.ssh-cmd")
+    assert link.inner_text() == "https://box.tail9.ts.net:8446/"
+    assert link.get_attribute("href") == "https://box.tail9.ts.net:8446/"
+    assert link.get_attribute("target") == "_blank" and link.get_attribute("rel") == "noopener"
     assert row.locator(".copy").get_attribute("aria-label") == "Copy REI Dashboard address"
     row.locator(".copy").click()
     assert page.evaluate("navigator.clipboard.readText()") == "https://box.tail9.ts.net:8446/"
