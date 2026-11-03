@@ -56,6 +56,16 @@ def main(argv: list[str]) -> None:
             t["decided"] = {"queue": queue, "via": "web", "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
             t["queue"] = queue
         out = {"ok": True, "thread": thread, "queue": queue}
+    elif cmd == "accept":
+        n = 0
+        for pair in args:
+            thread, queue = pair.split(":")
+            t = by_id.get(thread)
+            if t and not t.get("decided") and (t.get("rec") or {}).get("queue") == queue:
+                t["decided"] = {"queue": queue, "via": "web:all", "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+                t["queue"] = queue
+                n += 1
+        out = {"ok": True, "accepted": n, "failed": 0, "skipped": len(args) - n}
     elif cmd == "undo":
         t = by_id.get(args[0]) or finish(5, {"ok": False, "error": "unknown thread"})
         if not t.get("decided"):
