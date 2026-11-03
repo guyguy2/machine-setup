@@ -872,7 +872,8 @@ function rei(d) {
         health.reachable && !health.ok && !health.errors && fact("Health check", "not ok"),
         fact("Next filing due", NO_COUNT), fact("Open alerts", NO_COUNT)),
       h("div", { class: "sub later" }, "Next filing due and open alerts come later."),
-      d.url ? copyRow("Address (tailnet only)", d.url, "REI Dashboard address")
+      d.url ? copyRow("Address (tailnet only)", d.url, "REI Dashboard address",
+                      h("a", { class: "mono ssh-cmd", href: d.url, target: "_blank", rel: "noopener" }, d.url))
             : h("div", { class: "sub" }, "No HTTPS address: Tailscale isn't up, so the Pi has no tailnet name."),
       d.url && !d.published && copyRow("Not published on the tailnet yet. Run:", d.publish, "REI publish command"),
       down && copyRow(`${word === "failed" ? "It failed" : "It's stopped"}. Start it with:`, d.start, "REI start command"),
