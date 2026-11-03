@@ -1,8 +1,9 @@
-# pi-status
+# pi-status (Home Base)
 
-A single-page status site for the Raspberry Pi it runs on. Standard library only, no runtime dependencies, reachable
-only over Tailscale. It is part of this repo because it is part of setting up a new Pi: `restore.sh` in the parent
-folder installs and starts it.
+**Home Base** is the single-page site this project serves: the Raspberry Pi's status (the Pi tabs) plus home admin (the
+Home tabs). The page shows that name; the code, folder, service and commands keep the name `pi-status`. Standard
+library only, no runtime dependencies, reachable only over Tailscale. It is part of this repo because it is part of
+setting up a new Pi: `restore.sh` in the parent folder installs and starts it.
 
     uv run pi-status                    # binds the Tailscale IP, port 8080
     uv run pi-status --host 127.0.0.1   # what the service uses; Tailscale Serve adds HTTPS in front

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi Status</title>
+<title>Home Base</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231f9d55'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -183,8 +183,8 @@
     .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--track); padding: 12px 16px 8px; }
     .side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
     .brand { display: contents; }  /* its parts join the header's rows */
-    #host { order: 1; flex: 1 1 auto; }
-    #model { display: none; }  /* Overview's details list it too */
+    #app { order: 1; flex: 1 1 auto; }
+    #host, #model { display: none; }  /* Overview and Network list them too */
     #refresh { order: 2; margin: 0; }
     #conn { order: 3; }
     .version { order: 4; margin: 0; padding: 0; }
@@ -223,7 +223,8 @@
 <div class="layout">
   <aside class="side">
     <div class="brand">
-      <h1 id="host">Pi Status</h1>
+      <h1 id="app">Home Base</h1>
+      <div class="sub mono" id="host"></div>
       <div class="sub" id="model"></div>
       <div class="sub" id="conn"><span class="dot off"></span>connecting…</div>
       <button class="copy" id="refresh" type="button">Refresh</button>
@@ -318,7 +319,7 @@ const procCols = [
 const cmdCol = { label: "Command", mono: true, cmd: true, value: p => p.cmd };
 
 function brand(s) {
-  document.title = s.hostname + " – Pi Status";
+  document.title = "Home Base · " + s.hostname;
   $("host").textContent = s.hostname;
   $("model").textContent = s.model;
 }

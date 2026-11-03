@@ -54,7 +54,7 @@ def test_nav_click_switches_tabs(make_page, base_url):
 def test_sidebar_hostname_loads_on_any_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "system/ports")
-    page.wait_for_function("document.getElementById('host').textContent !== 'Pi Status'")
+    page.wait_for_function("document.getElementById('host').textContent !== ''")
 
 
 def test_sidebar_is_on_the_left_on_desktop(make_page, base_url):
@@ -1098,8 +1098,10 @@ def test_version_shares_the_status_line_on_phone(make_page, base_url):
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
     page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
-    conn, version, nav = (page.locator(s).bounding_box() for s in ["#conn", "#version", "nav"])
-    assert abs(version["y"] - conn["y"]) < 12, (conn, version)   # same line as "updated ..."
+    app, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "nav"])
+    mid = lambda box: box["y"] + box["height"] / 2
+    # two header lines: the version shares the status line, or the status line sits beside the title
+    assert abs(version["y"] - conn["y"]) < 12 or abs(mid(conn) - mid(app)) < 12, (app, conn, version)
     assert version["y"] < nav["y"]
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
@@ -1181,7 +1183,7 @@ GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
 
 def settled(page):
     """Wait for the sidebar's hostname and version: the phone header changes height when they arrive."""
-    page.wait_for_function("document.getElementById('host').textContent !== 'Pi Status'"
+    page.wait_for_function("document.getElementById('host').textContent !== ''"
                            " && document.getElementById('version').textContent !== ''")
 
 
@@ -1496,7 +1498,17 @@ def test_phone_header_stays_two_lines_on_a_placeholder_tab(make_page, base_url):
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
     open_tab(page, base_url, "emails")
     settled(page)
-    host, conn, version, nav = (page.locator(s).bounding_box() for s in ["#host", "#conn", "#version", "nav"])
+    host, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "nav"])
     conn_mid, host_mid = conn["y"] + conn["height"] / 2, host["y"] + host["height"] / 2
     assert abs(conn_mid - host_mid) < 12 or abs(version["y"] - conn["y"]) < 12, (host, conn, version)  # no line of its own
     assert version["y"] < nav["y"]
+
+
+def test_sidebar_is_titled_home_base_and_names_the_pi(make_page, base_url):
+    page = make_page()
+    page.route("**/api/status", lambda r: r.fulfill(json=status()))
+    open_tab(page, base_url, "emails")
+    page.wait_for_function("document.getElementById('host').textContent !== ''")
+    assert page.locator("#app").inner_text() == "Home Base"
+    assert page.locator("#host").inner_text() == "box"
+    assert page.title() == "Home Base · box"
