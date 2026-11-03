@@ -9,14 +9,21 @@ folder installs and starts it.
 
 ## Tabs
 
+The sidebar groups the tabs in two labelled sections: **Pi** (this machine: Overview through System) and **Home**
+(Emails, a placeholder for now, and REI). On phones the sidebar becomes a strip along the top with one row per group,
+its label on the left. A tab without an `api` in `TABS` (in `index.html`) renders straight away without fetching
+anything, and the status line says "no live data" instead of an update time.
+
 | Tab | Shows |
 |---|---|
 | Overview | The home page. **Needs attention** lists what needs you, each problem once, and is hidden when all is well: power/thermal throttling, a failed agent, a sign-in that is signed out, expired or failing, a failed systemd service, and newer pi-status code on disk (with **Restart now**). Then CPU, temperature, memory and disk, one line per agent with its status and **Start/Stop**, and uptime, model and revision, OS, kernel, Wi-Fi/ethernet, local IP and Tailscale IP |
 | Agents | One card per agent (Claude Code, Hermes, OpenClaw), running ones first. Status is running, starting, stopping, stopped or failed, taken from the agent's systemd unit ("starting" while the unit is up but its dashboard port isn't listening yet), or for Claude Code from its processes. The card links to the Hermes dashboard or OpenClaw Control UI on the tailnet (opens in a new tab, with Copy); if it isn't published yet, it shows the `tailscale serve` command instead. **Start/Stop** control the services of Hermes and OpenClaw to free up resources: a stop is systemd's graceful one (SIGTERM, then the unit's stop timeout to clean up), and a stopped service starts again at boot. The card shows uptime, CPU and memory; Claude Code lists one row per session (directory, uptime, memory, command one click away); **More** has the `ssh -L` tunnel and localhost URL, the unit and the process table. **Sign-ins** (`gcloud`, `gws`, `gh`, `claude`, Tailscale: signed in, expired, signed out or not installed, with account and project) fold to one line, "5 of 5 signed in", and open themselves when one isn't signed in |
 | Agent Lab | Read-only view of `~/dev/agent-lab` (the OpenClaw / Hermes comparison; agents that were removed later stay in `results.md` and the run notes as history but are not shown here): scoreboard per use case, average scores per agent as a bar chart, time and memory per run, my notes per agent, every run note (`#lab/<file>` links to one), and each use case's prompt with a Copy button. The markdown files stay the source of truth; nothing is written back |
-| Websites | Sites for the home Wi-Fi (devices without Tailscale) and the tailnet: each one's HTTPS address under the Pi's tailnet name (Tailscale's Let's Encrypt certificate; Pi-hole resolves the name to the LAN IP for the Wi-Fi) as a link with Copy, the old plain-HTTP addresses that redirect there, its status (running, starting, stopped or failed, from the app's and its Caddy proxy's user units and whether the HTTPS port listens beyond localhost), units and folder. Add one to `WEBSITES` in `src/pi_status/collect.py` |
+| Websites | Sites for the home Wi-Fi (devices without Tailscale) and the tailnet: each one's HTTPS address under the Pi's tailnet name (Tailscale's Let's Encrypt certificate; Pi-hole resolves the name to the LAN IP for the Wi-Fi) as a link with Copy, the old plain-HTTP addresses that redirect there (if it has a `redirect_port`), its status (running, starting, stopped or failed, from the app's and its Caddy proxy's user units and whether the HTTPS port listens beyond localhost), units and folder. A site with `tailnet_only` (the REI dashboard, published by `tailscale serve`) is marked **tailnet only**: it isn't on the Wi-Fi/LAN and has no redirect port. Add one to `WEBSITES` in `src/pi_status/collect.py` |
 | Network | Ready-to-paste SSH commands (Tailscale name and IP, `.local`, LAN IP, plus an `ssh pi` config snippet), Wi-Fi details, gateway, DNS, interfaces, Tailscale peers, logged-in sessions |
 | System | Sub-tabs, each with its own address: **Docker** (`#system/docker`, the default: containers, with an HTTPS link to the Pi-hole admin UI (`https://<pi>.<tailnet>.ts.net:8445/pihole/admin/`) while its container runs, or the `tailscale serve` command to publish it, or that Docker isn't installed or isn't running), **Services** (`#system/services`: running and failed systemd system and user services), **Processes** (`#system/processes`: top processes by CPU or memory) and **Ports** (`#system/ports`: listening TCP ports and who can reach them: local only, tailnet, all interfaces). The old `#services`, `#processes`, `#ports` and `#docker` links redirect there |
+| Emails | Placeholder (Home), no backend yet. Laid out like a mail-triage view: a disabled search box, "Email data: not connected yet", **All inboxes** and the queues Inbox, Action, Respond, Review, Drafts, Waiting, Spam and Agent Notes, every count "—". Each queue has its own address (`#emails/<queue>`, e.g. `#emails/agent-notes`; `#emails` opens Inbox) and the main pane names the selected queue and says emails aren't connected yet. On phones the queues become wrapping chips above the pane |
+| REI | Launcher card for the REI dashboard, a separate app on the Pi (private repo `~/dev/rei`), from `/api/rei`. Its status (running, starting, stopped or failed, worded as on Websites: the combined state of `rei.service` and `rei-proxy.service`, "starting" while they're up but its `/healthz` doesn't answer yet), the app's version, **Vault sync** (`rei-vault-sync.timer`: not set up, off, on, with the last successful sync), the health check's error count if any, and the tailnet-only address `https://<pi>.<tailnet>.ts.net:8446/` with Copy. **Open REI** opens it in a new tab when it's running and published; otherwise it's disabled and the card shows the command that fixes it (`systemctl --user start rei.service` when it's down, the `tailscale serve` command when it isn't published). "Next filing due" and "Open alerts" stay "—" for now (they come later) |
 
 To track another agent, add an entry to `AGENTS` in `src/pi_status/collect.py` (and to `DASHBOARDS` if it has a
 web UI, with its local port and the HTTPS port `tailscale serve` publishes it on); for another sign-in check, add a
@@ -48,7 +55,12 @@ asks you to restart it: `systemctl --user restart pi-status`.
   (enable HTTPS certificates and Serve once in the Tailscale admin console).
 - The dashboards it links to run as their own user units (`hermes-dashboard.service` on 9119,
   `openclaw-gateway.service` on 18789), published on the tailnet at `:8443/hermes/` and `:8444/openclaw/` (its `gateway.controlUi.basePath` is `/openclaw`). The Pi-hole UI (Docker, host port 8081) is published at `:8445/pihole/admin/`. Hermes has no prefix setting of its own but honours `X-Forwarded-Prefix`, so `hermes-proxy.service` (Caddy on 127.0.0.1:9120, config in `services/hermes-proxy/`, started and stopped with `hermes-dashboard.service`) adds that header and Tailscale publishes the proxy.
-- `restore.sh` in the parent folder sets all of this up on a fresh image (steps `tailscale` and `pi-status`).
+- The REI dashboard runs from its own repo: `rei.service` (uvicorn, 127.0.0.1:8420) behind `rei-proxy.service` (Caddy,
+  127.0.0.1:8421), published tailnet-only at `:8446/`. `/api/rei` reads only its units, whether 8446 listens beyond
+  localhost, the sync timer and `GET 127.0.0.1:8420/healthz` (2 s timeout, skipped while the app is stopped), of which
+  it passes on only `ok`, `version` and the number of errors. A failed `rei.service` shows in Overview's **Needs
+  attention** like any failed user service.
+- `restore.sh` in the parent folder sets all of this up on a fresh image (steps `tailscale`, `pi-status` and `rei`).
 - `~/dev/pi-status` is a symlink to this folder, so there is only one copy.
 - `upd` runs `uv sync` and restarts the service after pulling repos.
 
@@ -59,5 +71,5 @@ asks you to restart it: `systemctl --user restart pi-status`.
     pyright                             # type-check the Python (kept at 0 errors; install with sudo npm install -g pyright)
 
 JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/agents`, `/api/dashboards`, `/api/auth`, `/api/docker`,
-`/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/websites`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
+`/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/websites`, `/api/rei`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
 units in `AGENTS`; both POSTs need the `X-Requested-With: pi-status` header).

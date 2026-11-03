@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -533,33 +535,134 @@ def dashboards() -> list[dict]:
 
 
 # ---------- websites ----------
-# Sites for the home network, including devices without Tailscale. Each app listens on 127.0.0.1 behind its own Caddy
-# (`proxy` unit) on all interfaces: HTTPS on `port` and `path` under the Pi's tailnet name with Tailscale's Let's Encrypt
-# certificate, which Pi-hole resolves to the LAN IP for the Wi-Fi (local DNS record), and the old plain-HTTP
-# `redirect_port` sending bookmarks there.
+# Sites served over HTTPS on `port` and `path` under the Pi's tailnet name, with Tailscale's Let's Encrypt certificate.
+# Each app listens on 127.0.0.1 behind its own Caddy (`proxy` unit). A home-network site's Caddy listens on all
+# interfaces, so Pi-hole resolves the name to the LAN IP for the Wi-Fi (local DNS record) and devices without
+# Tailscale reach it too; its plain-HTTP `redirect_port` (optional) sends old bookmarks there. A `tailnet_only` site is
+# published by `tailscale serve` instead and can't be reached from the Wi-Fi at all.
 
 WEBSITES = [
     {"name": "DreamBase", "what": "A family dashboard; saves to dreambase_data.json in its folder",
      "unit": "dreambase.service", "proxy": "dreambase-proxy.service", "port": 8091, "path": "/site/", "redirect_port": 8090,
      "folder": "~/dev/websites/dreambase"},
+    {"name": "REI dashboard", "what": "Separate dashboard app (see the REI tab); behind rei-proxy (Caddy) on 127.0.0.1:8421",
+     "unit": "rei.service", "proxy": "rei-proxy.service", "port": 8446, "path": "/", "tailnet_only": True,
+     "folder": "~/dev/rei"},
 ]
 
 
+def exposed_ports() -> set[int]:
+    """Ports something listens on beyond localhost (the tailnet, the LAN or all interfaces)."""
+    return {p["port"] for p in ports() if p["exposure"] != "local only"}
+
+
+def unit_states(*units: str) -> list[str]:
+    return [run("systemctl", "--user", "is-active", u) or "unknown" for u in units]
+
+
+def combined_state(states: list[str]) -> str:
+    """One state for an app and its proxy: whichever unit isn't up, else active."""
+    return next((s for s in states if s != "active"), "active")
+
+
 def websites() -> list[dict]:
-    listening = {p["port"] for p in ports() if p["exposure"] != "local only"}
+    listening = exposed_ports()
     dns_name = tailscale_info().get("dns_name", "")
     lan_ip = default_route().get("prefsrc", "")
     result = []
     for w in WEBSITES:
-        states = [run("systemctl", "--user", "is-active", u) or "unknown" for u in (w["unit"], w["proxy"])]
+        redirect = w.get("redirect_port")
         result.append({
             "name": w["name"], "what": w["what"], "units": [w["unit"], w["proxy"]], "folder": w["folder"],
-            "unit_state": next((s for s in states if s != "active"), "active"),  # the app or its proxy, whichever isn't up
+            "unit_state": combined_state(unit_states(w["unit"], w["proxy"])),
             "running": w["port"] in listening,
             "url": f"https://{dns_name}:{w['port']}{w['path']}" if dns_name else "",
-            "redirects": [f"http://{host}:{w['redirect_port']}/" for host in (lan_ip, f"{platform.node()}.local") if host],
+            "redirects": [f"http://{host}:{redirect}/" for host in (lan_ip, f"{platform.node()}.local") if host] if redirect else [],
+            "tailnet_only": bool(w.get("tailnet_only")),
         })
     return result
+
+
+# ---------- REI dashboard ----------
+# A separate app (its own private repo, ~/dev/rei, with deploy/pi/install.sh): uvicorn on 127.0.0.1:8420 (rei.service)
+# behind Caddy on 127.0.0.1:8421 (rei-proxy.service, which rewrites Host: the app only accepts loopback Hosts),
+# published tailnet-only by `tailscale serve` on 8446. Only its health summary is read here, never its data.
+
+REI = next(w for w in WEBSITES if w["unit"] == "rei.service")
+REI_HEALTH_URL = "http://127.0.0.1:8420/healthz"
+REI_PROXY_PORT = 8421
+REI_SYNC = "rei-vault-sync"  # .timer runs .service (rclone from Drive); enabled once the rclone remote exists
+
+
+def rei_health() -> dict:
+    """The app's own /healthz, reduced to ok, version and an error count (nothing else it says reaches the page)."""
+    try:
+        with urllib.request.urlopen(REI_HEALTH_URL, timeout=2) as r:
+            body = r.read(65536)
+    except urllib.error.HTTPError as e:  # an unhealthy app may still answer, with an error status and the same JSON
+        body = e.read(65536)
+    except (OSError, ValueError):
+        return {"reachable": False, "ok": False, "version": "", "errors": 0}
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return {"reachable": True, "ok": False, "version": "", "errors": 0}
+    errors = data.get("errors")
+    return {
+        "reachable": True,
+        "ok": data.get("ok") is True,
+        "version": str(data.get("version") or "")[:80],
+        "errors": len(errors) if isinstance(errors, list) else errors if isinstance(errors, int) else 0,
+    }
+
+
+def unit_props(unit: str, *props: str) -> dict[str, str]:
+    out = run("systemctl", "--user", "show", "--timestamp=unix", unit, *(f"-p{p}" for p in props))
+    return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+
+def unix_time(value: str) -> int | None:
+    """systemctl's --timestamp=unix values look like @1793726220; empty when it never happened."""
+    try:
+        return int(value.lstrip("@")) or None
+    except ValueError:
+        return None
+
+
+def vault_sync() -> dict:
+    """The sync timer: "not set up" (no unit), "on", "off" (installed, not enabled) or "failed", plus the time of the
+    last run that succeeded and whether the latest run failed."""
+    timer = unit_props(f"{REI_SYNC}.timer", "LoadState", "ActiveState")
+    if timer.get("LoadState", "not-found") != "loaded":
+        return {"state": "not set up", "last_sync": None, "last_failed": False}
+    job = unit_props(f"{REI_SYNC}.service", "Result", "ExecMainStatus", "ExecMainExitTimestamp")
+    ended = unix_time(job.get("ExecMainExitTimestamp", ""))
+    failed = bool(ended) and (job.get("Result") != "success" or job.get("ExecMainStatus") != "0")
+    active = timer.get("ActiveState", "")
+    return {
+        "state": "on" if active == "active" else "failed" if active == "failed" else "off",
+        "last_sync": ended if ended and not failed else None,
+        "last_failed": failed,
+    }
+
+
+def rei() -> dict:
+    dns_name = tailscale_info().get("dns_name", "")
+    app, proxy = unit_states(REI["unit"], REI["proxy"])
+    up = app in ("active", "activating", "reloading")  # only then can healthz answer; a stopped app skips the timeout
+    return {
+        "units": [REI["unit"], REI["proxy"]],
+        "unit_state": combined_state([app, proxy]),
+        "published": REI["port"] in exposed_ports(),  # tailscale serve listens on the tailnet address
+        "health": rei_health() if up else {"reachable": False, "ok": False, "version": "", "errors": 0},
+        "vault_sync": vault_sync(),
+        "url": f"https://{dns_name}:{REI['port']}/" if dns_name else "",
+        "publish": f"sudo tailscale serve --bg --https={REI['port']} http://127.0.0.1:{REI_PROXY_PORT}",
+        "start": f"systemctl --user start {REI['unit']}",
+        "folder": REI["folder"],
+    }
 
 
 # ---------- network ----------

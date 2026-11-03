@@ -26,7 +26,12 @@
   .brand { padding: 0 8px 12px; }
   .brand h1 { font-size: 1.25rem; margin: 0; overflow-wrap: anywhere; }
   .sub { color: var(--muted); font-size: .8125rem; }
-  nav { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+  nav { display: flex; flex-direction: column; margin-top: 4px; }
+  /* tabs come in labelled groups: Pi (this machine) and Home */
+  .nav-links { display: flex; flex-direction: column; gap: 2px; }
+  .nav-label { padding: 14px 12px 4px; color: var(--muted); font-size: .6875rem; font-weight: 600;
+               text-transform: uppercase; letter-spacing: .06em; }
+  .nav-group:first-child .nav-label { padding-top: 2px; }
   nav a { display: block; padding: 9px 12px; border-radius: 8px; color: var(--text); text-decoration: none; }
   nav a:hover { background: var(--track); }
   nav a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
@@ -40,7 +45,7 @@
   h3 { font-size: 1rem; margin: 20px 0 8px; }
 
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); margin-right: 6px; }
-  .dot.off, .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .dot.off, .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); } .dot.idle { background: var(--muted); }
 
   /* overview: what needs you, then one line per agent */
   .attention { border-left: 3px solid var(--warn); }
@@ -142,6 +147,36 @@
   .note pre, .prompt { margin: 0 0 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
 
+  /* emails (placeholder): a queue column and a main pane inside the content area */
+  .mail { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; }
+  .mail .card { margin-bottom: 0; }
+  .mail-side { padding: 12px; }
+  .mail-search { width: 100%; font: inherit; font-size: .875rem; padding: 6px 10px; border: 1px solid var(--track);
+                 border-radius: 8px; background: var(--bg); color: var(--text); }
+  .mail-search:disabled { color: var(--muted); cursor: not-allowed; }
+  .mail-fresh { margin: 8px 2px 10px; }
+  .mail-all, .queues a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px;
+                         border-radius: 8px; color: var(--text); text-decoration: none; font-size: .9375rem; }
+  .mail-all { font-weight: 600; border-radius: 0; border-bottom: 1px solid var(--track); }
+  .mail-side h3 { margin: 10px 10px 4px; }
+  .queues { display: flex; flex-direction: column; gap: 2px; }
+  .queues a:hover { background: var(--track); }
+  .queues a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .queues a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .count { min-width: 2.2em; padding: 0 6px; border-radius: 99px; background: var(--track); color: var(--muted);
+           font-size: .75rem; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+  .mail-pane { min-height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+               text-align: center; padding: 32px 24px; }
+  .mail-pane h3 { margin: 0 0 4px; font-size: 1.125rem; }
+  .mail-pane p { margin: 4px 0; max-width: 46ch; }
+
+  /* rei (launcher for its own dashboard app) */
+  .rei dl { margin: 10px 0 4px; }
+  .rei .later { margin: 0 0 8px; }
+  .rei .ssh-row { border-top: 0; }
+  .rei-open { display: inline-block; margin-top: 10px; padding: 6px 14px; text-align: center; text-decoration: none; }
+  .rei-open:disabled { opacity: .55; cursor: not-allowed; }
+
   /* phones: sidebar becomes a tab strip along the top */
   @media (max-width: 720px) {
     .layout { display: block; }
@@ -153,7 +188,12 @@
     #refresh { order: 2; margin: 0; }
     #conn { order: 3; }
     .version { order: 4; margin: 0; padding: 0; }
-    nav { order: 5; flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; margin: 0 -8px; }  /* six tabs: two rows on narrow phones */
+    nav { order: 5; flex: 1 1 100%; margin: 0 -8px; }
+    /* one row per group, its label on the left: Pi's six tabs take two rows on narrow phones, Home's two one */
+    .nav-group { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; }
+    .nav-group + .nav-group { border-top: 1px solid var(--track); }
+    .nav-label, .nav-group:first-child .nav-label { align-self: start; padding: 12px 0 0 8px; }  /* level with the first row */
+    .nav-links { flex-direction: row; flex-wrap: wrap; gap: 0; }
     nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; }
     .content { padding: 16px; }
     .ssh-row, .page-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -171,6 +211,11 @@
     td:first-child { font-weight: 600; }
     td:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); font: .8125rem system-ui, -apple-system, sans-serif; }
     .cmd .clamp { display: block; max-width: none; }
+    /* emails: the queue column becomes wrapping chips above the pane */
+    .mail { grid-template-columns: minmax(0, 1fr); }
+    .queues { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+    .queues a { border: 1px solid var(--track); border-radius: 99px; padding: 4px 6px 4px 12px; font-size: .875rem; }
+    .mail-pane { min-height: 0; padding: 24px 16px; }
   }
 </style>
 </head>
@@ -671,23 +716,28 @@ function lab(d) {
   ];
 }
 
-// ---------- websites (home network, no Tailscale needed) ----------
+// ---------- websites (home network, no Tailscale needed; or tailnet only) ----------
+// An app and its proxy go by their units' combined state; "starting" while they're up but the app can't be reached yet.
+function siteStatus(unitState, reachable) {
+  const [word, kind] = UNIT_STATUS[unitState] || ["stopped", ""];
+  return word === "running" && !reachable ? ["starting", "warn"] : [word, kind];
+}
+
 function websites(list) {
-  const status = w => {
-    const [word, kind] = UNIT_STATUS[w.unit_state] || ["stopped", ""];
-    return word === "running" && !w.running ? ["starting", "warn"] : [word, kind];  // up, port not listening yet
-  };
+  const status = w => siteStatus(w.unit_state, w.running);  // running: its HTTPS port listens beyond localhost
   return [
     h("h2", {}, "Websites"),
     h("div", { class: "sub", style: "margin-bottom:12px" },
-      "Served over HTTPS to the home Wi-Fi (no Tailscale needed) and the tailnet, at the same address."),
+      "Served over HTTPS to the home Wi-Fi (no Tailscale needed) and the tailnet, at the same address, unless marked tailnet only."),
     list.length ? list.map(w => h("div", { class: "card website" },
-      h("div", { class: "card-head" }, h("h4", {}, w.name), h("span", { class: "status" }, pill(...status(w)))),
+      h("div", { class: "card-head" }, h("h4", {}, w.name),
+        w.tailnet_only && h("span", { class: "pill tailnet-only", title: "Not reachable from the home Wi-Fi" }, "tailnet only"),
+        h("span", { class: "status" }, pill(...status(w)))),
       h("div", { class: "detail" }, w.what),
-      w.url ? copyRow("Wi-Fi and tailnet", w.url, `${w.name} address`,
+      w.url ? copyRow(w.tailnet_only ? "Tailnet only" : "Wi-Fi and tailnet", w.url, `${w.name} address`,
                       h("a", { class: "mono ssh-cmd", href: w.url, target: "_blank", rel: "noopener" }, w.url))
             : h("div", { class: "sub" }, "No HTTPS address: Tailscale isn't up, so the Pi has no tailnet name."),
-      w.redirects.length && h("div", { class: "sub", style: "margin-top:8px" },
+      w.redirects.length > 0 && h("div", { class: "sub", style: "margin-top:8px" },
         "Old addresses that redirect here: ", w.redirects.flatMap((r, i) => [i ? ", " : "", h("span", { class: "mono" }, r)])),
       h("div", { class: "sub", style: "margin-top:4px" },
         "Services: ", h("span", { class: "mono" }, w.units.join(", ")), " · Folder: ", h("span", { class: "mono" }, w.folder))))
@@ -758,6 +808,81 @@ function ports(list) {
   ];
 }
 
+// ---------- home: Emails is a placeholder (no api, so refresh() renders it without fetching); REI is live ----------
+const NO_COUNT = "—";
+
+// Emails' queues (#emails/<id>), in triage order
+const QUEUES = [
+  { id: "inbox", title: "Inbox", what: "New mail that hasn't been sorted yet." },
+  { id: "action", title: "Action", what: "Mail that needs you to do something." },
+  { id: "respond", title: "Respond", what: "Mail waiting for a reply from you." },
+  { id: "review", title: "Review", what: "Mail to read when you have time." },
+  { id: "drafts", title: "Drafts", what: "Replies drafted for you to check and send." },
+  { id: "waiting", title: "Waiting", what: "Threads where you're waiting on someone else." },
+  { id: "spam", title: "Spam", what: "Mail flagged as spam, to check before it's deleted." },
+  { id: "agent-notes", title: "Agent Notes", what: "Notes the agents left about your mail." },
+];
+
+function emails() {
+  const q = QUEUES.find(q => q.id === subpath) || QUEUES[0];
+  const count = () => h("span", { class: "count", "aria-label": "count not available" }, NO_COUNT);
+  return [
+    h("h2", {}, "Emails"),
+    h("div", { class: "mail" },
+      h("div", { class: "card mail-side" },
+        h("input", { class: "mail-search", type: "search", placeholder: "Search emails…", "aria-label": "Search emails", disabled: true }),
+        h("div", { class: "sub mail-fresh" }, "Email data: not connected yet"),
+        h("div", { class: "mail-all" }, h("span", {}, "All inboxes"), count()),
+        h("h3", { class: "label", id: "queues-label" }, "Queues"),
+        h("div", { class: "queues", role: "navigation", "aria-labelledby": "queues-label" }, QUEUES.map(x =>
+          h("a", { href: "#emails/" + x.id, "data-queue": x.id, "aria-current": x === q ? "page" : null }, h("span", {}, x.title), count())))),
+      h("div", { class: "card mail-pane" },
+        h("h3", {}, q.title),
+        h("p", { class: "detail" }, q.what),
+        h("p", { class: "empty" }, "Emails aren't connected yet. Once they are, this pane will list the messages in each queue, " +
+          "newest first, with counts in the queue list and search across all inboxes."))),
+  ];
+}
+
+// Launcher for a separate dashboard app on this Pi (tailnet only); /api/rei reads its units and health summary
+function vaultSyncText(v) {
+  if (v.state === "not set up") return "not set up";
+  if (v.state === "off") return "off (timer not enabled; it needs the rclone remote gdrive:)";
+  const last = v.last_sync ? `last synced ${dur(Math.max(0, Math.round(Date.now() / 1000 - v.last_sync)))} ago` : "hasn't synced yet";
+  return [v.state === "failed" ? "timer failed" : "on", last, v.last_failed && "last run failed"].filter(Boolean).join(" · ");
+}
+
+function rei(d) {
+  const health = d.health;
+  const [word, kind] = siteStatus(d.unit_state, health.reachable);  // reachable: its healthz answered
+  const down = word === "stopped" || word === "failed";
+  const canOpen = word === "running" && d.published && d.url;
+  const why = down ? "REI isn't running" : !d.url ? "Tailscale isn't up" : !d.published ? "Not published on the tailnet" : "Not answering yet";
+  const fact = (term, value) => [h("dt", {}, term), h("dd", {}, value)];
+  return [
+    h("h2", {}, "REI"),
+    h("div", { class: "sub", style: "margin-bottom:12px" }, "A separate dashboard app on this Pi, on the tailnet only (not the home Wi-Fi)."),
+    h("div", { class: "card rei" },
+      h("div", { class: "card-head" }, h("h4", {}, "REI Dashboard"), h("span", { class: "status" }, pill(word, kind))),
+      h("div", { class: "detail" }, "Property portfolio: filings, taxes and alerts"),
+      h("dl", {},
+        fact("Version", health.version || "–"),
+        fact("Vault sync", vaultSyncText(d.vault_sync)),
+        health.errors > 0 && fact("Health check", `${health.errors} error${health.errors === 1 ? "" : "s"}`),
+        health.reachable && !health.ok && !health.errors && fact("Health check", "not ok"),
+        fact("Next filing due", NO_COUNT), fact("Open alerts", NO_COUNT)),
+      h("div", { class: "sub later" }, "Next filing due and open alerts come later."),
+      d.url ? copyRow("Address (tailnet only)", d.url, "REI Dashboard address")
+            : h("div", { class: "sub" }, "No HTTPS address: Tailscale isn't up, so the Pi has no tailnet name."),
+      d.url && !d.published && copyRow("Not published on the tailnet yet. Run:", d.publish, "REI publish command"),
+      down && copyRow(`${word === "failed" ? "It failed" : "It's stopped"}. Start it with:`, d.start, "REI start command"),
+      canOpen ? h("a", { class: "copy rei-open", href: d.url, target: "_blank", rel: "noopener" }, "Open REI")
+              : h("button", { class: "copy rei-open", type: "button", disabled: true, title: why }, "Open REI"),
+      h("div", { class: "sub", style: "margin-top:8px" },
+        "Services: ", h("span", { class: "mono" }, d.units.join(", ")), " · Folder: ", h("span", { class: "mono" }, d.folder))),
+  ];
+}
+
 // System's sub-tabs (#system/<id>)
 const SYSTEM = [
   { id: "docker", title: "Docker", api: "/api/docker", render: docker },
@@ -766,14 +891,17 @@ const SYSTEM = [
   { id: "ports", title: "Ports", api: "/api/ports", render: ports },
 ];
 
+// `group` is the sidebar section; a tab without `api` is rendered straight away, nothing fetched
 const TABS = [
-  { id: "overview", title: "Overview", api: "/api/status", also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"],
-    render: overview },
-  { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
-  { id: "lab", title: "Agent Lab", api: "/api/lab", render: lab },
-  { id: "websites", title: "Websites", api: "/api/websites", render: websites },
-  { id: "network", title: "Network", api: "/api/network", render: network },
-  { id: "system", title: "System", sub: SYSTEM },
+  { id: "overview", group: "Pi", title: "Overview", api: "/api/status",
+    also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"], render: overview },
+  { id: "agents", group: "Pi", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
+  { id: "lab", group: "Pi", title: "Agent Lab", api: "/api/lab", render: lab },
+  { id: "websites", group: "Pi", title: "Websites", api: "/api/websites", render: websites },
+  { id: "network", group: "Pi", title: "Network", api: "/api/network", render: network },
+  { id: "system", group: "Pi", title: "System", sub: SYSTEM },
+  { id: "emails", group: "Home", title: "Emails", render: emails },
+  { id: "rei", group: "Home", title: "REI", api: "/api/rei", render: rei },
 ];
 
 // ---------- version (bottom of the sidebar) ----------
@@ -823,7 +951,9 @@ function subtabs() {
     current.sub.map(s => h("a", { href: `#${current.id}/${s.id}`, "aria-current": s === currentView ? "page" : null }, s.title)));
 }
 
-$("nav").append(...TABS.map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title)));
+$("nav").append(...[...new Set(TABS.map(t => t.group))].map(g => h("div", { class: "nav-group", role: "group", "aria-labelledby": "nav-" + g },
+  h("div", { class: "nav-label", id: "nav-" + g }, g),
+  h("div", { class: "nav-links" }, TABS.filter(t => t.group === g).map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title))))));
 
 async function getJSON(url) {
   const r = await fetch(url, { cache: "no-store" });
@@ -832,16 +962,24 @@ async function getJSON(url) {
   return data;
 }
 
+function show(tab, out) {
+  $("view").replaceChildren(...[tab.sub ? [h("h2", {}, tab.title), subtabs(), out] : out].flat(Infinity).filter(Boolean));
+}
+
 async function refresh() {
   const tab = current, v = currentView;
+  if (!v.api) {  // a placeholder: nothing to load, so no "updated" time and never "unreachable"
+    show(tab, v.render());
+    $("conn").replaceChildren(h("span", { class: "dot idle" }), "no live data");
+    return;
+  }
   try {
     const [data, ...extra] = await Promise.all([
       getJSON(v.api),
       ...(v.also || []).map(url => getJSON(url).catch(() => null)),  // optional extras never break the tab
     ]);
     if (v !== currentView) return;  // user switched tabs while this was loading
-    const out = v.render(data, ...extra);
-    $("view").replaceChildren(...[tab.sub ? [h("h2", {}, tab.title), subtabs(), out] : out].flat(Infinity).filter(Boolean));
+    show(tab, v.render(data, ...extra));
     $("conn").replaceChildren(h("span", { class: "dot" }), "updated " + new Date().toLocaleTimeString());
   } catch (e) {
     $("conn").replaceChildren(h("span", { class: "dot off" }), "unreachable");
@@ -858,7 +996,7 @@ function route() {
   current = TABS.find(t => t.id === id) || TABS[0];
   subpath = decodeURIComponent(rest.join("/"));
   currentView = current.sub ? current.sub.find(s => s.id === subpath) || current.sub[0] : current;
-  for (const a of $("nav").children) {
+  for (const a of $("nav").querySelectorAll("a[data-tab]")) {
     if (a.dataset.tab === current.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }

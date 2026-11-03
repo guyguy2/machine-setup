@@ -606,7 +606,7 @@ def test_control_agent_reports_systemctl_failure(monkeypatch):
 
 
 def test_websites_https_on_tailnet_name_and_proxy_counts(monkeypatch):
-    states = {"dreambase.service": "active", "dreambase-proxy.service": "active"}
+    states = {"dreambase.service": "active", "dreambase-proxy.service": "active", "rei.service": "active", "rei-proxy.service": "active"}
     monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "all interfaces"}])
     monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
     monkeypatch.setattr(collect, "default_route", lambda: {"prefsrc": "10.0.0.5"})
@@ -616,9 +616,149 @@ def test_websites_https_on_tailnet_name_and_proxy_counts(monkeypatch):
     assert site["running"] and site["unit_state"] == "active"
     assert site["url"] == "https://box.tail9.ts.net:8091/site/"
     assert site["redirects"] == ["http://10.0.0.5:8090/", "http://box.local:8090/"]
+    assert site["tailnet_only"] is False
 
     states["dreambase-proxy.service"] = "failed"  # the app is up but nothing serves it
     monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "local only"}])
     monkeypatch.setattr(collect, "tailscale_info", lambda: {})
     site = collect.websites()[0]
     assert site["unit_state"] == "failed" and not site["running"] and site["url"] == ""
+
+
+def test_websites_tailnet_only_site_has_no_redirects(monkeypatch):
+    monkeypatch.setattr(collect, "WEBSITES", [{"name": "T", "what": "", "unit": "t.service", "proxy": "t-proxy.service",
+                                                "port": 8446, "path": "/", "tailnet_only": True, "folder": "~/t"}])
+    monkeypatch.setattr(collect, "ports", lambda: [{"port": 8446, "exposure": "tailnet"}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
+    monkeypatch.setattr(collect, "default_route", lambda: {"prefsrc": "10.0.0.5"})
+    monkeypatch.setattr(collect, "run", lambda *cmd: "active")
+    site = collect.websites()[0]
+    assert site["running"] and site["tailnet_only"] is True
+    assert site["url"] == "https://box.tail9.ts.net:8446/" and site["redirects"] == []
+
+
+def test_rei_is_listed_as_a_tailnet_only_website():
+    rei = next(w for w in collect.WEBSITES if w["unit"] == "rei.service")
+    assert rei["tailnet_only"] and "redirect_port" not in rei and rei["port"] == 8446
+
+
+# ---------- REI dashboard ----------
+
+class FakeResponse:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def read(self, n=-1):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def fake_healthz(monkeypatch, body: bytes = b"", error: Exception | None = None):
+    seen = {}
+
+    def urlopen(url, timeout):
+        seen.update(url=url, timeout=timeout)
+        if error:
+            raise error
+        return FakeResponse(body)
+    monkeypatch.setattr(collect.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def test_rei_health_keeps_only_ok_version_and_error_count(monkeypatch):
+    body = json.dumps({"ok": True, "version": "v2026-01-01-c0ffee", "files_read": 26,
+                       "errors": ["x.csv: bad row"], "secret": "nope"}).encode()
+    seen = fake_healthz(monkeypatch, body)
+    assert collect.rei_health() == {"reachable": True, "ok": True, "version": "v2026-01-01-c0ffee", "errors": 1}
+    assert seen == {"url": "http://127.0.0.1:8420/healthz", "timeout": 2}
+
+
+def test_rei_health_unreachable(monkeypatch):
+    fake_healthz(monkeypatch, error=collect.urllib.error.URLError("refused"))
+    assert collect.rei_health() == {"reachable": False, "ok": False, "version": "", "errors": 0}
+    fake_healthz(monkeypatch, error=TimeoutError())
+    assert collect.rei_health()["reachable"] is False
+
+
+def test_rei_health_error_status_still_reads_the_body(monkeypatch):
+    import io
+    from email.message import Message
+    body = json.dumps({"ok": False, "version": "v1", "errors": ["a", "b"]}).encode()
+    err = collect.urllib.error.HTTPError(collect.REI_HEALTH_URL, 503, "unavailable", Message(), io.BytesIO(body))
+    fake_healthz(monkeypatch, error=err)
+    assert collect.rei_health() == {"reachable": True, "ok": False, "version": "v1", "errors": 2}
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[1, 2]", b'{"ok": "yes", "errors": "many"}'])
+def test_rei_health_odd_answers(monkeypatch, body):
+    fake_healthz(monkeypatch, body)
+    result = collect.rei_health()
+    assert result["reachable"] and not result["ok"] and result["errors"] == 0
+
+
+def fake_show(monkeypatch, units: dict, states=None):
+    """`systemctl --user show <unit>` answers from units[unit] (a dict of properties); is-active from states."""
+    def run(*cmd, **kw):
+        if cmd[:3] == ("systemctl", "--user", "show"):
+            props = units.get(cmd[4], {"LoadState": "not-found"})
+            wanted = [c[2:] for c in cmd[5:]]
+            return "\n".join(f"{k}={props.get(k, '')}" for k in wanted)
+        if cmd[:3] == ("systemctl", "--user", "is-active"):
+            return (states or {}).get(cmd[3], "inactive")
+        return ""
+    monkeypatch.setattr(collect, "run", run)
+
+
+def test_vault_sync_not_set_up_when_the_timer_does_not_exist(monkeypatch):
+    fake_show(monkeypatch, {})
+    assert collect.vault_sync() == {"state": "not set up", "last_sync": None, "last_failed": False}
+
+
+def test_vault_sync_installed_but_not_enabled(monkeypatch):
+    fake_show(monkeypatch, {"rei-vault-sync.timer": {"LoadState": "loaded", "ActiveState": "inactive"},
+                            "rei-vault-sync.service": {"Result": "success", "ExecMainStatus": "0", "ExecMainExitTimestamp": ""}})
+    assert collect.vault_sync() == {"state": "off", "last_sync": None, "last_failed": False}
+
+
+def test_vault_sync_on_with_last_successful_run(monkeypatch):
+    fake_show(monkeypatch, {"rei-vault-sync.timer": {"LoadState": "loaded", "ActiveState": "active"},
+                            "rei-vault-sync.service": {"Result": "success", "ExecMainStatus": "0",
+                                                       "ExecMainExitTimestamp": "@1793726220"}})
+    assert collect.vault_sync() == {"state": "on", "last_sync": 1793726220, "last_failed": False}
+
+
+def test_vault_sync_last_run_failed(monkeypatch):
+    fake_show(monkeypatch, {"rei-vault-sync.timer": {"LoadState": "loaded", "ActiveState": "active"},
+                            "rei-vault-sync.service": {"Result": "exit-code", "ExecMainStatus": "1",
+                                                       "ExecMainExitTimestamp": "@1793726220"}})
+    assert collect.vault_sync() == {"state": "on", "last_sync": None, "last_failed": True}
+
+
+def test_rei_running_and_published(monkeypatch):
+    fake_show(monkeypatch, {}, {"rei.service": "active", "rei-proxy.service": "active"})
+    monkeypatch.setattr(collect, "ports", lambda: [{"port": 8446, "exposure": "tailnet"}, {"port": 8420, "exposure": "local only"}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
+    fake_healthz(monkeypatch, json.dumps({"ok": True, "version": "v1", "errors": []}).encode())
+    d = collect.rei()
+    assert d["unit_state"] == "active" and d["published"]
+    assert d["health"] == {"reachable": True, "ok": True, "version": "v1", "errors": 0}
+    assert d["url"] == "https://box.tail9.ts.net:8446/"
+    assert d["units"] == ["rei.service", "rei-proxy.service"]
+    assert d["vault_sync"]["state"] == "not set up"
+    assert d["publish"] == "sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421"
+    assert d["start"] == "systemctl --user start rei.service"
+
+
+def test_rei_stopped_skips_healthz_and_is_not_published_locally(monkeypatch):
+    fake_show(monkeypatch, {}, {"rei.service": "failed", "rei-proxy.service": "active"})
+    monkeypatch.setattr(collect, "ports", lambda: [{"port": 8446, "exposure": "local only"}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {})
+    seen = fake_healthz(monkeypatch, b"{}")
+    d = collect.rei()
+    assert d["unit_state"] == "failed" and not d["published"] and d["url"] == ""
+    assert d["health"]["reachable"] is False and seen == {}   # nothing asked a stopped app

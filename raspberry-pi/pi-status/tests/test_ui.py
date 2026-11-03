@@ -2,10 +2,14 @@
 
 import pytest
 
-TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker"]
-NAV = ["Overview", "Agents", "Agent Lab", "Websites", "Network", "System"]
+TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
+        "rei"]
+NAV = ["Overview", "Agents", "Agent Lab", "Websites", "Network", "System", "Emails", "REI"]
+NAV_GROUPS = {"Pi": NAV[:6], "Home": NAV[6:]}
+PLACEHOLDERS = ["emails", "emails/action"]  # Home tabs with no backend yet
 SYSTEM = ["docker", "services", "processes", "ports"]
 PHONE = (390, 844)
+NARROW_PHONE = (360, 740)
 
 NETWORK = {
     "connection": "Wi-Fi “testnet” (80%)", "local_ip": "10.0.0.5", "gateway": "10.0.0.1", "device": "wlan0",
@@ -67,7 +71,7 @@ def test_nav_becomes_top_strip_on_phone(make_page, base_url):
     assert nav["y"] < view["y"] and nav["width"] <= PHONE[0]
 
 
-@pytest.mark.parametrize("tab", TABS)
+@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
 def test_no_horizontal_page_scroll_on_phone(make_page, base_url, tab):
     page = make_page(*PHONE)
     open_tab(page, base_url, tab)
@@ -754,7 +758,7 @@ LONG_CMD = ("node /usr/lib/node_modules/openclaw/dist/index.js gateway --port 18
 PROCS = {"total": 1, "processes": [{"pid": 4242, "user": "guy", "cpu": 1.0, "rss": 2**30, "age_s": 109800, "cmd": LONG_CMD}]}
 
 
-@pytest.mark.parametrize("tab", TABS)
+@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
 def test_nothing_in_the_view_overflows_on_phone(make_page, base_url, tab):
     """Stricter than the page-width check: a table can't hide columns inside its own sideways-scrolling box."""
     page = make_page(*PHONE)
@@ -839,7 +843,7 @@ def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
 
 # ---------- navigation ----------
 
-def test_nav_has_five_tabs(make_page, base_url):
+def test_nav_lists_every_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "overview")
     assert page.locator("nav a").all_inner_texts() == NAV
@@ -949,6 +953,7 @@ def test_overview_has_no_attention_list_when_all_is_well(make_page, base_url):
     ({"status": {**STATUS, "throttled": ["under-voltage now"]}}, "Power/thermal: under-voltage now"),
     ({"auth": AUTH}, "Google Workspace sign-in expired"),
     ({"services": {"user": [FAILED_UNIT], "system": []}}, "backup.service failed"),
+    ({"services": {"user": [{**FAILED_UNIT, "unit": "rei.service"}], "system": []}}, "rei.service failed"),
     ({"version": {**VERSION, "stale": True}}, "Newer pi-status code on disk"),
     ({"agents": [{**SERVICE_AGENTS[1], "unit_state": "failed"}]}, "OpenClaw failed"),
 ])
@@ -1138,10 +1143,357 @@ def test_website_status(make_page, base_url, unit_state, running, word):
     assert page.locator(".website .pill").inner_text() == word
 
 
+TAILNET_SITE = {**SITE, "name": "REI dashboard", "units": ["rei.service", "rei-proxy.service"], "folder": "~/dev/rei",
+                "url": "https://box.tail9.ts.net:8446/", "redirects": [], "tailnet_only": True}
+
+
+def test_tailnet_only_website_is_marked_and_has_no_redirects(make_page, base_url):
+    page = make_page()
+    page.route("**/api/websites", lambda r: r.fulfill(json=[{**SITE, "tailnet_only": False}, TAILNET_SITE]))
+    open_tab(page, base_url, "websites")
+    home, tailnet = page.locator(".website").nth(0), page.locator(".website").nth(1)
+    assert tailnet.locator(".tailnet-only").inner_text() == "tailnet only"
+    assert tailnet.locator(".ssh-label").inner_text() == "Tailnet only"
+    assert tailnet.locator("a.ssh-cmd").get_attribute("href") == "https://box.tail9.ts.net:8446/"
+    assert "redirect" not in tailnet.inner_text()
+    assert "0" not in tailnet.inner_text().splitlines()                     # an empty list renders nothing, not "0"
+    assert home.locator(".tailnet-only").count() == 0                       # the home-network site is unchanged
+    assert home.locator(".ssh-label").inner_text() == "Wi-Fi and tailnet" and "http://10.0.0.5:8090/" in home.inner_text()
+    assert page.errors == []
+
+
 def test_websites_fit_phone(make_page, base_url):
     page = make_page(*PHONE)
-    page.route("**/api/websites", lambda r: r.fulfill(json=[SITE]))
+    page.route("**/api/websites", lambda r: r.fulfill(json=[SITE, TAILNET_SITE]))
     open_tab(page, base_url, "websites")
     page.wait_for_selector(".website")
+    assert page.evaluate(OVERFLOWING) == []
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
+
+
+# ---------- nav groups, the Home placeholder tab (emails) and REI ----------
+
+QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Spam", "Agent Notes"]
+GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
+  [g.querySelector('.nav-label').textContent, [...g.querySelectorAll('a')].map(a => a.textContent)])"""
+
+
+def settled(page):
+    """Wait for the sidebar's hostname and version: the phone header changes height when they arrive."""
+    page.wait_for_function("document.getElementById('host').textContent !== 'Pi Status'"
+                           " && document.getElementById('version').textContent !== ''")
+
+
+def no_page_scroll(page):
+    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert widths[0] <= widths[1], f"page is {widths[0]}px wide in a {widths[1]}px viewport"
+
+
+def test_nav_is_grouped_into_pi_and_home(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    assert dict(page.evaluate(GROUPS_JS)) == NAV_GROUPS
+    labels = page.locator("nav .nav-label")
+    assert labels.all_inner_texts() == ["PI", "HOME"]   # small uppercase headings
+    pi, home = (page.locator("nav .nav-group").nth(i).bounding_box() for i in (0, 1))
+    assert pi["y"] + pi["height"] <= home["y"] and abs(pi["x"] - home["x"]) < 1   # stacked in the sidebar
+
+
+@pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
+def test_nav_groups_on_phone(make_page, base_url, size):
+    page = make_page(*size)
+    open_tab(page, base_url, "overview")
+    assert dict(page.evaluate(GROUPS_JS)) == NAV_GROUPS
+    settled(page)
+    view = page.locator("#view").bounding_box()
+    groups = [page.locator("nav .nav-group").nth(i) for i in (0, 1)]
+    pi, home = (g.bounding_box() for g in groups)
+    assert pi["y"] + pi["height"] <= home["y"] + 1 and home["y"] + home["height"] <= view["y"]   # Home on its own row
+    for g in groups:
+        label = g.locator(".nav-label").bounding_box()
+        assert label["width"] > 0 and label["y"] >= g.bounding_box()["y"]
+        for link in g.locator("a").all():   # every link on screen, beside its group's label
+            box = link.bounding_box()
+            assert box["x"] >= label["x"] + label["width"] - 1 and box["x"] + box["width"] <= size[0], link.inner_text()
+            assert link.evaluate("e => e.scrollWidth <= e.clientWidth"), f"{link.inner_text()} is cut off"
+    no_page_scroll(page)
+
+
+@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
+def test_no_page_scroll_on_a_narrow_phone(make_page, base_url, tab):
+    page = make_page(*NARROW_PHONE)
+    open_tab(page, base_url, tab)
+    page.wait_for_timeout(300)
+    no_page_scroll(page)
+
+
+@pytest.mark.parametrize("tab", ["emails"])
+def test_placeholder_tabs_render_without_fetching(make_page, base_url, tab):
+    page = make_page()
+    page.route("**/api/status", lambda r: r.fulfill(json=status()))
+    seen = count_api_requests(page)
+    open_tab(page, base_url, tab)
+    page.wait_for_function("document.getElementById('conn').textContent.includes('no live data')")
+    page.wait_for_function("document.getElementById('host').textContent === 'box'")   # the sidebar still names the Pi
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab
+    assert sorted(seen) == ["status", "version"]   # only the sidebar's own requests, nothing for the tab
+    assert page.errors == []
+
+
+@pytest.mark.parametrize("tab", ["emails"])
+def test_placeholder_tabs_never_say_unreachable(make_page, base_url, tab):
+    page = make_page()
+    page.route("**/api/**", lambda r: r.fulfill(status=500, json={"error": "down"}))
+    open_tab(page, base_url, tab)
+    page.wait_for_timeout(300)
+    conn = page.locator("#conn").inner_text()
+    assert "unreachable" not in conn and "updated" not in conn and "no live data" in conn
+
+
+@pytest.mark.parametrize("tab", ["emails"])
+def test_placeholder_tabs_do_not_poll(make_page, base_url, tab):
+    page = make_page()
+    page.clock.install()
+    seen = count_api_requests(page)
+    open_tab(page, base_url, tab)
+    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    before = list(seen)
+    page.clock.run_for(10 * 60 * 1000)
+    page.wait_for_timeout(300)
+    assert seen == before, f"requests made while idle: {seen[len(before):]}"
+
+
+def test_refresh_on_a_placeholder_tab_only_reloads_the_version(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_tab(page, base_url, "emails")
+    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    seen.clear()
+    page.click("#refresh")
+    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    assert seen == ["version"] and page.locator("#view h2").inner_text() == "Emails"
+
+
+def selected_queue(page):
+    return page.locator("#view .queues a[aria-current=page]")
+
+
+def test_emails_tab_shows_search_freshness_and_queues(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "emails")
+    search = page.locator("#view input.mail-search")
+    assert search.get_attribute("placeholder") == "Search emails…" and search.is_disabled()
+    view = page.locator("#view").inner_text()
+    assert "Email data: not connected yet" in view and "All inboxes" in view
+    assert page.locator("#view h3.label").inner_text().lower() == "queues"
+    links = page.locator("#view .queues a")
+    assert [t.split("\n")[0] for t in links.all_inner_texts()] == QUEUES
+    assert [a.get_attribute("href") for a in links.all()] == [
+        "#emails/" + q.lower().replace(" ", "-") for q in QUEUES]
+    assert set(page.locator("#view .count").all_inner_texts()) == {"—"}
+    assert page.locator("#view .count").count() == len(QUEUES) + 1   # each queue and All inboxes
+    assert selected_queue(page).inner_text().startswith("Inbox")     # the default
+    assert "aren't connected yet" in page.locator("#view .mail-pane").inner_text()
+
+
+@pytest.mark.parametrize("queue, title", [("action", "Action"), ("agent-notes", "Agent Notes"), ("spam", "Spam")])
+def test_emails_deep_link_highlights_the_queue(make_page, base_url, queue, title):
+    page = make_page()
+    open_tab(page, base_url, f"emails/{queue}")
+    assert selected_queue(page).count() == 1 and selected_queue(page).get_attribute("data-queue") == queue
+    assert page.locator("#view .mail-pane h3").inner_text() == title   # the empty state names the queue
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "emails"
+
+
+def test_emails_unknown_queue_falls_back_to_inbox(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "emails/nope")
+    assert selected_queue(page).get_attribute("data-queue") == "inbox"
+
+
+def test_emails_queue_click_switches_without_fetching(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "emails")
+    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    seen = count_api_requests(page)
+    page.click("#view .queues a[data-queue=review]")
+    page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Review'")
+    assert page.url.endswith("#emails/review") and selected_queue(page).get_attribute("data-queue") == "review"
+    assert seen == []
+
+
+def test_emails_queues_are_a_column_on_desktop(make_page, base_url):
+    page = make_page(1100, 900)
+    open_tab(page, base_url, "emails")
+    settled(page)
+    side, pane = (page.locator(s).bounding_box() for s in ["#view .mail-side", "#view .mail-pane"])
+    assert side["x"] + side["width"] <= pane["x"] and abs(side["y"] - pane["y"]) < 2
+    first, second = (page.locator("#view .queues a").nth(i).bounding_box() for i in (0, 1))
+    assert second["y"] > first["y"] and abs(second["x"] - first["x"]) < 1   # one queue per line
+
+
+@pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
+def test_emails_queues_are_chips_above_the_pane_on_phone(make_page, base_url, size):
+    page = make_page(*size)
+    open_tab(page, base_url, "emails/drafts")
+    settled(page)
+    side, pane = (page.locator(s).bounding_box() for s in ["#view .mail-side", "#view .mail-pane"])
+    assert side["y"] + side["height"] <= pane["y"]
+    first, second = (page.locator("#view .queues a").nth(i).bounding_box() for i in (0, 1))
+    assert abs(second["y"] - first["y"]) < 1 and second["x"] > first["x"]   # side by side, wrapping
+    for chip in page.locator("#view .queues a").all():
+        box = chip.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= size[0], chip.inner_text()
+    assert page.evaluate(OVERFLOWING) == []
+    no_page_scroll(page)
+
+
+REI = {"units": ["rei.service", "rei-proxy.service"], "unit_state": "active", "published": True,
+       "health": {"reachable": True, "ok": True, "version": "v2026-01-01-12:00-abc1234", "errors": 0},
+       "vault_sync": {"state": "on", "last_sync": None, "last_failed": False},
+       "url": "https://box.tail9.ts.net:8446/", "publish": "sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421",
+       "start": "systemctl --user start rei.service", "folder": "~/dev/rei"}
+
+
+def open_rei(page, base_url, **change):
+    page.route("**/api/rei", lambda r: r.fulfill(json={**REI, **change}))
+    open_tab(page, base_url, "rei")
+    page.wait_for_selector("#view .card.rei")
+    return page.locator("#view .card.rei")
+
+
+def rei_facts(card):
+    return dict(zip(card.locator("dt").all_inner_texts(), card.locator("dd").all_inner_texts()))
+
+
+def test_rei_running_links_out_with_version_and_sync(make_page, base_url):
+    page = make_page()
+    card = open_rei(page, base_url, vault_sync={"state": "on", "last_sync": int(page.evaluate("Date.now() / 1000")) - 7200,
+                                                "last_failed": False})
+    assert card.locator("h4").inner_text() == "REI Dashboard"
+    assert card.locator(".card-head .pill").inner_text() == "running"
+    facts = rei_facts(card)
+    assert facts["Version"] == "v2026-01-01-12:00-abc1234"
+    assert facts["Vault sync"] == "on · last synced 2h 0m ago"
+    assert facts["Next filing due"] == "—" and facts["Open alerts"] == "—" and "Health check" not in facts
+    assert "come later" in card.locator(".later").inner_text()
+    link = card.locator("a.rei-open")
+    assert link.inner_text() == "Open REI" and link.get_attribute("href") == "https://box.tail9.ts.net:8446/"
+    assert link.get_attribute("target") == "_blank" and link.get_attribute("rel") == "noopener"
+    assert "systemctl" not in card.inner_text() and "tailscale serve" not in card.inner_text()
+    assert page.locator("#conn").inner_text().startswith("updated")
+    assert page.errors == []
+
+
+def test_rei_address_has_copy(make_page, base_url):
+    page = make_page()
+    card = open_rei(page, base_url)
+    row = card.locator(".ssh-row").first
+    assert row.locator(".ssh-cmd").inner_text() == "https://box.tail9.ts.net:8446/"
+    assert row.locator(".copy").get_attribute("aria-label") == "Copy REI Dashboard address"
+    row.locator(".copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "https://box.tail9.ts.net:8446/"
+
+
+@pytest.mark.parametrize("unit_state, reachable, word, hint", [
+    ("active", False, "starting", False), ("failed", False, "failed", True), ("inactive", False, "stopped", True),
+    ("activating", False, "starting", False)])
+def test_rei_status_words_and_start_hint(make_page, base_url, unit_state, reachable, word, hint):
+    page = make_page()
+    card = open_rei(page, base_url, unit_state=unit_state,
+                    health={"reachable": reachable, "ok": False, "version": "", "errors": 0})
+    assert card.locator(".card-head .pill").inner_text() == word
+    assert card.locator("a.rei-open").count() == 0 and card.locator("button.rei-open").is_disabled()
+    assert ("systemctl --user start rei.service" in card.inner_text()) == hint
+    if hint:
+        row = card.locator(".ssh-row", has_text="systemctl")
+        row.locator(".copy").click()
+        assert page.evaluate("navigator.clipboard.readText()") == "systemctl --user start rei.service"
+    assert rei_facts(card)["Version"] == "–"
+
+
+def test_rei_shows_health_errors(make_page, base_url):
+    page = make_page()
+    card = open_rei(page, base_url, health={**REI["health"], "ok": False, "errors": 3})
+    assert rei_facts(card)["Health check"] == "3 errors"
+    assert card.locator(".card-head .pill").inner_text() == "running"   # it answers, so it's up
+
+
+@pytest.mark.parametrize("sync, text", [
+    ({"state": "not set up", "last_sync": None, "last_failed": False}, "not set up"),
+    ({"state": "off", "last_sync": None, "last_failed": False}, "off (timer not enabled"),
+    ({"state": "on", "last_sync": None, "last_failed": False}, "on · hasn't synced yet"),
+    ({"state": "on", "last_sync": None, "last_failed": True}, "last run failed"),
+])
+def test_rei_vault_sync_wording(make_page, base_url, sync, text):
+    page = make_page()
+    card = open_rei(page, base_url, vault_sync=sync)
+    assert text in rei_facts(card)["Vault sync"]
+
+
+def test_rei_not_published_shows_the_serve_command(make_page, base_url):
+    page = make_page()
+    card = open_rei(page, base_url, published=False)
+    assert "sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421" in card.inner_text()
+    assert card.locator("button.rei-open").is_disabled()
+
+
+def test_rei_without_tailscale_says_why(make_page, base_url):
+    page = make_page()
+    card = open_rei(page, base_url, url="")
+    assert "No HTTPS address" in card.inner_text() and card.locator("button.rei-open").is_disabled()
+
+
+def test_rei_visit_fetches_its_api_once(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_rei(page, base_url)
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert seen.count("rei") == 1
+
+
+@pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
+def test_rei_fits_phone(make_page, base_url, size):
+    page = make_page(*size)
+    open_rei(page, base_url, unit_state="failed", published=False,
+             health={"reachable": False, "ok": False, "version": "", "errors": 0},
+             vault_sync={"state": "off", "last_sync": None, "last_failed": False})
+    settled(page)
+    assert page.evaluate(OVERFLOWING) == []
+    no_page_scroll(page)
+
+
+@pytest.mark.parametrize("tab, data_tab, h2", [
+    ("overview", "overview", "Overview"), ("agents", "agents", "Agents"), ("lab", "lab", "Agent Lab"),
+    ("websites", "websites", "Websites"), ("network", "network", "Network"), ("system/ports", "system", "System"),
+    ("", "overview", "Overview"), ("nope", "overview", "Overview")])
+def test_old_routes_still_work(make_page, base_url, tab, data_tab, h2):
+    page = make_page()
+    open_tab(page, base_url, tab)
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == data_tab
+    assert page.locator("nav a[aria-current=page]").count() == 1
+    assert h2 in page.locator("#view h2").first.inner_text()
+
+
+def test_switching_from_a_placeholder_back_to_a_live_tab_fetches_it(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "emails")
+    page.wait_for_function("document.getElementById('conn').textContent.includes('no live data')")
+    seen = count_api_requests(page)
+    page.click("nav a[data-tab=network]")
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert seen == ["network"]
+
+
+def test_phone_header_stays_two_lines_on_a_placeholder_tab(make_page, base_url):
+    page = make_page(*PHONE)
+    page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
+    page.route("**/api/status", lambda r: r.fulfill(json=status()))
+    open_tab(page, base_url, "emails")
+    settled(page)
+    host, conn, version, nav = (page.locator(s).bounding_box() for s in ["#host", "#conn", "#version", "nav"])
+    conn_mid, host_mid = conn["y"] + conn["height"] / 2, host["y"] + host["height"] / 2
+    assert abs(conn_mid - host_mid) < 12 or abs(version["y"] - conn["y"]) < 12, (host, conn, version)  # no line of its own
+    assert version["y"] < nav["y"]

@@ -46,6 +46,16 @@ def test_collector_error_returns_500_json_and_server_survives(base_url, monkeypa
     assert get(base_url + "/api/ports")[0] == 200
 
 
+def test_rei_endpoint_shape(base_url, monkeypatch):
+    monkeypatch.setattr(pi_status.collect, "rei_health",
+                        lambda: {"reachable": True, "ok": True, "version": "v1", "errors": 0})
+    status, ctype, body = get(base_url + "/api/rei")
+    data = json.loads(body)
+    assert status == 200 and ctype == "application/json"
+    assert set(data) == {"units", "unit_state", "published", "health", "vault_sync", "url", "publish", "start", "folder"}
+    assert set(data["vault_sync"]) == {"state", "last_sync", "last_failed"}
+
+
 def test_status_has_network_summary(base_url):
     data = json.loads(get(base_url + "/api/status")[2])
     assert data["local_ip"] and data["connection"]

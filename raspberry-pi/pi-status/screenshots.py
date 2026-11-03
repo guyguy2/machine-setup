@@ -14,7 +14,8 @@ from playwright.sync_api import sync_playwright
 
 from pi_status import Handler
 
-TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
+TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
+        "emails", "emails/action", "rei"]
 VIEWPORTS = {"desktop": (1280, 900), "phone": (390, 844)}
 
 
