@@ -74,6 +74,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data is not restored, by design | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
+| `rei` | the REI dashboard: clones the private repo to `~/dev/rei` (needs the `github` step), `uv sync`, its `deploy/pi/install.sh` (links and enables `rei.service` and `rei-proxy.service`; `rei-vault-sync.timer` only once the rclone remote `gdrive:` exists), then `tailscale serve --https=8446` (tailnet only). Prints its manual follow-ups (section 4) | `~/dev/rei` |
 | `shell` | login shell → zsh | |
 | `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |
 
@@ -91,9 +92,14 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    API keys). They're installed but not enabled, on purpose: 8 GB of RAM means one at a time. Start one from the
    pi-status Agents tab, with `~/dev/agent-lab/bin/lab use <agent>`, or with `systemctl --user start hermes-dashboard`
    (or `openclaw-gateway`).
-6. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
+6. **REI dashboard** (if you use it): copy `~/dev/rei/inputs/` from a backup or the Mac (not backed up, by design).
+   For the vault sync, run `rclone authorize "drive"` on a machine with a browser (the Mac), then on the Pi
+   `rclone config create gdrive drive scope=drive.readonly token='<the JSON it printed>'` and
+   `~/dev/machine-setup/raspberry-pi/restore.sh --only rei` again to enable the sync timer. Start it with
+   `systemctl --user start rei.service`; the pi-status REI tab shows whether it's up.
+7. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
    DNS depend on it.
-7. **SSH keys**: SSH access comes only from the key given to Imager in step 1 (`authorized_keys` isn't backed up, on
+8. **SSH keys**: SSH access comes only from the key given to Imager in step 1 (`authorized_keys` isn't backed up, on
    purpose). To allow another machine, append its public key to `~/.ssh/authorized_keys`. The Pi needs no private
    keys: `gh` handles git over HTTPS.
 
@@ -103,8 +109,9 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 |---|---|
 | `systemctl --user is-active pi-status` | `active`; `curl -s localhost:8080 \| head -1` prints HTML |
 | `docker ps` | `pihole` Up (healthy); `getent hosts example.com` resolves |
-| `tailscale serve status` | `/` → 8080, `:8443/hermes` → 9120 (Caddy) → 9119, `:8444/openclaw` → 18789, `:8445/pihole` → 8081 |
-| `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw; symlinks openclaw_node, pihole, pi-status, scripts |
+| `tailscale serve status` | `/` → 8080, `:8443/hermes` → 9120 (Caddy) → 9119, `:8444/openclaw` → 18789, `:8445/pihole` → 8081, `:8446` → 8421 (REI's Caddy) |
+| `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw, rei, websites; symlinks openclaw_node, pihole, pi-status, scripts |
+| `curl -s 127.0.0.1:8080/api/rei` | `"unit_state": "active"` and `"health": {"reachable": true, ...}` once `inputs/` is in place and it's started |
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |
 | `upd` | runs to "All done." |
@@ -151,6 +158,7 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 | Hermes dashboard | user unit `hermes-dashboard.service` | 127.0.0.1:9119 | `:8443/hermes/` (through `hermes-proxy.service`, Caddy on 127.0.0.1:9120) |
 | OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444/openclaw/` |
 | Pi-hole | docker container `pihole` | DNS :53 (all interfaces), UI 127.0.0.1:8081 | `:8445/pihole/admin/` |
+| REI dashboard | user units `rei.service` (uvicorn) and `rei-proxy.service` (Caddy; rewrites Host, the app only accepts loopback Hosts), `rei-vault-sync.timer` (rclone, read-only Drive), from the private repo `~/dev/rei` (its `deploy/pi/install.sh`, run by the `rei` step) | 127.0.0.1:8420, Caddy 127.0.0.1:8421 | `:8446/` → 8421, tailnet only (not on the Wi-Fi/LAN, no redirect port) |
 | DreamBase (family site) | user units `dreambase*` from the private repo `~/dev/websites` (its `install.sh`, run by the systemd step; manual steps in its README) | 127.0.0.1:8092 | not `tailscale serve`: its own Caddy on :8091 (HTTPS, Wi-Fi and tailnet), :8090 redirects |
 
 `tailscale serve` settings belong to the machine and aren't backed up; the `pi-status` step recreates them.

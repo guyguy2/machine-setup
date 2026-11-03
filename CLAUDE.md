@@ -159,7 +159,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 
 - `raspberry-pi/bootstrap.sh`: `curl | bash` entry point on a fresh image (installs git, clones, runs `restore.sh`).
 - `raspberry-pi/restore.sh [--dry-run] [--only steps]`: steps apt-sources apt system tailscale brew uv npm omzsh
-  dotfiles github repos links pihole agents pi-status shell systemd. Safe to re-run.
+  dotfiles github repos links pihole agents pi-status rei shell systemd. Safe to re-run.
 - `raspberry-pi/save.sh [--push]`: rewrites `raspberry-pi/snapshot/` (dotfiles, apt/Homebrew/uv/npm lists, units,
   `system.txt`, `repos.txt`) and commits only `snapshot/`; then warns about unpushed work in `~/dev`. `upd` runs it.
 - No secrets or agent state are backed up (public repo). Never put secrets, SSH private keys, history or files over
