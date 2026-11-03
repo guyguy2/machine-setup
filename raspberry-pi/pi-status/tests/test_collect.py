@@ -794,9 +794,9 @@ def test_emails_fresh_file_is_passed_through_with_derived_fields(mail_file):
     assert data["connected"] is True and data["stale"] is False and 200 <= data["age_s"] <= 300
     assert data["needs_you"] == 3                       # Action 2 + Respond 1
     assert [q["id"] for q in data["queues"]][6] == "delete"
-    assert len(data["threads"]) == 10 and len(data["notes"]) == 3
+    assert len(data["threads"]) == 11 and len(data["notes"]) == 3 and data["trash"]["marked"] == ["000000000000de01"]
     assert data["threads"][0]["from_addr"] == "office@school.example"
-    assert data["actions_enabled"] is False and "error" not in data
+    assert data["actions_enabled"] is True and "error" not in data
 
 
 def test_emails_stale_after_30_minutes(mail_file):
@@ -830,4 +830,23 @@ def test_emails_missing_lists_are_filled_in(mail_file):
     mail_file.write_text(json.dumps({"version": 1, "generated": "2026-01-01T00:00:00+00:00"}))
     data = collect.emails()
     assert data["queues"] == [] and data["threads"] == [] and data["notes"] == []
-    assert data["needs_you"] == 0 and data["sync"]["ok"] is False
+    assert data["needs_you"] == 0 and data["sync"]["ok"] is False and data["trash"] == {"marked": []}
+
+
+@pytest.mark.parametrize("action, body, args", [
+    ("decide", {"thread": "0123456789abcdef", "queue": "done"}, ["decide", "0123456789abcdef", "done"]),
+    ("undo", {"thread": "0123456789", "queue": "ignored"}, ["undo", "0123456789"]),
+    ("trash", {"ids": ["0123456789", "abcdefabcd", "0123456789"]}, ["trash", "--yes", "0123456789", "abcdefabcd"]),
+    ("trash", {"ids": ["0123456789"] * 500}, ["trash", "--yes", "0123456789"]),
+])
+def test_mail_args(action, body, args):
+    assert collect.mail_args(action, body) == args
+
+
+@pytest.mark.parametrize("stdout, expected", [
+    ('{"ok": true}', {"ok": True}),
+    ('warning: slow\n{"ok": false, "error": "x"}\n', {"ok": False, "error": "x"}),
+    ("[1]", None), ("", None), ("nope", None),
+])
+def test_mail_output(stdout, expected):
+    assert collect.mail_output(stdout) == expected

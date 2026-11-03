@@ -1327,8 +1327,11 @@ def test_emails_queue_counts_and_dots(make_page, base_url):
     assert dot("waiting") == color("--warn")          # 1 overdue
     assert dot("agent-notes") == color("--warn")
     assert queue_row(page, "delete").locator(".q-dot").count() == 0
-    assert queue_row(page, "delete").locator(".count").inner_text() == "1"
-    assert page.locator("#view .mail-all .count").inner_text() == "10"
+    assert queue_row(page, "delete").locator(".count").inner_text() == "2"
+    assert page.locator("#view .mail-all .count").inner_text() == "11"
+    # how many you've confirmed, quietly next to the count
+    assert queue_row(page, "action").locator(".q-confirmed").inner_text() == "1✓"
+    assert queue_row(page, "respond").locator(".q-confirmed").count() == 0   # confirmed 0
 
 
 def test_emails_empty_queue_has_no_badge_and_waiting_is_grey_when_nothing_is_overdue(make_page, base_url):
@@ -1349,7 +1352,7 @@ def test_emails_empty_queue_has_no_badge_and_waiting_is_grey_when_nothing_is_ove
 
 def test_emails_thread_card(make_page, base_url):
     page = make_page()
-    open_emails(page, base_url, "emails/action")
+    open_emails(page, base_url, "emails/action", data=mail_api(actions_enabled=False))
     assert page.locator("#view .mail-pane h3").inner_text() == "Action"
     assert "Something to do" in page.locator("#view .mail-head").inner_text()
     assert page.locator("#view .mail-only").inner_text() == "Suggestions only — nothing is changed in Gmail yet."
@@ -1373,7 +1376,7 @@ def test_emails_thread_card(make_page, base_url):
     assert "primary" in buttons.first.get_attribute("class") and "primary" not in buttons.nth(1).get_attribute("class")
     assert all(b.is_disabled() for b in buttons.all())
     link = card.locator("a.gmail")
-    assert link.inner_text() == "Open in Gmail" and link.get_attribute("href") == "https://mail.google.com/mail/u/0/#all/t-action-1"
+    assert link.inner_text() == "Open in Gmail" and link.get_attribute("href") == "https://mail.google.com/mail/u/0/#all/000000000000a001"
     assert link.get_attribute("target") == "_blank" and link.get_attribute("rel") == "noopener"
     assert cards(page).nth(1).locator(".suggest .tag").first.inner_text() == "rule"
     assert page.errors == []
@@ -1381,15 +1384,17 @@ def test_emails_thread_card(make_page, base_url):
 
 def test_emails_buttons_enabled_when_actions_are(make_page, base_url):
     page = make_page()
-    open_emails(page, base_url, "emails/action", data=mail_api(actions_enabled=True))
+    open_emails(page, base_url, "emails/action")
     assert page.locator("#view .mail-only").count() == 0
-    assert not cards(page).first.locator(".choice").first.is_disabled()
+    assert page.locator("#view .mail-help").inner_text() == \
+        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all"
+    assert all(not b.is_disabled() for b in cards(page).first.locator("button").all())
 
 
 def test_emails_new_sender_and_unsuggested_thread(make_page, base_url):
     page = make_page()
     open_emails(page, base_url, "emails/delete")
-    assert cards(page).locator(".history").inner_text() == "new sender"
+    assert cards(page).first.locator(".history").inner_text() == "new sender"
     page.click("#view .queues a[data-queue=inbox]")
     page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
     card = cards(page).first
@@ -1422,7 +1427,7 @@ def test_emails_all_inboxes_lists_every_thread_with_its_queue(make_page, base_ur
     page = make_page()
     open_emails(page, base_url, "emails/all")
     assert page.locator("#view .mail-all").get_attribute("aria-current") == "page"
-    assert cards(page).count() == 10
+    assert cards(page).count() == 11
     assert cards(page).first.locator(".pill").inner_text() == "Action"
 
 
@@ -1725,3 +1730,140 @@ def test_sidebar_is_titled_home_base_and_names_the_pi(make_page, base_url):
     assert page.locator("#app").inner_text() == "Home Base"
     assert page.locator("#host").inner_text() == "box"
     assert page.title() == "Home Base · box"
+
+
+# ---------- emails: the choice buttons (POST to the server, which runs tests/fake_mail.py on a copy of the fixture) ----------
+
+SCHOOL, WATER, BANK, PROMO = "000000000000a001", "000000000000a002", "000000000000d002", "000000000000de01"
+
+
+def card(page, thread):
+    return page.locator(f"#view .thread[data-thread='{thread}']")
+
+
+def open_live_emails(page, base_url, hash="emails"):
+    """The real /api/emails and POSTs, on the fake_mail fixture's state file."""
+    open_tab(page, base_url, hash)
+    page.wait_for_selector("#view .mail-pane .mail-head")
+
+
+def test_emails_decide_by_keyboard_moves_the_card_then_undo_brings_it_back(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/action")
+    review = card(page, SCHOOL).locator(".choice[data-choice=review]")
+    review.focus()
+    page.keyboard.press("Enter")
+    flash = page.locator("#view .mail-flash")
+    flash.wait_for()
+    assert flash.locator("span").inner_text() == "“Field trip form due Friday” → Review"
+    assert card(page, SCHOOL).count() == 0                                  # it left the Action queue
+    assert fake_mail.calls() == [["decide", SCHOOL, "review", "--via", "web", "--json"]]
+    assert page.locator("nav a[data-tab=emails] .nav-badge").inner_text() == "2"   # one fewer needs you
+    assert page.title().startswith("(2) ")
+    undo = flash.locator("button.undo")
+    assert undo.evaluate("e => e === document.activeElement")                # keyboard focus lands on Undo
+    page.keyboard.press("Enter")
+    card(page, SCHOOL).wait_for()
+    assert fake_mail.calls()[-1] == ["undo", SCHOOL, "--via", "web", "--json"]
+    assert page.locator("#view .mail-flash").count() == 0                   # the card is back, nothing to say
+    assert card(page, SCHOOL).locator(".decided").count() == 0
+    assert page.errors == []
+
+
+def test_emails_decided_cards(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/review")
+    bank = card(page, BANK)
+    assert bank.locator(".decided").inner_text() == "✓ You chose Review"
+    chosen = bank.locator(".choice.chosen")
+    assert chosen.inner_text() == "Review" and chosen.get_attribute("aria-pressed") == "true" and chosen.is_disabled()
+    assert "primary" in chosen.get_attribute("class") and bank.locator(".choice.primary").count() == 1
+    assert bank.locator("button.undo").inner_text() == "Undo" and bank.locator(".choice.done").count() == 0   # Done: Action/Respond only
+    page.click("#view .queues a[data-queue=action]")
+    water = card(page, WATER)
+    water.wait_for()
+    assert water.locator(".decided").inner_text() == "✓ Labelled in Gmail"
+    assert water.locator(".choice.done").inner_text() == "Done" and water.locator("button.undo").count() == 1
+    assert card(page, SCHOOL).locator("button.undo, .choice.done").count() == 0   # undecided: no Undo or Done
+
+
+def test_emails_done_archives_and_can_be_undone(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/action")
+    card(page, WATER).locator(".choice.done").click()
+    page.locator("#view .mail-flash").wait_for()
+    assert page.locator("#view .mail-flash span").inner_text() == "“Your bill is ready” archived (Done)"
+    assert card(page, WATER).count() == 0 and fake_mail.calls() == [["decide", WATER, "done", "--via", "web", "--json"]]
+
+
+def test_emails_choice_locks_the_card_with_a_spinner_while_it_runs(make_page, base_url, fake_mail):
+    page = make_page()
+    held = []
+    page.route("**/api/emails/decide", lambda r: held.append(r))
+    open_live_emails(page, base_url, "emails/action")
+    card(page, SCHOOL).locator(".choice[data-choice=respond]").click()
+    card(page, SCHOOL).locator(".spin").wait_for()
+    assert all(b.is_disabled() for b in card(page, SCHOOL).locator("button").all())
+    assert not card(page, WATER).locator(".choice[data-choice=review]").is_disabled()   # other cards stay usable
+    page.wait_for_function("true")
+    held[0].continue_()
+    page.locator("#view .mail-flash").wait_for()
+    assert page.locator("#view .spin").count() == 0
+
+
+def test_emails_choice_error_shows_on_the_card(make_page, base_url, fake_mail):
+    page = make_page()
+    fake_mail.reply(2, {"ok": False, "error": "AUTH EXPIRED: run gws-login"})
+    open_live_emails(page, base_url, "emails/action")
+    school = card(page, SCHOOL)
+    school.locator(".choice[data-choice=review]").click()
+    error = school.locator(".act-error")
+    error.wait_for()
+    assert error.inner_text() == "AUTH EXPIRED: run gws-login" and error.get_attribute("role") == "alert"
+    assert school.locator(".spin").count() == 0
+    assert all(not b.is_disabled() for b in school.locator("button").all())   # try again
+    assert page.locator("#view .mail-flash").count() == 0
+
+
+def test_emails_trash_all_marked_after_confirming(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/delete")
+    assert card(page, PROMO).locator(".decided").inner_text() == "✓ You chose Delete · marked for Trash"
+    bar = page.locator("#view .mail-trash")
+    button = bar.locator("button.danger")
+    assert button.inner_text() == "Trash all 1 marked"
+    messages = []
+
+    def dismiss(dialog):
+        messages.append(dialog.message)
+        dialog.dismiss()
+    page.once("dialog", dismiss)
+    button.click()
+    page.wait_for_timeout(200)
+    assert messages == ["Move 1 email to Gmail Trash? You can restore them for 30 days."]
+    assert fake_mail.calls() == []                            # cancelled: nothing ran
+    page.once("dialog", lambda d: d.accept())
+    button.click()
+    page.locator("#view .mail-flash").wait_for()
+    assert fake_mail.calls() == [["trash", "--yes", PROMO, "--via", "web", "--json"]]   # exactly the marked ids
+    assert page.locator("#view .mail-flash").inner_text() == "Moved 1 to Gmail Trash."
+    assert card(page, PROMO).count() == 0 and page.locator("#view .mail-trash").count() == 0
+    assert cards(page).count() == 1                            # the suggested-only one still needs a Delete click first
+
+
+def test_emails_no_trash_bar_when_nothing_is_marked(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/delete", data=mail_api(trash={"marked": []}))
+    assert page.locator("#view .mail-trash").count() == 0
+
+
+@pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
+def test_emails_decided_cards_fit_phone(make_page, base_url, fake_mail, size):
+    page = make_page(*size)
+    open_live_emails(page, base_url, "emails/action")
+    settled(page)
+    for c in cards(page).all():
+        box = c.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= size[0]
+    assert page.evaluate(OVERFLOWING) == []
+    no_page_scroll(page)

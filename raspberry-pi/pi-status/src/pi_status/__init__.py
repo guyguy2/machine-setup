@@ -9,6 +9,8 @@ from importlib.resources import files
 
 from . import collect
 
+MAX_BODY = 32 * 1024  # POST bodies: 500 thread ids fit in about 14 KB
+
 ROUTES = {
     "/api/status": collect.status,
     "/api/agents": collect.agents,
@@ -57,12 +59,15 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         restart = False
         agent = re.fullmatch(r"/api/agents/([\w.@-]+)/(start|stop)", path)
-        if path != "/api/restart" and not agent:
+        mail = re.fullmatch(r"/api/emails/(decide|undo|trash)", path)
+        if path != "/api/restart" and not agent and not mail:
             code, body = 404, {"error": "not found"}
         elif self.headers.get("X-Requested-With") != "pi-status":
             # A custom header can't be sent cross-site without a CORS preflight (which we never allow), so
-            # another website can't make your browser restart this server or start and stop agents.
+            # another website can't make your browser restart this server, start and stop agents or touch mail.
             code, body = 403, {"error": "missing X-Requested-With header"}
+        elif mail:
+            code, body = self.mail(mail[1])
         elif agent:
             code, body = collect.control_agent(agent[1], agent[2])
         elif not collect.can_restart():
@@ -75,6 +80,20 @@ class Handler(BaseHTTPRequestHandler):
             pass
         if restart:
             collect.restart_service()  # after the reply, because this process is about to be stopped
+
+    def mail(self, action: str) -> tuple[int, dict]:
+        """A choice from the Emails tab: a small JSON body, checked and run by collect.mail_action."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_BODY:
+            return 413 if length > MAX_BODY else 400, {"ok": False, "error": f"send a JSON body of at most {MAX_BODY} bytes"}
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            return 400, {"ok": False, "error": "the body isn't valid JSON"}
+        return collect.mail_action(action, body)
 
     def log_message(self, format: str, *args) -> None:
         pass

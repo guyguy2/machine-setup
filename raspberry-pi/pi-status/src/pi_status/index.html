@@ -212,6 +212,24 @@
   .choice:disabled { cursor: not-allowed; opacity: .6; }
   .choice.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }
   .gmail { margin-left: auto; text-decoration: none; display: inline-block; text-align: center; }
+  .choice:focus-visible, .undo:focus-visible, .danger:focus-visible, .gmail:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .thread .decided { color: var(--ok); font-weight: 600; }
+  .act-error { margin-top: 8px; padding: 6px 8px; border-radius: 8px; font-size: .875rem;
+               background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--text); }
+  .mail-help { color: var(--muted); font-size: .8125rem; }
+  .mail-flash { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; border-radius: 8px;
+                background: color-mix(in srgb, var(--ok) 14%, transparent); font-size: .875rem; overflow-wrap: anywhere; }
+  .mail-flash:focus { outline: none; }
+  .mail-trash { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .copy.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  .copy.danger:hover { filter: brightness(.92); }
+  .mail .copy:disabled { cursor: not-allowed; opacity: .6; }
+  .mail .choice.chosen:disabled { opacity: 1; cursor: default; }  /* your choice: solid, just not clickable again */
+  .q-confirmed { color: var(--muted); font-size: .6875rem; font-variant-numeric: tabular-nums; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--track); border-top-color: var(--accent);
+          border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 3s; } }
   .note-card { border-left: 3px solid var(--accent); }
   .note-card.warn { border-left-color: var(--warn); }
   .note-card.question { border-left-color: var(--teal); }
@@ -937,12 +955,75 @@ function queueBadge(d, q) {
   if (!q.count) return null;  // an empty queue shows nothing at all
   const overdue = q.id === "waiting" && q.overdue > 0;
   return h("span", { class: "q-badge", title: overdue ? `${q.overdue} overdue` : null },
+    q.confirmed > 0 && h("span", { class: "q-confirmed", title: `you confirmed ${q.confirmed} of ${q.count}` }, q.confirmed + "✓"),
     !NO_DOT.has(q.id) && h("span", { class: `q-dot q-${q.id}${overdue ? " overdue" : ""}` }),
     h("span", { class: "count" + (q.id === "inbox" ? " inbox" : "") }, String(q.count)));
 }
 
+// ---- choices: POST to /api/emails/<action>, which runs the sorter's `mail` command and answers with the new state ----
+let mailFlash = null;  // what the last choice did, shown above the cards when its card has left the view
+
+async function mailAct(btn, action, body, said) {
+  const box = btn.closest(".thread, .mail-trash, .mail-flash");  // its buttons are locked while this runs
+  const buttons = [...box.querySelectorAll("button")];
+  buttons.forEach(b => (b.disabled = true));
+  box.querySelector(".act-error")?.remove();
+  const spin = h("span", { class: "spin", role: "status", "aria-label": "Working…" });
+  btn.after(spin);
+  let r = null, out;
+  try {
+    r = await fetch("/api/emails/" + action, { method: "POST", body: JSON.stringify(body),
+      headers: { "X-Requested-With": "pi-status", "Content-Type": "application/json" } });
+    out = await r.json();
+  } catch (e) {
+    out = { ok: false, error: r ? `Home Base answered ${r.status}` : "Couldn't reach Home Base: " + e.message };
+  }
+  if (r?.ok && out.ok !== false && out.state) {
+    mailFlash = said(out.state, out);
+    redrawMail(out.state, body.thread);
+    return;
+  }
+  spin.remove();
+  buttons.forEach(b => (b.disabled = b.dataset.locked === "1"));
+  box.append(h("div", { class: "act-error", role: "alert" }, out.error || `Failed (${r?.status})`));
+}
+
+function redrawMail(state, thread) {
+  if (current.id !== "emails") return mailBadge(state);
+  lastLoad = { view: currentView, args: [state] };
+  show(current, emails(state));
+  const card = thread && $("view").querySelector(`.thread[data-thread="${CSS.escape(thread)}"]`);
+  const flash = $("view").querySelector(".mail-flash");
+  (card ? card.querySelector(".undo") : flash?.querySelector("button") || flash)?.focus();  // keep the keyboard nearby
+}
+
+const subjectOf = t => `“${t.subject || "(no subject)"}”`;
+
+function decide(btn, t, queue) {
+  mailAct(btn, "decide", { thread: t.id, queue }, () => ({ thread: t.id, subject: t.subject, undo: true,
+    text: queue === "done" ? `${subjectOf(t)} archived (Done)` : `${subjectOf(t)} → ${queueTitle(queue)}` }));
+}
+
+function undo(btn, t) {
+  mailAct(btn, "undo", { thread: t.id }, state => {
+    const now = state.threads.find(x => x.id === t.id);
+    return { thread: t.id, text: `${subjectOf(t)} is back${now ? " in " + queueTitle(now.queue) : ""}` };
+  });
+}
+
+function trashAll(btn, ids) {
+  const n = ids.length, emails = `${n} email${n === 1 ? "" : "s"}`;
+  if (!confirm(`Move ${emails} to Gmail Trash? You can restore them for 30 days.`)) return;
+  mailAct(btn, "trash", { ids }, (state, out) => ({ text: `Moved ${typeof out.trashed === "number" ? out.trashed : n} to Gmail Trash.` }));
+}
+
+function decidedText(dec) {
+  if (dec.via === "gmail") return "✓ Labelled in Gmail";
+  return `✓ You chose ${queueTitle(dec.queue)}${dec.queue === "delete" ? " · marked for Trash" : ""}`;
+}
+
 function threadCard(d, t, inQueue) {
-  const rec = t.rec, s = t.sender;
+  const rec = t.rec, s = t.sender, dec = t.decided, chosen = dec?.queue, live = d.actions_enabled;
   // the suggestion first, then its alternatives, then the rest
   const order = [...new Set([rec?.queue, ...(rec?.alternatives || []), ...CHOICES])].filter(c => CHOICES.includes(c));
   const days = t.waiting_days;
@@ -965,11 +1046,20 @@ function threadCard(d, t, inQueue) {
       days != null && h("div", { class: "waiting" + (t.overdue ? " overdue" : "") },
         `waiting ${days} day${days === 1 ? "" : "s"}${t.overdue ? " · overdue" : ""}`),
       h("div", { class: "detail history" },
-        s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender")),
+        s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender"),
+      dec && h("div", { class: "decided" }, decidedText(dec))),
     h("div", { class: "choices", role: "group", "aria-label": "Move to" },
-      order.map(c => h("button", { class: "copy choice" + (c === rec?.queue ? " primary" : ""), type: "button", "data-choice": c,
-                                   disabled: !d.actions_enabled,
-                                   title: d.actions_enabled ? null : "Suggestions only: nothing is changed in Gmail yet" }, queueTitle(c))),
+      // undecided: the suggestion is the primary button; decided: your choice is, pressed and not clickable again
+      order.map(c => h("button", { class: "copy choice" + (c === (chosen || rec?.queue) ? " primary" : "") + (c === chosen ? " chosen" : ""),
+                                   type: "button", "data-choice": c, "aria-pressed": chosen ? String(c === chosen) : null,
+                                   disabled: !live || c === chosen, "data-locked": c === chosen ? "1" : null,
+                                   title: live ? (c === chosen ? "Your choice" : null) : "Suggestions only: nothing is changed in Gmail yet",
+                                   onclick: e => decide(e.currentTarget, t, c) }, queueTitle(c))),
+      live && (chosen === "action" || chosen === "respond") &&
+        h("button", { class: "copy choice done", type: "button", "data-choice": "done", title: "Archive it and drop the label",
+                      onclick: e => decide(e.currentTarget, t, "done") }, "Done"),
+      live && chosen && h("button", { class: "copy undo", type: "button", title: "Put it back as it was before your first choice",
+                                      onclick: e => undo(e.currentTarget, t) }, "Undo"),
       /^https:\/\//.test(t.gmail_url || "") &&
         h("a", { class: "copy gmail", href: t.gmail_url, target: "_blank", rel: "noopener" }, "Open in Gmail")));
 }
@@ -1009,10 +1099,22 @@ function mailPane(d, sel) {
     cards = d.threads.filter(t => t.queue === sel.id).map(t => threadCard(d, t, false));
     none = sel.id === "inbox" ? "Inbox zero: nothing left to sort." : `Nothing in ${sel.title}.`;
   }
+  const marked = d.trash.marked;
+  const shown = new Set(cards.map(c => c.dataset.thread).filter(Boolean));
+  const flash = mailFlash && !(mailFlash.thread && shown.has(mailFlash.thread)) && mailFlash;
+  const flashed = flash && d.threads.find(t => t.id === flash.thread);
   return [
     h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
-    !d.actions_enabled && (needle || sel.id !== "agent-notes") &&
-      h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet."),
+    (needle || sel.id !== "agent-notes") && (d.actions_enabled
+      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all")
+      : h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet.")),
+    flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
+      flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
+        onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo")),
+    !needle && sel.id === "delete" && marked.length > 0 && h("div", { class: "card mail-trash" },
+      h("span", {}, `${marked.length} marked for Trash`),
+      h("button", { class: "copy danger", type: "button", disabled: !d.actions_enabled,
+                    onclick: e => trashAll(e.currentTarget, [...marked]) }, `Trash all ${marked.length} marked`)),
     cards.length ? cards : h("div", { class: "card empty" }, none),
   ];
 }
@@ -1224,6 +1326,7 @@ function route() {
     else a.removeAttribute("aria-current");
   }
   mailQuery = "";
+  mailFlash = null;
   if (currentView === before && currentView.keep && lastLoad?.view === currentView) {
     show(current, currentView.render(...lastLoad.args));
     return;
