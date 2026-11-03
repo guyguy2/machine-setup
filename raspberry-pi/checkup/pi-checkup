@@ -20,8 +20,10 @@ USER_UNITS=(pi-status.service dreambase.service dreambase-proxy.service dreambas
 AGENTS=("Hermes|hermes-dashboard.service hermes-proxy.service|9119" "OpenClaw|openclaw-gateway.service|18789")
 # Ports meant to be reachable from the LAN; everything else should listen on 127.0.0.1 or the tailnet.
 LAN_PORTS=(22 53 8090 8091)
-# Pages on the LAN to probe, name|url; {ts} is this Pi's tailnet DNS name (connections go to 127.0.0.1).
-WEBSITES=("DreamBase|https://{ts}:8091/site/")
+# Pages on the LAN to probe, name|url; {ts} is this Pi's tailnet DNS name (connections go to 127.0.0.1). This repo is
+# public, so sites with private names or paths are read from the private websites repo's sites.json (as pi-status does).
+WEBSITES=()
+SITES_JSON=~/dev/websites/sites.json
 # Files holding credentials: must not be readable by group or others.
 SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev/pihole/.env ~/.config/gh/hosts.yml
   ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc
@@ -170,7 +172,11 @@ check_services() {
   # LAN websites: answer, and their certificate isn't about to expire.
   local ts name url hp end left
   ts=$(ts_name)
-  for f in "${WEBSITES[@]}"; do
+  local -a sites=("${WEBSITES[@]}")
+  if [[ -r $SITES_JSON ]]; then
+    mapfile -t -O "${#sites[@]}" sites < <(jq -r '.[] | select(.tailnet_only | not) | "\(.name)|https://{ts}:\(.port)\(.path)"' "$SITES_JSON" 2>/dev/null)
+  else info "no $SITES_JSON (the private websites repo): its sites aren't checked"; fi
+  for f in "${sites[@]}"; do
     name=${f%%|*} url=${f#*|} url=${url//\{ts\}/$ts}
     hp=${url#https://}; hp=${hp%%/*}
     code=$(http_code --resolve "$hp:127.0.0.1" "$url")

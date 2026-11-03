@@ -1185,7 +1185,7 @@ def test_version_shares_the_status_line_on_phone(make_page, base_url):
 
 # ---------- websites ----------
 
-SITE = {"name": "DreamBase", "what": "A family dashboard", "units": ["dreambase.service", "dreambase-proxy.service"],
+SITE = {"name": "Sample site", "what": "A family dashboard", "units": ["dreambase.service", "dreambase-proxy.service"],
         "folder": "~/dev/websites/dreambase", "unit_state": "active", "running": True,
         "url": "https://box.tail9.ts.net:8091/", "redirects": ["http://10.0.0.5:8090/", "http://box.local:8090/"]}
 

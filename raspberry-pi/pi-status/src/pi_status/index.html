@@ -1042,7 +1042,7 @@ function websites(list) {
         "Old addresses that redirect here: ", w.redirects.flatMap((r, i) => [i ? ", " : "", h("span", { class: "mono" }, r)])),
       h("div", { class: "sub", style: "margin-top:4px" },
         "Services: ", h("span", { class: "mono" }, w.units.join(", ")), " · Folder: ", h("span", { class: "mono" }, w.folder))))
-    : empty("No websites yet. Add one to WEBSITES in collect.py."),
+    : empty("No websites yet. Add one to WEBSITES in collect.py, or a private one to ~/dev/websites/sites.json."),
   ];
 }
 

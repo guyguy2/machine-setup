@@ -543,10 +543,12 @@ def dashboards() -> list[dict]:
 # Tailscale reach it too; its plain-HTTP `redirect_port` (optional) sends old bookmarks there. A `tailnet_only` site is
 # published by `tailscale serve` instead and can't be reached from the Wi-Fi at all.
 
+# This repo is public, so sites whose names or paths are private (family names) are listed in the private websites
+# repo's `sites.json` instead, with the same keys; pi-checkup reads it too. They come first, then WEBSITES.
+SITES_FILE = Path(HOME) / "dev/websites/sites.json"
+SITE_KEYS = {"name", "what", "unit", "proxy", "port", "path", "folder"}  # required in each entry
+
 WEBSITES = [
-    {"name": "DreamBase", "what": "A family dashboard; saves to dreambase_data.json in its folder",
-     "unit": "dreambase.service", "proxy": "dreambase-proxy.service", "port": 8091, "path": "/site/", "redirect_port": 8090,
-     "folder": "~/dev/websites/dreambase"},
     {"name": "REI dashboard", "what": "Separate dashboard app (see the REI tab); behind rei-proxy (Caddy) on 127.0.0.1:8421",
      "unit": "rei.service", "proxy": "rei-proxy.service", "port": 8446, "path": "/", "tailnet_only": True,
      "folder": "~/dev/rei"},
@@ -567,12 +569,24 @@ def combined_state(states: list[str]) -> str:
     return next((s for s in states if s != "active"), "active")
 
 
+def site_list() -> list[dict]:
+    """The private sites from SITES_FILE (none if it's missing or unreadable; entries without the keys are skipped),
+    then WEBSITES."""
+    try:
+        private = json.loads(SITES_FILE.read_text())
+    except (OSError, ValueError):
+        private = []
+    if not isinstance(private, list):
+        private = []
+    return [w for w in private if isinstance(w, dict) and SITE_KEYS <= w.keys()] + WEBSITES
+
+
 def websites() -> list[dict]:
     listening = exposed_ports()
     dns_name = tailscale_info().get("dns_name", "")
     lan_ip = default_route().get("prefsrc", "")
     result = []
-    for w in WEBSITES:
+    for w in site_list():
         redirect = w.get("redirect_port")
         result.append({
             "name": w["name"], "what": w["what"], "units": [w["unit"], w["proxy"]], "folder": w["folder"],

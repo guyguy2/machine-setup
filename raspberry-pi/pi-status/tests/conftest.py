@@ -63,6 +63,13 @@ def fake_mail(tmp_path, monkeypatch):
     return fake
 
 
+@pytest.fixture(autouse=True)
+def no_private_sites(monkeypatch, tmp_path):
+    """Tests never read the real ~/dev/websites/sites.json: the private site list stays out of test output."""
+    from pi_status import collect
+    monkeypatch.setattr(collect, "SITES_FILE", tmp_path / "sites.json")
+
+
 @pytest.fixture(scope="session")
 def base_url():
     """The real server on a free localhost port."""

@@ -605,8 +605,13 @@ def test_control_agent_reports_systemctl_failure(monkeypatch):
     assert code == 500 and body["error"] == "Unit not loaded."
 
 
+SAMPLE_SITE = {"name": "Sample site", "what": "A family dashboard", "unit": "sample.service", "proxy": "sample-proxy.service",
+               "port": 8091, "path": "/kids/", "redirect_port": 8090, "folder": "~/dev/websites/sample"}
+
+
 def test_websites_https_on_tailnet_name_and_proxy_counts(monkeypatch):
-    states = {"dreambase.service": "active", "dreambase-proxy.service": "active", "rei.service": "active", "rei-proxy.service": "active"}
+    collect.SITES_FILE.write_text(json.dumps([SAMPLE_SITE]))
+    states = {"sample.service": "active", "sample-proxy.service": "active", "rei.service": "active", "rei-proxy.service": "active"}
     monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "all interfaces"}])
     monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
     monkeypatch.setattr(collect, "default_route", lambda: {"prefsrc": "10.0.0.5"})
@@ -614,15 +619,27 @@ def test_websites_https_on_tailnet_name_and_proxy_counts(monkeypatch):
     monkeypatch.setattr(collect.platform, "node", lambda: "box")
     site = collect.websites()[0]
     assert site["running"] and site["unit_state"] == "active"
-    assert site["url"] == "https://box.tail9.ts.net:8091/site/"
+    assert site["url"] == "https://box.tail9.ts.net:8091/kids/"
     assert site["redirects"] == ["http://10.0.0.5:8090/", "http://box.local:8090/"]
     assert site["tailnet_only"] is False
 
-    states["dreambase-proxy.service"] = "failed"  # the app is up but nothing serves it
+    states["sample-proxy.service"] = "failed"  # the app is up but nothing serves it
     monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "local only"}])
     monkeypatch.setattr(collect, "tailscale_info", lambda: {})
     site = collect.websites()[0]
     assert site["unit_state"] == "failed" and not site["running"] and site["url"] == ""
+
+
+def test_private_sites_come_first_and_bad_entries_are_skipped():
+    collect.SITES_FILE.write_text(json.dumps([SAMPLE_SITE, {"name": "no keys"}, "junk"]))
+    assert [w["name"] for w in collect.site_list()] == ["Sample site"] + [w["name"] for w in collect.WEBSITES]
+
+
+def test_missing_or_broken_sites_file_means_only_the_public_sites():
+    assert collect.site_list() == collect.WEBSITES  # the fixture's file doesn't exist
+    for text in ("{not json", '{"a": 1}'):
+        collect.SITES_FILE.write_text(text)
+        assert collect.site_list() == collect.WEBSITES
 
 
 def test_websites_tailnet_only_site_has_no_redirects(monkeypatch):
