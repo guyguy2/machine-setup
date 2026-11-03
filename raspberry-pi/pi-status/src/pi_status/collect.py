@@ -729,7 +729,8 @@ def emails() -> dict:
 MAIL_BIN = Path(HOME) / "dev" / "mail" / ".venv" / "bin" / "mail"
 MAIL_BIN_ENV = "PI_STATUS_MAIL_BIN"  # tests point this at a fake
 MAIL_TIMEOUT = 120  # Accept all can label a few hundred threads (six Gmail calls at a time)
-MAIL_CHOICES = ("action", "respond", "review", "delete", "later", "done")
+MAIL_CHOICES = ("action", "respond", "review", "delete", "nar", "later", "done")
+MAIL_REASON_MAX = 500
 MAIL_SUGGESTED = ("action", "respond", "review", "delete")  # what a suggestion can be, so what Accept all accepts
 MAIL_MAX_IDS = 500
 THREAD_ID = re.compile(r"[0-9a-f]{10,24}")
@@ -746,6 +747,13 @@ def mail_args(action: str, body) -> list[str] | str:
     """The `mail` arguments for a request from the page, or why the request is refused."""
     if not isinstance(body, dict):
         return "the request body must be a JSON object"
+    if action == "reason":
+        thread, text = body.get("thread"), body.get("text")
+        if not isinstance(thread, str) or not THREAD_ID.fullmatch(thread):
+            return "thread must be a Gmail thread id"
+        if not isinstance(text, str) or len(text) > MAIL_REASON_MAX:
+            return f"text must be a string of at most {MAIL_REASON_MAX} characters"
+        return ["reason", thread, " ".join(text.split())]  # one line; an argument, never a shell
     if action in ("decide", "undo"):
         thread = body.get("thread")
         if not isinstance(thread, str) or not THREAD_ID.fullmatch(thread):
@@ -795,7 +803,7 @@ def mail_output(stdout: str):
 
 
 def mail_action(action: str, body) -> tuple[int, dict]:
-    """Run one choice (decide, accept, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
+    """Run one choice (decide, accept, reason, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
     fresh /api/emails payload so the page redraws without fetching again."""
     args = mail_args(action, body)
     if isinstance(args, str):

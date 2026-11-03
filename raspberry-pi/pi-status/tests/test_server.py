@@ -244,6 +244,15 @@ def test_mail_undo_and_trash_arguments(base_url, fake_mail):
     assert fake_mail.calls() == [["undo", DELETE_ID, *WEB], ["trash", "--yes", DELETE_ID, *WEB]]   # duplicates dropped
 
 
+def test_mail_reason_arguments_and_checks(base_url, fake_mail):
+    fake_mail.reply(0, {"ok": True})
+    assert post_json(base_url + "/api/emails/reason", {"thread": ACTION_ID, "text": "--yes  two\nlines"}, HB)[0] == 200
+    assert fake_mail.calls() == [["reason", ACTION_ID, "--yes two lines", *WEB]]     # one line, passed as one argument
+    for bad in ({"thread": ACTION_ID}, {"thread": ACTION_ID, "text": "x" * 501}, {"thread": "nope", "text": "x"}):
+        assert post_json(base_url + "/api/emails/reason", bad, HB)[0] == 400
+    assert len(fake_mail.calls()) == 1
+
+
 def test_mail_accept_arguments_and_checks(base_url, fake_mail):
     items = [{"thread": ACTION_ID, "queue": "action"}, {"thread": DELETE_ID, "queue": "delete"},
              {"thread": ACTION_ID, "queue": "action"}]
