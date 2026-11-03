@@ -233,6 +233,13 @@
   .gmail { margin-left: auto; text-decoration: none; display: inline-block; text-align: center; }
   .choice:focus-visible, .undo:focus-visible, .danger:focus-visible, .gmail:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .thread .decided { color: var(--ok); font-weight: 600; }
+  .reason { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .875rem; }
+  .reason .said { color: var(--muted); font-style: italic; }
+  .reason input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border: 1px solid var(--track); border-radius: 6px;
+                  background: var(--bg); color: var(--text); font: inherit; }
+  .linkish { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: .875rem; cursor: pointer; }
+  .linkish:hover { text-decoration: underline; }
+  .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .act-error { margin-top: 8px; padding: 6px 8px; border-radius: 8px; font-size: .875rem;
                background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--text); }
   .mail-help { color: var(--muted); font-size: .8125rem; }
@@ -920,7 +927,11 @@ const QUEUES = [
   { id: "agent-notes", title: "Agent Notes", hint: "Questions and rules for you to approve" },
 ];
 const SUGGESTED = ["action", "respond", "review", "delete"];  // what a suggestion can be
-const CHOICES = [...SUGGESTED, "later"];  // where a card can be moved; the others are set by the sorter
+const CHOICES = [...SUGGESTED, "nar", "later"];
+const CHOICE_TITLE = { nar: "No action" };  // a button's words, when not its queue's title
+const CHOICE_HINT = { nar: "No action needed: mark it read and keep it in your inbox; it leaves this page (never deleted)",
+                      later: "Not sure yet: leave it unread in your inbox, filed under Later" };
+const choiceTitle = c => CHOICE_TITLE[c] || queueTitle(c);  // where a card can be moved; the others are set by the sorter
 const NO_DOT = new Set(["inbox", "delete", "later"]);                 // Inbox is a highlighted pill, Delete and Later plain counts
 const NOTE_LEVEL = { info: ["info", ""], warn: ["warning", "warn"], question: ["question", "question"] };
 const queueTitle = id => (QUEUES.find(q => q.id === id) || { title: id }).title;
@@ -988,7 +999,7 @@ function queueBadge(d, q) {
 let mailFlash = null;  // what the last choice did, shown above the cards when its card has left the view
 
 async function mailAct(btn, action, body, said) {
-  const box = btn.closest(".thread, .mail-trash, .mail-accept, .mail-flash");  // its buttons are locked while this runs
+  const box = btn.closest(".thread, .mail-trash, .mail-accept, .mail-flash");  // a reason box is inside one of these  // its buttons are locked while this runs
   const buttons = [...box.querySelectorAll("button")];
   buttons.forEach(b => (b.disabled = true));
   box.querySelector(".act-error")?.remove();
@@ -1024,8 +1035,31 @@ function redrawMail(state, thread) {
 const subjectOf = t => `“${t.subject || "(no subject)"}”`;
 
 function decide(btn, t, queue) {
-  mailAct(btn, "decide", { thread: t.id, queue }, () => ({ thread: t.id, subject: t.subject, undo: true,
-    text: queue === "done" ? `${subjectOf(t)} archived (Done)` : `${subjectOf(t)} → ${queueTitle(queue)}` }));
+  mailAct(btn, "decide", { thread: t.id, queue }, () => ({ thread: t.id, subject: t.subject, undo: true, reasonable: true,
+    text: queue === "done" ? `${subjectOf(t)} archived (Done)` : queue === "nar" ? `${subjectOf(t)}: no action needed`
+                           : `${subjectOf(t)} → ${queueTitle(queue)}` }));
+}
+
+// Your reason for a choice, optional: "Add a reason" opens a one-line box; Enter saves, Escape cancels.
+function reasonLine(thread, reason, onSaved) {
+  const line = h("div", { class: "reason" });
+  const view = () => line.replaceChildren(...(reason
+    ? [h("span", { class: "said" }, `Your reason: “${reason}”`), h("button", { class: "linkish", type: "button", onclick: edit }, "Edit")]
+    : [h("button", { class: "linkish", type: "button", onclick: edit, title: "Optional: why you chose this, so it learns" }, "Add a reason")]));
+  function edit() {
+    const input = h("input", { type: "text", maxlength: "500", "aria-label": "Your reason", value: reason || "",
+                               placeholder: "e.g. I declined; he just said thanks" });
+    const save = h("button", { class: "copy", type: "button", onclick: () => submit() }, "Save");
+    const submit = () => mailAct(save, "reason", { thread, text: input.value }, (state, out) => onSaved(out.reason));
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") submit();
+      if (e.key === "Escape") view();
+    });
+    line.replaceChildren(input, save, h("button", { class: "linkish", type: "button", onclick: view }, "Cancel"));
+    input.focus();
+  }
+  view();
+  return line;
 }
 
 function undo(btn, t) {
@@ -1088,15 +1122,16 @@ function threadCard(d, t, inQueue) {
         `waiting ${days} day${days === 1 ? "" : "s"}${t.overdue ? " · overdue" : ""}`),
       h("div", { class: "detail history" },
         s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender"),
-      dec && h("div", { class: "decided" }, decidedText(dec))),
+      dec && h("div", { class: "decided" }, decidedText(dec)),
+      dec && live && reasonLine(t.id, dec.reason, () => mailFlash)),  // the card redraws with it; keep any flash
     h("div", { class: "choices", role: "group", "aria-label": "Move to" },
       // undecided: the suggestion is outlined with "suggested"; decided: your choice is solid with a ✓, pressed and not clickable again
       order.map(c => h("button", { class: "copy choice" + (c === chosen ? " primary chosen" : !chosen && c === rec?.queue ? " suggested" : ""),
                                    type: "button", "data-choice": c, "aria-pressed": chosen ? String(c === chosen) : null,
                                    disabled: !live || c === chosen, "data-locked": c === chosen ? "1" : null,
-                                   title: live ? (c === chosen ? "Your choice" : null) : "Suggestions only: nothing is changed in Gmail yet",
+                                   title: live ? (c === chosen ? "Your choice" : CHOICE_HINT[c] || null) : "Suggestions only: nothing is changed in Gmail yet",
                                    onclick: e => decide(e.currentTarget, t, c) },
-                         c === chosen ? "✓ " + queueTitle(c) : queueTitle(c),
+                         c === chosen ? "✓ " + choiceTitle(c) : choiceTitle(c),
                          !chosen && c === rec?.queue && h("span", { class: "hint" }, "suggested"))),
       live && (chosen === "action" || chosen === "respond") &&
         h("button", { class: "copy choice done", type: "button", "data-choice": "done", title: "Archive it and drop the label",
@@ -1152,11 +1187,12 @@ function mailPane(d, sel) {
   return [
     h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
     (needle || sel.id !== "agent-notes") && (d.actions_enabled
-      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · Later: left as is, unread · the rest mark it read")
+      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread")
       : h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet.")),
     flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
       flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
-        onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo")),
+        onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo"),
+      flash.reasonable && d.actions_enabled && reasonLine(flash.thread, flash.reason, reason => ({ ...flash, reason }))),
     pending.length > 0 && h("div", { class: "card mail-accept" },
       h("span", {}, `${pending.length} suggestion${pending.length === 1 ? "" : "s"} not chosen yet`),
       h("button", { class: "copy accept", type: "button", disabled: !d.actions_enabled,

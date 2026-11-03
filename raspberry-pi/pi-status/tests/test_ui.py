@@ -1372,7 +1372,7 @@ def test_emails_thread_card(make_page, base_url):
     assert card.locator(".history").inner_text() == "opened 12 of 14, replied 3"
     # the suggestion first, then its alternatives, then the rest; all disabled while actions are off
     buttons = card.locator(".choice")
-    assert [b.get_attribute("data-choice") for b in buttons.all()] == ["action", "review", "respond", "delete", "later"]
+    assert [b.get_attribute("data-choice") for b in buttons.all()] == ["action", "review", "respond", "delete", "nar", "later"]
     # the recommendation is outlined and says so; nothing is solid until you choose
     assert "suggested" in buttons.first.get_attribute("class") and buttons.first.locator(".hint").inner_text() == "suggested"
     assert card.locator(".choice.suggested").count() == 1 and card.locator(".choice.primary").count() == 0
@@ -1389,7 +1389,7 @@ def test_emails_buttons_enabled_when_actions_are(make_page, base_url):
     open_emails(page, base_url, "emails/action")
     assert page.locator("#view .mail-only").count() == 0
     assert page.locator("#view .mail-help").inner_text() == \
-        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · Later: left as is, unread · the rest mark it read"
+        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread"
     assert all(not b.is_disabled() for b in cards(page).first.locator("button").all())
 
 
@@ -1401,7 +1401,7 @@ def test_emails_new_sender_and_unsuggested_thread(make_page, base_url):
     page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
     card = cards(page).first
     assert card.locator(".suggest").count() == 0 and card.locator(".choice.primary, .choice.suggested").count() == 0
-    assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete", "Later"]
+    assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete", "No action", "Later"]
 
 
 def test_emails_waiting_days_amber_when_overdue(make_page, base_url):
@@ -1898,6 +1898,40 @@ def test_emails_no_accept_where_nothing_is_suggested(make_page, base_url, fake_m
     page = make_page()
     open_live_emails(page, base_url, "emails/" + queue)
     assert page.locator("#view .mail-accept").count() == 0
+
+
+def test_emails_no_action_needed_then_a_reason_from_the_flash(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/action")
+    card(page, SCHOOL).locator(".choice[data-choice=nar]").click()
+    flash = page.locator("#view .mail-flash")
+    flash.wait_for()
+    assert flash.locator("span").first.inner_text().endswith(": no action needed")
+    assert card(page, SCHOOL).count() == 0                                    # off the page
+    flash.locator(".reason .linkish").click()                                 # Add a reason
+    box = flash.locator(".reason input")
+    box.fill("I declined;  he just said   thanks")
+    box.press("Enter")
+    page.wait_for_function("document.querySelector('#view .mail-flash .reason .said')")
+    assert page.locator("#view .mail-flash .reason .said").inner_text() == "Your reason: “I declined; he just said thanks”"
+    assert fake_mail.calls() == [["decide", SCHOOL, "nar", "--via", "web", "--json"],
+                                 ["reason", SCHOOL, "I declined; he just said thanks", "--via", "web", "--json"]]
+
+
+def test_emails_reason_on_a_decided_card_and_escape_cancels(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/review")
+    bank = card(page, BANK)
+    bank.locator(".reason .linkish").click()
+    bank.locator(".reason input").fill("never mind")
+    bank.locator(".reason input").press("Escape")
+    assert bank.locator(".reason .linkish").inner_text() == "Add a reason" and fake_mail.calls() == []
+    bank.locator(".reason .linkish").click()
+    bank.locator(".reason input").fill("Statements: read and archive")
+    bank.locator(".reason button.copy").click()
+    page.wait_for_function("document.querySelector('#view .reason .said')")
+    assert card(page, BANK).locator(".reason .said").inner_text() == "Your reason: “Statements: read and archive”"
+    assert card(page, SCHOOL).locator(".reason").count() == 0                  # only decided cards have one
 
 
 def test_emails_no_trash_bar_when_nothing_is_marked(make_page, base_url):

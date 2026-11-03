@@ -50,12 +50,22 @@ def main(argv: list[str]) -> None:
     if cmd == "decide":
         thread, queue = args
         t = by_id.get(thread) or finish(5, {"ok": False, "error": f"unknown thread {thread}"})
-        if queue == "done":
-            state["threads"].remove(t)
+        if queue in ("done", "nar"):
+            state["threads"].remove(t)  # off the page, but still known (a reason can follow), as in the real sorter
+            t["decided"] = {"queue": queue, "via": "web"}
+            state.setdefault("_hidden", []).append(t)
         else:
             t["decided"] = {"queue": queue, "via": "web", "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
             t["queue"] = queue
         out = {"ok": True, "thread": thread, "queue": queue}
+    elif cmd == "reason":
+        thread, text = args
+        hidden = {x["id"]: x for x in state.get("_hidden", [])}
+        t = by_id.get(thread) or hidden.get(thread) or finish(5, {"ok": False, "error": "unknown thread"})
+        if not t.get("decided"):
+            finish(5, {"ok": False, "error": "choose first, then add your reason"})
+        t["decided"]["reason"] = text or None
+        out = {"ok": True, "thread": thread, "reason": text or None}
     elif cmd == "accept":
         n = 0
         for pair in args:

@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         restart = False
         agent = re.fullmatch(r"/api/agents/([\w.@-]+)/(start|stop)", path)
-        mail = re.fullmatch(r"/api/emails/(decide|accept|undo|trash)", path)
+        mail = re.fullmatch(r"/api/emails/(decide|accept|reason|undo|trash)", path)
         if path != "/api/restart" and not agent and not mail:
             code, body = 404, {"error": "not found"}
         elif self.headers.get("X-Requested-With") != "pi-status":
