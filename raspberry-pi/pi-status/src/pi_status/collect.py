@@ -671,7 +671,7 @@ def rei() -> dict:
 MAIL_STATE = Path(HOME) / ".local" / "share" / "mail" / "state.json"  # written by `mail run` (mail-sync.timer)
 MAIL_STATE_ENV = "PI_STATUS_MAIL_STATE"  # tests and screenshots point this at a fake file
 MAIL_SETUP = "systemctl --user enable --now mail-sync.timer"
-MAIL_STALE_S = 30 * 60  # the sorter runs every 10 minutes; three missed runs means it's broken
+MAIL_STALE_S = 3 * 3600  # the sorter runs every hour; two missed runs means it's broken
 
 
 def mail_state_path() -> Path:

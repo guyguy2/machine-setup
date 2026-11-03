@@ -799,10 +799,10 @@ def test_emails_fresh_file_is_passed_through_with_derived_fields(mail_file):
     assert data["actions_enabled"] is True and "error" not in data
 
 
-def test_emails_stale_after_30_minutes(mail_file):
-    write_fresh(mail_file, age=timedelta(minutes=29))
+def test_emails_stale_after_3_hours(mail_file):
+    write_fresh(mail_file, age=timedelta(minutes=179))
     assert collect.emails()["stale"] is False
-    write_fresh(mail_file, age=timedelta(minutes=31))
+    write_fresh(mail_file, age=timedelta(minutes=181))
     assert collect.emails()["stale"] is True
 
 
