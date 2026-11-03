@@ -24,7 +24,7 @@ from mail_fixture import write_fresh  # noqa: E402
 from pi_status import Handler, collect  # noqa: E402
 
 TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
-        "emails", "emails/action", "emails/waiting", "emails/agent-notes", "rei"]
+        "emails", "emails/action", "emails/waiting", "emails/delete", "emails/agent-notes", "rei"]
 VIEWPORTS = {"desktop": (1280, 900), "phone": (390, 844)}
 
 

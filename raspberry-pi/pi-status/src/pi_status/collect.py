@@ -708,6 +708,9 @@ def emails() -> dict:
     for key in ("queues", "threads", "notes"):
         if not isinstance(data.get(key), list):
             data[key] = []
+    trash = data.get("trash")
+    if not isinstance(trash, dict) or not isinstance(trash.get("marked"), list):
+        data["trash"] = {"marked": []}
     if not isinstance(data.get("sync"), dict):
         data["sync"] = {"ok": False, "error": "no sync status in the file"}
     age = iso_age(data.get("generated"), time.time())
@@ -719,6 +722,91 @@ def emails() -> dict:
         "stale": age is None or age > MAIL_STALE_S,
         "needs_you": sum(c for c in (counts.get("action"), counts.get("respond")) if isinstance(c, int)),
     }
+
+
+# The page's choice buttons run the sorter's own command (its "Choices" contract), which applies the choice in
+# Gmail, logs it and rewrites state.json. Argument lists only, never a shell; every value is checked first.
+MAIL_BIN = Path(HOME) / "dev" / "mail" / ".venv" / "bin" / "mail"
+MAIL_BIN_ENV = "PI_STATUS_MAIL_BIN"  # tests point this at a fake
+MAIL_TIMEOUT = 60
+MAIL_CHOICES = ("action", "respond", "review", "delete", "done")
+MAIL_MAX_IDS = 500
+THREAD_ID = re.compile(r"[0-9a-f]{10,24}")
+# its exit codes: 0 ok, 1 Gmail error, 2 sign-in expired, 3 usage, 5 refused (unknown thread, not marked, ...)
+MAIL_EXIT_STATUS = {0: 200, 1: 502, 2: 401, 3: 400, 5: 409}
+mail_lock = threading.Lock()  # one choice at a time: each run rewrites state.json
+
+
+def mail_bin() -> Path:
+    return Path(os.environ.get(MAIL_BIN_ENV) or MAIL_BIN)
+
+
+def mail_args(action: str, body) -> list[str] | str:
+    """The `mail` arguments for a request from the page, or why the request is refused."""
+    if not isinstance(body, dict):
+        return "the request body must be a JSON object"
+    if action in ("decide", "undo"):
+        thread = body.get("thread")
+        if not isinstance(thread, str) or not THREAD_ID.fullmatch(thread):
+            return "thread must be a Gmail thread id"
+        if action == "undo":
+            return ["undo", thread]
+        queue = body.get("queue")
+        if queue not in MAIL_CHOICES:
+            return "queue must be one of " + ", ".join(MAIL_CHOICES)
+        return ["decide", thread, queue]
+    if action == "trash":
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return "ids must be a non-empty list of thread ids"
+        if len(ids) > MAIL_MAX_IDS:
+            return f"at most {MAIL_MAX_IDS} ids at a time"
+        if not all(isinstance(i, str) and THREAD_ID.fullmatch(i) for i in ids):
+            return "ids must be Gmail thread ids"
+        return ["trash", "--yes", *dict.fromkeys(ids)]
+    return f"unknown action: {action}"
+
+
+def mail_output(stdout: str):
+    """The one JSON object `mail --json` prints (its last line, should anything come before it)."""
+    for text in (stdout, *reversed(stdout.strip().splitlines())):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def mail_action(action: str, body) -> tuple[int, dict]:
+    """Run one choice (decide, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
+    fresh /api/emails payload so the page redraws without fetching again."""
+    args = mail_args(action, body)
+    if isinstance(args, str):
+        return 400, {"ok": False, "error": args}
+    exe = mail_bin()
+    try:
+        with mail_lock:
+            done = subprocess.run([str(exe), *args, "--via", "web", "--json"], capture_output=True, text=True,
+                                  timeout=MAIL_TIMEOUT, stdin=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return 503, {"ok": False, "error": f"the mail command isn't installed ({exe})", "state": emails()}
+    except PermissionError:
+        return 503, {"ok": False, "error": f"the mail command isn't executable ({exe})", "state": emails()}
+    except subprocess.TimeoutExpired:
+        return 504, {"ok": False, "error": f"mail {args[0]} took longer than {MAIL_TIMEOUT}s; refresh to see where it got to",
+                     "state": emails()}
+    result = mail_output(done.stdout)
+    if result is None:
+        last = (done.stderr.strip().splitlines() or [f"exit {done.returncode}, no output"])[-1]
+        result = {"ok": False, "error": f"mail {args[0]} failed: {last[:300]}"}
+    status = MAIL_EXIT_STATUS.get(done.returncode, 500)
+    if status != 200 and result.get("ok") is not False:
+        result = {**result, "ok": False}
+    if result.get("ok") is False and not result.get("error"):
+        result = {**result, "error": f"mail {args[0]} failed (exit {done.returncode})"}
+    return status, {**result, "state": emails()}
 
 
 # ---------- network ----------

@@ -23,6 +23,9 @@ def fresh(age: timedelta = timedelta(minutes=4), **change) -> dict:
     data["sync"]["last_success"] = move(data["sync"]["last_success"])
     for item in data["threads"] + data["notes"]:
         item["date"] = move(item["date"])
+    for thread in data["threads"]:
+        if thread.get("decided"):
+            thread["decided"]["at"] = move(thread["decided"]["at"])
     return {**data, **change}
 
 

@@ -166,3 +166,99 @@ def test_emails_endpoint_bad_json_is_200_with_an_error(base_url, tmp_path, monke
     monkeypatch.setenv(pi_status.collect.MAIL_STATE_ENV, str(bad))
     status, _, body = get(base_url + "/api/emails")
     assert status == 200 and "not valid JSON" in json.loads(body)["error"]
+
+
+# ---------- email choices: POST /api/emails/<action> runs the (fake) mail command ----------
+
+ACTION_ID, DELETE_ID = "000000000000a001", "000000000000de01"
+WEB = ["--via", "web", "--json"]
+
+
+def post_json(url, body, headers=None):
+    data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    req = urllib.request.Request(url, data=data, method="POST",
+                                 headers={"Content-Type": "application/json", **(headers or {})})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+HB = {"X-Requested-With": "pi-status"}
+
+
+def test_mail_choices_require_the_custom_header(base_url, fake_mail):
+    status, body = post_json(base_url + "/api/emails/decide", {"thread": ACTION_ID, "queue": "review"})
+    assert status == 403 and "X-Requested-With" in body["error"]
+    assert fake_mail.calls() == []
+
+
+def test_mail_choices_are_not_gets(base_url, fake_mail):
+    assert get(base_url + "/api/emails/decide")[0] == 404
+    assert post_json(base_url + "/api/emails/archive", {"thread": ACTION_ID}, HB)[0] == 404
+    assert fake_mail.calls() == []
+
+
+@pytest.mark.parametrize("action, body, words", [
+    ("decide", {"thread": "../etc", "queue": "review"}, "thread id"),
+    ("decide", {"thread": "000000000000A001", "queue": "review"}, "thread id"),        # hex is lowercase
+    ("decide", {"thread": "0123456789", "queue": "inbox"}, "queue must be"),            # not a choice
+    ("decide", {"thread": "0123456789", "queue": "review --via cli"}, "queue must be"),
+    ("decide", {"thread": "abc", "queue": "review"}, "thread id"),                       # too short
+    ("undo", {"thread": "f" * 25}, "thread id"),                                         # too long
+    ("undo", {"thread": 12345678901}, "thread id"),
+    ("trash", {"ids": []}, "non-empty list"),
+    ("trash", {"ids": "000000000000de01"}, "non-empty list"),
+    ("trash", {"ids": ["000000000000de01", "-rf"]}, "thread ids"),
+    ("trash", {"ids": ["%014x" % i for i in range(501)]}, "at most 500"),
+    ("decide", ["000000000000a001", "review"], "JSON object"),
+])
+def test_mail_choices_validate_input_and_run_nothing(base_url, fake_mail, action, body, words):
+    status, out = post_json(f"{base_url}/api/emails/{action}", body, HB)
+    assert status == 400 and out["ok"] is False and words in out["error"], out
+    assert fake_mail.calls() == []
+
+
+def test_mail_choices_refuse_bad_and_oversized_bodies(base_url, fake_mail):
+    assert post_json(base_url + "/api/emails/undo", b"{not json", HB)[0] == 400
+    assert post_json(base_url + "/api/emails/undo", b"", HB)[0] == 400
+    big = json.dumps({"ids": ["0" * 24] * 1400}).encode()   # > 32 KB
+    assert post_json(base_url + "/api/emails/trash", big, HB)[0] == 413
+    assert fake_mail.calls() == []
+
+
+def test_mail_decide_runs_the_command_and_returns_the_new_state(base_url, fake_mail):
+    status, out = post_json(base_url + "/api/emails/decide", {"thread": ACTION_ID, "queue": "review"}, HB)
+    assert status == 200 and out["ok"] is True
+    assert fake_mail.calls() == [["decide", ACTION_ID, "review", *WEB]]
+    thread = next(t for t in out["state"]["threads"] if t["id"] == ACTION_ID)
+    assert thread["queue"] == "review" and thread["decided"]["via"] == "web"
+    assert out["state"]["needs_you"] == 2 and out["state"]["connected"] is True
+
+
+def test_mail_undo_and_trash_arguments(base_url, fake_mail):
+    assert post_json(base_url + "/api/emails/undo", {"thread": DELETE_ID}, HB)[0] == 200
+    fake_mail.reply(0, {"ok": True, "trashed": 1})
+    assert post_json(base_url + "/api/emails/trash", {"ids": [DELETE_ID, DELETE_ID]}, HB)[0] == 200
+    assert fake_mail.calls() == [["undo", DELETE_ID, *WEB], ["trash", "--yes", DELETE_ID, *WEB]]   # duplicates dropped
+
+
+@pytest.mark.parametrize("code, status", [(5, 409), (2, 401), (1, 502), (3, 400), (7, 500)])
+def test_mail_failures_map_to_http_status_with_the_error_and_state(base_url, fake_mail, code, status):
+    fake_mail.reply(code, {"ok": False, "error": f"failed with {code}"})
+    got, out = post_json(base_url + "/api/emails/decide", {"thread": ACTION_ID, "queue": "delete"}, HB)
+    assert got == status and out["ok"] is False and out["error"] == f"failed with {code}"
+    assert out["state"]["connected"] is True
+
+
+def test_mail_unreadable_output_is_an_error(base_url, fake_mail):
+    fake_mail.reply(1, "Traceback (most recent call last): boom")
+    status, out = post_json(base_url + "/api/emails/undo", {"thread": ACTION_ID}, HB)
+    assert status == 502 and out["ok"] is False and "mail undo failed" in out["error"]
+
+
+def test_mail_missing_command_is_503(base_url):
+    # the session default: a mail command that doesn't exist, so nothing real can run in tests
+    status, out = post_json(base_url + "/api/emails/undo", {"thread": ACTION_ID}, HB)
+    assert status == 503 and "isn't installed" in out["error"]
