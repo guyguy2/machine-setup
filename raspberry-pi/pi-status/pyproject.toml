@@ -24,3 +24,4 @@ testpaths = ["tests"]
 [tool.pyright]
 venvPath = "."
 venv = ".venv"
+extraPaths = ["tests"]  # screenshots.py imports the fake mail fixture from there

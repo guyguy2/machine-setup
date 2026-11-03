@@ -16,6 +16,7 @@ ROUTES = {
     "/api/lab": collect.lab,
     "/api/websites": collect.websites,
     "/api/rei": collect.rei,
+    "/api/emails": collect.emails,
     "/api/docker": collect.docker,
     "/api/services": collect.services,
     "/api/processes": collect.top_processes,

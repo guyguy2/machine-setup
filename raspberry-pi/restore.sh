@@ -3,13 +3,13 @@
 # No secrets are backed up: logins and API keys are set up by hand afterwards (listed at the end).
 # Usage: restore.sh [--dry-run] [--only step,step,...]
 # Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
-#                            pihole agents pi-status rei shell systemd
+#                            pihole agents pi-status rei mail shell systemd
 # Safe to re-run. Existing files are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei shell systemd)
+all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail shell systemd)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 
 dry=0
@@ -325,6 +325,30 @@ if want rei; then
       rclone config create gdrive drive scope=drive.readonly token='<the JSON it printed>'
       and re-run ./restore.sh --only rei to enable rei-vault-sync.timer. Details: ~/dev/rei/deploy/pi/README.md
     - Start it: systemctl --user start rei.service (rei-proxy.service comes with it); the pi-status REI tab shows it
+MSG
+fi
+
+if want mail; then
+  say "Email sorter (private repo ~/dev/mail: mail-sync.timer every 10 min writes the state Home Base's Emails tab shows)"
+  mail=$HOME/dev/mail
+  if [[ -d $mail ]]; then echo "  $mail already there"
+  elif ! have gh || ! gh auth status >/dev/null 2>&1; then echo "  gh not signed in (private repo; run the github step first)"
+  else run gh repo clone guyguy2/mail "$mail"
+  fi
+  if [[ ! -d $mail ]]; then
+    (( dry )) && echo "  [dry-run] uv sync, link deploy/mail-sync.{service,timer}, enable mail-sync.timer"
+  elif ! have uv; then echo "  uv not installed (run the brew step)"
+  else
+    run uv sync --project "$mail"
+    run mkdir -p "$HOME/.config/systemd/user"
+    run ln -sf "$mail/deploy/mail-sync.service" "$mail/deploy/mail-sync.timer" "$HOME/.config/systemd/user/"
+    run systemctl --user daemon-reload
+    run systemctl --user enable --now mail-sync.timer
+  fi
+  cat <<'MSG'
+  By hand: it needs the gws Gmail sign-in (~/dev/agent-lab/bin/gws-login) and Claude Code signed in (claude).
+  Its data (~/.local/share/mail) isn't backed up, by design: run `uv run mail bootstrap` in ~/dev/mail to relearn
+  the last two weeks. Logs: journalctl --user -u mail-sync
 MSG
 fi
 

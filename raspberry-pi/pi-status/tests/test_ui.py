@@ -2,11 +2,12 @@
 
 import pytest
 
+from mail_fixture import fresh
+
 TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
-        "rei"]
+        "emails", "emails/action", "emails/agent-notes", "rei"]
 NAV = ["Overview", "Agents", "Agent Lab", "Websites", "Network", "System", "Emails", "REI"]
 NAV_GROUPS = {"Pi": NAV[:6], "Home": NAV[6:]}
-PLACEHOLDERS = ["emails", "emails/action"]  # Home tabs with no backend yet
 SYSTEM = ["docker", "services", "processes", "ports"]
 PHONE = (390, 844)
 NARROW_PHONE = (360, 740)
@@ -71,7 +72,7 @@ def test_nav_becomes_top_strip_on_phone(make_page, base_url):
     assert nav["y"] < view["y"] and nav["width"] <= PHONE[0]
 
 
-@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
+@pytest.mark.parametrize("tab", TABS)
 def test_no_horizontal_page_scroll_on_phone(make_page, base_url, tab):
     page = make_page(*PHONE)
     open_tab(page, base_url, tab)
@@ -758,7 +759,7 @@ LONG_CMD = ("node /usr/lib/node_modules/openclaw/dist/index.js gateway --port 18
 PROCS = {"total": 1, "processes": [{"pid": 4242, "user": "guy", "cpu": 1.0, "rss": 2**30, "age_s": 109800, "cmd": LONG_CMD}]}
 
 
-@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
+@pytest.mark.parametrize("tab", TABS)
 def test_nothing_in_the_view_overflows_on_phone(make_page, base_url, tab):
     """Stricter than the page-width check: a table can't hide columns inside its own sideways-scrolling box."""
     page = make_page(*PHONE)
@@ -846,7 +847,7 @@ def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
 def test_nav_lists_every_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "overview")
-    assert page.locator("nav a").all_inner_texts() == NAV
+    assert page.locator("nav a").evaluate_all("as => as.map(a => a.firstChild.textContent)") == NAV   # without the Emails badge
 
 
 def test_every_nav_link_is_on_screen_on_phone(make_page, base_url):
@@ -926,7 +927,8 @@ FAILED_UNIT = {"unit": "backup.service", "active": "failed", "sub": "failed", "d
 
 
 def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIGNED_IN, services=NO_SERVICES,
-                  version=VERSION, dash=DASHBOARDS):
+                  version=VERSION, dash=DASHBOARDS, mail=None):
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail or mail_api()))
     page.route("**/api/status", lambda r: r.fulfill(json=status))
     page.route("**/api/agents", lambda r: r.fulfill(json=agents))
     page.route("**/api/auth", lambda r: r.fulfill(json=auth))
@@ -962,6 +964,26 @@ def test_overview_attention_lists_what_needs_you(make_page, base_url, change, ex
     open_overview(page, base_url, **change)
     page.wait_for_selector("#view .attention li")
     assert any(expected in line for line in attention(page)), attention(page)
+
+
+@pytest.mark.parametrize("mail, expected", [
+    ({"stale": True, "age_s": 7200}, "Email sorter: hasn't sorted mail for 2h 0m"),
+    ({"sync": {"ok": False, "error": "AUTH EXPIRED: run gws-login"}}, "Email sorter: last run failed: AUTH EXPIRED"),
+])
+def test_overview_attention_lists_a_broken_email_sorter(make_page, base_url, mail, expected):
+    page = make_page()
+    open_overview(page, base_url, mail=mail_api(**mail))
+    page.wait_for_selector("#view .attention li")
+    assert any(line.startswith(expected) for line in attention(page)), attention(page)
+    assert page.locator("#view .attention a[href='#emails']").count() == 1
+
+
+def test_overview_attention_ignores_emails_not_set_up(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url, mail=NOT_CONNECTED)
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_timeout(200)
+    assert attention(page) == []
 
 
 def test_attention_lists_each_problem_once(make_page, base_url):
@@ -1174,11 +1196,11 @@ def test_websites_fit_phone(make_page, base_url):
     assert widths[0] <= widths[1]
 
 
-# ---------- nav groups, the Home placeholder tab (emails) and REI ----------
+# ---------- nav groups, the Home tabs (Emails and REI) ----------
 
-QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Spam", "Agent Notes"]
+QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Delete", "Agent Notes"]
 GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
-  [g.querySelector('.nav-label').textContent, [...g.querySelectorAll('a')].map(a => a.textContent)])"""
+  [g.querySelector('.nav-label').textContent, [...g.querySelectorAll('a')].map(a => a.firstChild.textContent)])"""
 
 
 def settled(page):
@@ -1222,7 +1244,7 @@ def test_nav_groups_on_phone(make_page, base_url, size):
     no_page_scroll(page)
 
 
-@pytest.mark.parametrize("tab", TABS + PLACEHOLDERS)
+@pytest.mark.parametrize("tab", TABS)
 def test_no_page_scroll_on_a_narrow_phone(make_page, base_url, tab):
     page = make_page(*NARROW_PHONE)
     open_tab(page, base_url, tab)
@@ -1230,60 +1252,37 @@ def test_no_page_scroll_on_a_narrow_phone(make_page, base_url, tab):
     no_page_scroll(page)
 
 
-@pytest.mark.parametrize("tab", ["emails"])
-def test_placeholder_tabs_render_without_fetching(make_page, base_url, tab):
-    page = make_page()
-    page.route("**/api/status", lambda r: r.fulfill(json=status()))
-    seen = count_api_requests(page)
-    open_tab(page, base_url, tab)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('no live data')")
-    page.wait_for_function("document.getElementById('host').textContent === 'box'")   # the sidebar still names the Pi
-    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab
-    assert sorted(seen) == ["status", "version"]   # only the sidebar's own requests, nothing for the tab
-    assert page.errors == []
+# ---------- emails: the mail sorter's suggestions (FAKE data from tests/fixtures/mail-state.json) ----------
+
+def mail_api(**change):
+    """What /api/emails returns for the fake fixture, freshly sorted; `change` replaces top-level keys."""
+    return {**fresh(), "connected": True, "stale": False, "age_s": 240, "needs_you": 3, **change}
 
 
-@pytest.mark.parametrize("tab", ["emails"])
-def test_placeholder_tabs_never_say_unreachable(make_page, base_url, tab):
-    page = make_page()
-    page.route("**/api/**", lambda r: r.fulfill(status=500, json={"error": "down"}))
-    open_tab(page, base_url, tab)
-    page.wait_for_timeout(300)
-    conn = page.locator("#conn").inner_text()
-    assert "unreachable" not in conn and "updated" not in conn and "no live data" in conn
+NOT_CONNECTED = {"connected": False, "setup": "systemctl --user enable --now mail-sync.timer"}
 
 
-@pytest.mark.parametrize("tab", ["emails"])
-def test_placeholder_tabs_do_not_poll(make_page, base_url, tab):
-    page = make_page()
-    page.clock.install()
-    seen = count_api_requests(page)
-    open_tab(page, base_url, tab)
-    page.wait_for_function("document.getElementById('version').textContent !== ''")
-    before = list(seen)
-    page.clock.run_for(10 * 60 * 1000)
-    page.wait_for_timeout(300)
-    assert seen == before, f"requests made while idle: {seen[len(before):]}"
-
-
-def test_refresh_on_a_placeholder_tab_only_reloads_the_version(make_page, base_url):
-    page = make_page()
-    seen = count_api_requests(page)
-    open_tab(page, base_url, "emails")
-    page.wait_for_function("document.getElementById('version').textContent !== ''")
-    seen.clear()
-    page.click("#refresh")
-    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
-    assert seen == ["version"] and page.locator("#view h2").inner_text() == "Emails"
+def open_emails(page, base_url, hash="emails", data=None):
+    page.route("**/api/emails", lambda r: r.fulfill(json=data if data is not None else mail_api()))
+    open_tab(page, base_url, hash)
+    page.wait_for_selector("#view .mail-pane")
 
 
 def selected_queue(page):
     return page.locator("#view .queues a[aria-current=page]")
 
 
-def test_emails_tab_shows_search_freshness_and_queues(make_page, base_url):
+def queue_row(page, queue):
+    return page.locator(f"#view .queues a[data-queue={queue}]")
+
+
+def cards(page):
+    return page.locator("#view .mail-pane .thread")
+
+
+def test_emails_not_connected_shows_the_placeholder_and_setup_command(make_page, base_url):
     page = make_page()
-    open_tab(page, base_url, "emails")
+    open_emails(page, base_url, data=NOT_CONNECTED)
     search = page.locator("#view input.mail-search")
     assert search.get_attribute("placeholder") == "Search emails…" and search.is_disabled()
     view = page.locator("#view").inner_text()
@@ -1296,38 +1295,251 @@ def test_emails_tab_shows_search_freshness_and_queues(make_page, base_url):
     assert set(page.locator("#view .count").all_inner_texts()) == {"—"}
     assert page.locator("#view .count").count() == len(QUEUES) + 1   # each queue and All inboxes
     assert selected_queue(page).inner_text().startswith("Inbox")     # the default
-    assert "aren't connected yet" in page.locator("#view .mail-pane").inner_text()
+    pane = page.locator("#view .mail-pane")
+    assert "aren't connected yet" in pane.inner_text()
+    pane.locator(".copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "systemctl --user enable --now mail-sync.timer"
+    assert page.locator("nav .nav-badge").count() == 0
+    assert page.locator("#conn").inner_text().startswith("updated")
+    assert page.errors == []
 
 
-@pytest.mark.parametrize("queue, title", [("action", "Action"), ("agent-notes", "Agent Notes"), ("spam", "Spam")])
+def test_emails_unreadable_state_file_shows_the_error(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, data={**NOT_CONNECTED, "error": "state.json is not valid JSON (Expecting value)"})
+    assert "not valid JSON" in page.locator("#view .mail-pane").inner_text()
+    assert "not valid JSON" in page.locator("#view .mail-warn").inner_text()
+    assert page.errors == []
+
+
+def test_emails_queue_counts_and_dots(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url)
+    assert page.locator("#view .mail-fresh").inner_text() == "sorted 4m ago"
+    assert page.locator("#view .mail-warn").count() == 0
+    inbox = queue_row(page, "inbox")
+    assert inbox.locator(".count.inbox").inner_text() == "1" and inbox.locator(".q-dot").count() == 0   # highlighted pill
+    dot = lambda q: queue_row(page, q).locator(".q-dot").evaluate("e => getComputedStyle(e).backgroundColor")
+    color = lambda var: page.evaluate(f"""(() => {{ const e = document.createElement('i'); e.style.color = 'var({var})';
+        document.body.append(e); const c = getComputedStyle(e).color; e.remove(); return c; }})()""")
+    assert dot("action") == color("--bad") and dot("respond") == color("--orange")
+    assert dot("review") == color("--accent") and dot("drafts") == color("--teal")
+    assert dot("waiting") == color("--warn")          # 1 overdue
+    assert dot("agent-notes") == color("--warn")
+    assert queue_row(page, "delete").locator(".q-dot").count() == 0
+    assert queue_row(page, "delete").locator(".count").inner_text() == "1"
+    assert page.locator("#view .mail-all .count").inner_text() == "10"
+
+
+def test_emails_empty_queue_has_no_badge_and_waiting_is_grey_when_nothing_is_overdue(make_page, base_url):
+    page = make_page()
+    data = mail_api()
+    for q in data["queues"]:
+        if q["id"] == "respond":
+            q["count"] = 0
+        if q["id"] == "waiting":
+            q["overdue"] = 0
+    open_emails(page, base_url, data=data)
+    assert queue_row(page, "respond").locator(".q-badge, .count").count() == 0
+    assert queue_row(page, "respond").inner_text() == "Respond"   # no "—", no 0
+    waiting = queue_row(page, "waiting").locator(".q-dot")
+    assert waiting.evaluate("e => getComputedStyle(e).backgroundColor") == page.locator("#view .mail-fresh").evaluate(
+        "e => getComputedStyle(e).color")   # --muted
+
+
+def test_emails_thread_card(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/action")
+    assert page.locator("#view .mail-pane h3").inner_text() == "Action"
+    assert "Something to do" in page.locator("#view .mail-head").inner_text()
+    assert page.locator("#view .mail-only").inner_text() == "Suggestions only — nothing is changed in Gmail yet."
+    assert cards(page).count() == 2
+    card = cards(page).first
+    assert card.locator(".from").inner_text() == "Example School"
+    assert card.locator(".from").get_attribute("title") == "office@school.example"
+    assert card.locator(".subject").inner_text() == "Field trip form due Friday"
+    assert "sign and return" in card.locator(".snippet").inner_text()
+    assert card.locator(".thread-top .count").inner_text() == "2"          # two messages
+    assert "unread" in card.get_attribute("class") and card.locator(".unread-dot").count() == 1
+    assert card.locator(".when").inner_text().endswith("m ago")
+    suggest = card.locator(".suggest").inner_text()
+    assert suggest.startswith("Suggested: Action — Has a form and a deadline (Friday).")
+    assert card.locator(".suggest .tag").all_inner_texts() == ["Claude", "86%"]
+    assert card.locator(".todo").inner_text() == "To do: Sign field trip form"
+    assert card.locator(".history").inner_text() == "opened 12 of 14, replied 3"
+    # the suggestion first, then its alternatives, then the rest; all disabled while actions are off
+    buttons = card.locator(".choice")
+    assert buttons.all_inner_texts() == ["Action", "Review", "Respond", "Delete"]
+    assert "primary" in buttons.first.get_attribute("class") and "primary" not in buttons.nth(1).get_attribute("class")
+    assert all(b.is_disabled() for b in buttons.all())
+    link = card.locator("a.gmail")
+    assert link.inner_text() == "Open in Gmail" and link.get_attribute("href") == "https://mail.google.com/mail/u/0/#all/t-action-1"
+    assert link.get_attribute("target") == "_blank" and link.get_attribute("rel") == "noopener"
+    assert cards(page).nth(1).locator(".suggest .tag").first.inner_text() == "rule"
+    assert page.errors == []
+
+
+def test_emails_buttons_enabled_when_actions_are(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/action", data=mail_api(actions_enabled=True))
+    assert page.locator("#view .mail-only").count() == 0
+    assert not cards(page).first.locator(".choice").first.is_disabled()
+
+
+def test_emails_new_sender_and_unsuggested_thread(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/delete")
+    assert cards(page).locator(".history").inner_text() == "new sender"
+    page.click("#view .queues a[data-queue=inbox]")
+    page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
+    card = cards(page).first
+    assert card.locator(".suggest").count() == 0 and card.locator(".choice.primary").count() == 0
+    assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete"]
+
+
+def test_emails_waiting_days_amber_when_overdue(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/waiting")
+    first, second = (cards(page).nth(i).locator(".waiting") for i in (0, 1))
+    assert first.inner_text() == "waiting 10 days · overdue" and "overdue" in first.get_attribute("class")
+    assert second.inner_text() == "waiting 3 days" and "overdue" not in second.get_attribute("class")
+    assert first.evaluate("e => getComputedStyle(e).color") != second.evaluate("e => getComputedStyle(e).color")
+
+
+def test_emails_agent_notes_lists_notes_by_level(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/agent-notes")
+    notes = page.locator("#view .note-card")
+    assert [n.get_attribute("data-level") for n in notes.all()] == ["info", "question", "warn"]
+    assert notes.first.locator("h4").inner_text() == "Learned from past mail"
+    assert notes.nth(2).locator(".pill").inner_text() == "warning"
+    assert cards(page).count() == 0
+    colors = {n.evaluate("e => getComputedStyle(e).borderLeftColor") for n in notes.all()}
+    assert len(colors) == 3
+
+
+def test_emails_all_inboxes_lists_every_thread_with_its_queue(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/all")
+    assert page.locator("#view .mail-all").get_attribute("aria-current") == "page"
+    assert cards(page).count() == 10
+    assert cards(page).first.locator(".pill").inner_text() == "Action"
+
+
+def test_emails_search_filters_across_queues(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_emails(page, base_url, "emails/action")
+    seen.clear()
+    search = page.locator("#view input.mail-search")
+    search.fill("PLUMB")                                    # sender name, any case
+    assert cards(page).count() == 1 and cards(page).locator(".pill").inner_text() == "Waiting"
+    assert page.locator("#view .mail-pane h3").inner_text() == "Search: “PLUMB”"
+    search.fill("water.example")                            # address
+    assert cards(page).locator(".from").inner_text() == "City Water Utility"
+    search.fill("winter soup")                              # snippet
+    assert cards(page).locator(".subject").inner_text().startswith("This week")
+    search.fill("nothing like this")
+    assert cards(page).count() == 0 and "No emails match" in page.locator("#view .mail-pane").inner_text()
+    assert search.evaluate("e => e === document.activeElement")   # typing never loses focus
+    page.click("#view .queues a[data-queue=action]")        # the open queue: back to its cards
+    assert search.input_value() == "" and cards(page).count() == 2
+    assert seen == []
+
+
+@pytest.mark.parametrize("queue, title", [("action", "Action"), ("agent-notes", "Agent Notes"), ("delete", "Delete")])
 def test_emails_deep_link_highlights_the_queue(make_page, base_url, queue, title):
     page = make_page()
     open_tab(page, base_url, f"emails/{queue}")
+    page.wait_for_selector("#view .mail-pane h3")
     assert selected_queue(page).count() == 1 and selected_queue(page).get_attribute("data-queue") == queue
-    assert page.locator("#view .mail-pane h3").inner_text() == title   # the empty state names the queue
+    assert page.locator("#view .mail-pane h3").inner_text() == title
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "emails"
+
+
+def test_emails_old_spam_link_redirects_to_delete(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, "emails/spam")
+    assert page.url.endswith("#emails/delete") and selected_queue(page).get_attribute("data-queue") == "delete"
 
 
 def test_emails_unknown_queue_falls_back_to_inbox(make_page, base_url):
     page = make_page()
-    open_tab(page, base_url, "emails/nope")
+    open_emails(page, base_url, "emails/nope")
     assert selected_queue(page).get_attribute("data-queue") == "inbox"
 
 
 def test_emails_queue_click_switches_without_fetching(make_page, base_url):
     page = make_page()
-    open_tab(page, base_url, "emails")
+    open_emails(page, base_url)
     page.wait_for_function("document.getElementById('version').textContent !== ''")
     seen = count_api_requests(page)
     page.click("#view .queues a[data-queue=review]")
     page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Review'")
     assert page.url.endswith("#emails/review") and selected_queue(page).get_attribute("data-queue") == "review"
+    assert cards(page).count() == 2
     assert seen == []
+
+
+@pytest.mark.parametrize("change, kind, text", [
+    ({"stale": True, "age_s": 3 * 3600}, "warn", "hasn't sorted mail for 3h 0m"),
+    ({"sync": {"ok": False, "error": "AUTH EXPIRED: run gws-login", "last_success": None}}, "bad",
+     "last run failed: AUTH EXPIRED: run gws-login"),
+])
+def test_emails_warns_when_the_sorter_is_broken(make_page, base_url, change, kind, text):
+    page = make_page()
+    open_emails(page, base_url, data=mail_api(**change))
+    warn = page.locator("#view .mail-warn")
+    assert warn.inner_text() == text and kind in warn.get_attribute("class")
+
+
+def test_emails_badge_and_title_on_another_tab(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail_api()))
+    page.route("**/api/status", lambda r: r.fulfill(json=STATUS))
+    open_tab(page, base_url, "system/ports")
+    page.wait_for_selector("nav a[data-tab=emails] .nav-badge")
+    assert page.locator("nav a[data-tab=emails] .nav-badge").inner_text() == "3"
+    page.wait_for_function("document.title === '(3) Home Base · box'")
+    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    assert seen.count("emails") == 1
+    seen.clear()
+    page.click("#refresh")
+    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    assert seen.count("emails") == 1 and seen.count("ports") == 1
+
+
+def test_emails_tab_fetches_once_and_badge_follows_it(make_page, base_url):
+    page = make_page()
+    seen = count_api_requests(page)
+    open_emails(page, base_url, data=mail_api(needs_you=0))
+    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    assert seen.count("emails") == 1
+    assert page.locator("nav .nav-badge").count() == 0 and not page.title().startswith("(")
+    seen.clear()
+    page.click("#refresh")
+    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    assert seen.count("emails") == 1
+
+
+def test_emails_cards_fit_phone(make_page, base_url):
+    page = make_page(*NARROW_PHONE)
+    data = mail_api()
+    data["threads"][0]["subject"] = "A-very-long-subject-without-any-spaces-" * 4
+    data["threads"][0]["from_addr"] = "someone.with.a.very.long.address@a-long-domain-name.example"
+    open_emails(page, base_url, "emails/all", data=data)
+    settled(page)
+    for card in cards(page).all():
+        box = card.bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= NARROW_PHONE[0]
+    assert page.evaluate(OVERFLOWING) == []
+    no_page_scroll(page)
 
 
 def test_emails_queues_are_a_column_on_desktop(make_page, base_url):
     page = make_page(1100, 900)
-    open_tab(page, base_url, "emails")
+    open_emails(page, base_url)
     settled(page)
     side, pane = (page.locator(s).bounding_box() for s in ["#view .mail-side", "#view .mail-pane"])
     assert side["x"] + side["width"] <= pane["x"] and abs(side["y"] - pane["y"]) < 2
@@ -1338,7 +1550,7 @@ def test_emails_queues_are_a_column_on_desktop(make_page, base_url):
 @pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
 def test_emails_queues_are_chips_above_the_pane_on_phone(make_page, base_url, size):
     page = make_page(*size)
-    open_tab(page, base_url, "emails/drafts")
+    open_emails(page, base_url, "emails/drafts")
     settled(page)
     side, pane = (page.locator(s).bounding_box() for s in ["#view .mail-side", "#view .mail-pane"])
     assert side["y"] + side["height"] <= pane["y"]
@@ -1482,17 +1694,17 @@ def test_old_routes_still_work(make_page, base_url, tab, data_tab, h2):
     assert h2 in page.locator("#view h2").first.inner_text()
 
 
-def test_switching_from_a_placeholder_back_to_a_live_tab_fetches_it(make_page, base_url):
+def test_switching_from_emails_to_another_tab_fetches_only_that_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "emails")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('no live data')")
+    page.wait_for_function("document.getElementById('version').textContent !== ''")
     seen = count_api_requests(page)
     page.click("nav a[data-tab=network]")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("document.querySelector('#view h2')?.textContent === 'Network'")
     assert seen == ["network"]
 
 
-def test_phone_header_stays_two_lines_on_a_placeholder_tab(make_page, base_url):
+def test_phone_header_stays_two_lines_on_the_emails_tab(make_page, base_url):
     page = make_page(*PHONE)
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
@@ -1507,6 +1719,7 @@ def test_phone_header_stays_two_lines_on_a_placeholder_tab(make_page, base_url):
 def test_sidebar_is_titled_home_base_and_names_the_pi(make_page, base_url):
     page = make_page()
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail_api(needs_you=0)))   # no "(N)" in the title
     open_tab(page, base_url, "emails")
     page.wait_for_function("document.getElementById('host').textContent !== ''")
     assert page.locator("#app").inner_text() == "Home Base"

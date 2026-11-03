@@ -149,3 +149,20 @@ def test_agent_control_only_start_and_stop(base_url, controls):
     assert post(base_url + "/api/agents/ssh.service/restart", {"X-Requested-With": "pi-status"})[0] == 404
     assert get(base_url + "/api/agents/ssh.service/stop")[0] == 404
     assert controls == []
+
+
+def test_emails_endpoint_reads_the_fake_fixture_not_real_mail(base_url, fake_mail_state):
+    assert pi_status.collect.mail_state_path() == fake_mail_state != pi_status.collect.MAIL_STATE
+    status, ctype, body = get(base_url + "/api/emails")
+    data = json.loads(body)
+    assert status == 200 and ctype == "application/json"
+    assert data["connected"] is True and data["needs_you"] == 3
+    assert all(t["from_addr"].endswith(".example") for t in data["threads"])
+
+
+def test_emails_endpoint_bad_json_is_200_with_an_error(base_url, tmp_path, monkeypatch):
+    bad = tmp_path / "state.json"
+    bad.write_text("{oops")
+    monkeypatch.setenv(pi_status.collect.MAIL_STATE_ENV, str(bad))
+    status, _, body = get(base_url + "/api/emails")
+    assert status == 200 and "not valid JSON" in json.loads(body)["error"]
