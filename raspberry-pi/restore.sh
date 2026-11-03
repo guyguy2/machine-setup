@@ -3,13 +3,13 @@
 # No secrets are backed up: logins and API keys are set up by hand afterwards (listed at the end).
 # Usage: restore.sh [--dry-run] [--only step,step,...]
 # Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
-#                            pihole agents pi-status shell systemd
+#                            pihole agents pi-status rei shell systemd
 # Safe to re-run. Existing files are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status shell systemd)
+all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei shell systemd)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 
 dry=0
@@ -297,6 +297,37 @@ if want pi-status; then
   fi
 fi
 
+if want rei; then
+  say "REI dashboard (private repo ~/dev/rei: uvicorn on 127.0.0.1:8420, Caddy on 8421, tailnet-only HTTPS on :8446)"
+  rei=$HOME/dev/rei
+  if [[ -d $rei ]]; then echo "  $rei already there"
+  elif ! have gh || ! gh auth status >/dev/null 2>&1; then echo "  gh not signed in (private repo; run the github step first)"
+  else run gh repo clone guyguy2/rei "$rei"
+  fi
+  if [[ ! -d $rei ]]; then
+    (( dry )) && echo "  [dry-run] uv sync, deploy/pi/install.sh, sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421"
+  elif ! have uv; then echo "  uv not installed (run the brew step)"
+  else
+    run uv sync --project "$rei"
+    # Links rei.service, rei-proxy.service and rei-vault-sync.{service,timer} into ~/.config/systemd/user and enables
+    # the first two; the sync timer only once the rclone remote gdrive: exists (follow-up below, then re-run this).
+    if (( dry )); then "$rei/deploy/pi/install.sh" --dry-run; else "$rei/deploy/pi/install.sh"; fi
+    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421 (when Tailscale is signed in)"
+    elif tailscale status >/dev/null 2>&1; then sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421  # tailnet only, no LAN port
+    else echo "  Tailscale isn't signed in yet: run 'sudo tailscale up', then './restore.sh --only rei' to publish it"
+    fi
+  fi
+  cat <<'MSG'
+  By hand (not backed up, by design):
+    - inputs/: copy ~/dev/rei/inputs/ from a backup or the Mac (e.g. rsync -a <mac>:<path>/inputs/ ~/dev/rei/inputs/)
+    - Vault sync: the rclone remote gdrive: needs a browser login. On a machine with a browser (the Mac) run
+      rclone authorize "drive", then on the Pi:
+      rclone config create gdrive drive scope=drive.readonly token='<the JSON it printed>'
+      and re-run ./restore.sh --only rei to enable rei-vault-sync.timer. Details: ~/dev/rei/deploy/pi/README.md
+    - Start it: systemctl --user start rei.service (rei-proxy.service comes with it); the pi-status REI tab shows it
+MSG
+fi
+
 if want shell; then
   say "login shell -> zsh"
   zsh_path=$(command -v zsh || true)
@@ -338,6 +369,8 @@ cat <<'MSG'
   - gws: put the OAuth client file at ~/.config/gws/client_secret.json (Google Cloud console > APIs & Services >
     Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
   - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
+  - REI dashboard: copy ~/dev/rei/inputs/ from a backup or the Mac, set up the rclone remote gdrive: (printed by
+    the rei step), then systemctl --user start rei.service.
   - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
   - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
     ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
