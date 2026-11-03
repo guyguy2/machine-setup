@@ -603,3 +603,22 @@ def test_control_agent_reports_systemctl_failure(monkeypatch):
     monkeypatch.setattr(collect, "run", lambda *cmd: "inactive")
     code, body = collect.control_agent("openclaw-gateway.service", "start")
     assert code == 500 and body["error"] == "Unit not loaded."
+
+
+def test_websites_https_on_tailnet_name_and_proxy_counts(monkeypatch):
+    states = {"dreambase.service": "active", "dreambase-proxy.service": "active"}
+    monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "all interfaces"}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {"dns_name": "box.tail9.ts.net"})
+    monkeypatch.setattr(collect, "default_route", lambda: {"prefsrc": "10.0.0.5"})
+    monkeypatch.setattr(collect, "run", lambda *cmd: states[cmd[-1]])
+    monkeypatch.setattr(collect.platform, "node", lambda: "box")
+    site = collect.websites()[0]
+    assert site["running"] and site["unit_state"] == "active"
+    assert site["url"] == "https://box.tail9.ts.net:8091/ellie/"
+    assert site["redirects"] == ["http://10.0.0.5:8090/", "http://box.local:8090/"]
+
+    states["dreambase-proxy.service"] = "failed"  # the app is up but nothing serves it
+    monkeypatch.setattr(collect, "ports", lambda: [{"port": 8091, "exposure": "local only"}])
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {})
+    site = collect.websites()[0]
+    assert site["unit_state"] == "failed" and not site["running"] and site["url"] == ""

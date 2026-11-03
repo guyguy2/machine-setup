@@ -2,8 +2,8 @@
 
 import pytest
 
-TABS = ["overview", "agents", "lab", "network", "system/services", "system/processes", "system/ports", "system/docker"]
-NAV = ["Overview", "Agents", "Agent Lab", "Network", "System"]
+TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker"]
+NAV = ["Overview", "Agents", "Agent Lab", "Websites", "Network", "System"]
 SYSTEM = ["docker", "services", "processes", "ports"]
 PHONE = (390, 844)
 
@@ -1096,5 +1096,52 @@ def test_version_shares_the_status_line_on_phone(make_page, base_url):
     conn, version, nav = (page.locator(s).bounding_box() for s in ["#conn", "#version", "nav"])
     assert abs(version["y"] - conn["y"]) < 12, (conn, version)   # same line as "updated ..."
     assert version["y"] < nav["y"]
+    widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert widths[0] <= widths[1]
+
+
+# ---------- websites ----------
+
+SITE = {"name": "Ellie's DreamBase", "what": "Ellie's dashboard", "units": ["dreambase.service", "dreambase-proxy.service"],
+        "folder": "~/dev/websites/dreambase", "unit_state": "active", "running": True,
+        "url": "https://box.tail9.ts.net:8091/", "redirects": ["http://10.0.0.5:8090/", "http://box.local:8090/"]}
+
+
+def test_websites_link_the_https_address_with_copy(make_page, base_url):
+    page = make_page()
+    page.route("**/api/websites", lambda r: r.fulfill(json=[SITE]))
+    open_tab(page, base_url, "websites")
+    link = page.locator(".website a.ssh-cmd")
+    assert link.get_attribute("href") == "https://box.tail9.ts.net:8091/"
+    assert link.get_attribute("target") == "_blank"
+    assert page.locator(".website .pill").inner_text() == "running"
+    text = page.locator(".website").inner_text()
+    assert "http://10.0.0.5:8090/" in text and "dreambase-proxy.service" in text
+    page.locator(".website .copy").click()
+    assert page.evaluate("navigator.clipboard.readText()") == "https://box.tail9.ts.net:8091/"
+
+
+def test_website_without_tailnet_name_says_why(make_page, base_url):
+    page = make_page()
+    page.route("**/api/websites", lambda r: r.fulfill(json=[{**SITE, "url": ""}]))
+    open_tab(page, base_url, "websites")
+    assert page.locator(".website a.ssh-cmd").count() == 0
+    assert "No HTTPS address" in page.locator(".website").inner_text()
+
+
+@pytest.mark.parametrize("unit_state, running, word", [("active", False, "starting"), ("failed", False, "failed"),
+                                                       ("inactive", False, "stopped")])
+def test_website_status(make_page, base_url, unit_state, running, word):
+    page = make_page()
+    page.route("**/api/websites", lambda r: r.fulfill(json=[{**SITE, "unit_state": unit_state, "running": running}]))
+    open_tab(page, base_url, "websites")
+    assert page.locator(".website .pill").inner_text() == word
+
+
+def test_websites_fit_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    page.route("**/api/websites", lambda r: r.fulfill(json=[SITE]))
+    open_tab(page, base_url, "websites")
+    page.wait_for_selector(".website")
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]

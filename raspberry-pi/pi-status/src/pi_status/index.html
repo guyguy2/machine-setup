@@ -153,7 +153,7 @@
     #refresh { order: 2; margin: 0; }
     #conn { order: 3; }
     .version { order: 4; margin: 0; padding: 0; }
-    nav { order: 5; flex: 1 1 100%; flex-direction: row; margin: 0 -8px; }
+    nav { order: 5; flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; margin: 0 -8px; }  /* six tabs: two rows on narrow phones */
     nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; }
     .content { padding: 16px; }
     .ssh-row, .page-row { grid-template-columns: minmax(0, 1fr) auto; }
@@ -671,6 +671,30 @@ function lab(d) {
   ];
 }
 
+// ---------- websites (home network, no Tailscale needed) ----------
+function websites(list) {
+  const status = w => {
+    const [word, kind] = UNIT_STATUS[w.unit_state] || ["stopped", ""];
+    return word === "running" && !w.running ? ["starting", "warn"] : [word, kind];  // up, port not listening yet
+  };
+  return [
+    h("h2", {}, "Websites"),
+    h("div", { class: "sub", style: "margin-bottom:12px" },
+      "Served over HTTPS to the home Wi-Fi (no Tailscale needed) and the tailnet, at the same address."),
+    list.length ? list.map(w => h("div", { class: "card website" },
+      h("div", { class: "card-head" }, h("h4", {}, w.name), h("span", { class: "status" }, pill(...status(w)))),
+      h("div", { class: "detail" }, w.what),
+      w.url ? copyRow("Wi-Fi and tailnet", w.url, `${w.name} address`,
+                      h("a", { class: "mono ssh-cmd", href: w.url, target: "_blank", rel: "noopener" }, w.url))
+            : h("div", { class: "sub" }, "No HTTPS address: Tailscale isn't up, so the Pi has no tailnet name."),
+      w.redirects.length && h("div", { class: "sub", style: "margin-top:8px" },
+        "Old addresses that redirect here: ", w.redirects.flatMap((r, i) => [i ? ", " : "", h("span", { class: "mono" }, r)])),
+      h("div", { class: "sub", style: "margin-top:4px" },
+        "Services: ", h("span", { class: "mono" }, w.units.join(", ")), " · Folder: ", h("span", { class: "mono" }, w.folder))))
+    : empty("No websites yet. Add one to WEBSITES in collect.py."),
+  ];
+}
+
 function docker(d) {
   if (!d.installed) return empty("No Docker found: Docker isn't installed on this Pi. Containers will appear here once it is.");
   if (d.running === false) return empty("Docker isn't running. Start it with sudo systemctl start docker.");
@@ -747,6 +771,7 @@ const TABS = [
     render: overview },
   { id: "agents", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
   { id: "lab", title: "Agent Lab", api: "/api/lab", render: lab },
+  { id: "websites", title: "Websites", api: "/api/websites", render: websites },
   { id: "network", title: "Network", api: "/api/network", render: network },
   { id: "system", title: "System", sub: SYSTEM },
 ];
