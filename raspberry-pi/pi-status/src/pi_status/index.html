@@ -239,9 +239,11 @@
   .mail-flash { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 10px; border-radius: 8px;
                 background: color-mix(in srgb, var(--ok) 14%, transparent); font-size: .875rem; overflow-wrap: anywhere; }
   .mail-flash:focus { outline: none; }
-  .mail-trash { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .mail-trash, .mail-accept { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
   .copy.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
   .copy.danger:hover { filter: brightness(.92); }
+  .copy.accept { background: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
+  .copy.accept:hover { filter: brightness(.92); }
   .mail .copy:disabled { cursor: not-allowed; opacity: .6; }
   .mail .choice.chosen:disabled { opacity: 1; cursor: default; }  /* your choice: solid, just not clickable again */
   .q-confirmed { color: var(--muted); font-size: .6875rem; font-variant-numeric: tabular-nums; }
@@ -917,7 +919,8 @@ const QUEUES = [
   { id: "delete", title: "Delete", hint: "Safe to trash, with a reason for each" },
   { id: "agent-notes", title: "Agent Notes", hint: "Questions and rules for you to approve" },
 ];
-const CHOICES = ["action", "respond", "review", "delete", "later"];  // where a card can be moved; the others are set by the sorter
+const SUGGESTED = ["action", "respond", "review", "delete"];  // what a suggestion can be
+const CHOICES = [...SUGGESTED, "later"];  // where a card can be moved; the others are set by the sorter
 const NO_DOT = new Set(["inbox", "delete", "later"]);                 // Inbox is a highlighted pill, Delete and Later plain counts
 const NOTE_LEVEL = { info: ["info", ""], warn: ["warning", "warn"], question: ["question", "question"] };
 const queueTitle = id => (QUEUES.find(q => q.id === id) || { title: id }).title;
@@ -985,7 +988,7 @@ function queueBadge(d, q) {
 let mailFlash = null;  // what the last choice did, shown above the cards when its card has left the view
 
 async function mailAct(btn, action, body, said) {
-  const box = btn.closest(".thread, .mail-trash, .mail-flash");  // its buttons are locked while this runs
+  const box = btn.closest(".thread, .mail-trash, .mail-accept, .mail-flash");  // its buttons are locked while this runs
   const buttons = [...box.querySelectorAll("button")];
   buttons.forEach(b => (b.disabled = true));
   box.querySelector(".act-error")?.remove();
@@ -1029,6 +1032,23 @@ function undo(btn, t) {
   mailAct(btn, "undo", { thread: t.id }, state => {
     const now = state.threads.find(x => x.id === t.id);
     return { thread: t.id, text: `${subjectOf(t)} is back${now ? " in " + queueTitle(now.queue) : ""}` };
+  });
+}
+
+// What accepting does, per queue, for the confirm
+const ACCEPT_EFFECT = { action: "labelled, stay in your inbox", respond: "labelled, stay in your inbox",
+                        review: "labelled and archived", delete: "marked for Trash (nothing is trashed yet)" };
+
+// Every suggestion this view shows and you haven't chosen yet, as if you clicked each one's highlighted button
+function acceptAll(btn, pending) {
+  const n = pending.length, by = {};
+  pending.forEach(t => (by[t.rec.queue] = (by[t.rec.queue] || 0) + 1));
+  const lines = SUGGESTED.filter(q => by[q]).map(q => `${by[q]} → ${queueTitle(q)}: ${ACCEPT_EFFECT[q]}`);
+  if (!confirm(`Accept ${n} suggestion${n === 1 ? "" : "s"}?\n\n${lines.join("\n")}\n\nAll are marked read. Each card keeps its Undo.`)) return;
+  mailAct(btn, "accept", { items: pending.map(t => ({ thread: t.id, queue: t.rec.queue })) }, (state, out) => {
+    const k = typeof out.accepted === "number" ? out.accepted : n;
+    const extra = [out.skipped && `${out.skipped} skipped (changed since the page loaded)`, out.failed && `${out.failed} failed; try again`];
+    return { text: [`Accepted ${k} suggestion${k === 1 ? "" : "s"}.`, ...extra.filter(Boolean)].join(" · ") };
   });
 }
 
@@ -1123,6 +1143,9 @@ function mailPane(d, sel) {
     none = sel.id === "inbox" ? "Inbox zero: nothing left to sort." : `Nothing in ${sel.title}.`;
   }
   const marked = d.trash.marked;
+  // Accept all: the suggestions on this view's cards you haven't chosen yet (the queue's, or every queue's on All)
+  const pending = needle || !(sel.id === "all" || SUGGESTED.includes(sel.id)) ? [] :
+    d.threads.filter(t => (sel.id === "all" || t.queue === sel.id) && !t.decided && SUGGESTED.includes(t.rec?.queue) && t.queue === t.rec.queue);
   const shown = new Set(cards.map(c => c.dataset.thread).filter(Boolean));
   const flash = mailFlash && !(mailFlash.thread && shown.has(mailFlash.thread)) && mailFlash;
   const flashed = flash && d.threads.find(t => t.id === flash.thread);
@@ -1134,6 +1157,12 @@ function mailPane(d, sel) {
     flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
       flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
         onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo")),
+    pending.length > 0 && h("div", { class: "card mail-accept" },
+      h("span", {}, `${pending.length} suggestion${pending.length === 1 ? "" : "s"} not chosen yet`),
+      h("button", { class: "copy accept", type: "button", disabled: !d.actions_enabled,
+                    title: d.actions_enabled ? "As if you clicked the highlighted button on each card" : "Suggestions only: nothing is changed in Gmail yet",
+                    onclick: e => acceptAll(e.currentTarget, pending) },
+        pending.length === 1 ? "Accept the suggestion" : `Accept all ${pending.length} suggested`)),
     !needle && sel.id === "delete" && marked.length > 0 && h("div", { class: "card mail-trash" },
       h("span", {}, `${marked.length} marked for Trash`),
       h("button", { class: "copy danger", type: "button", disabled: !d.actions_enabled,

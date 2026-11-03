@@ -728,8 +728,9 @@ def emails() -> dict:
 # Gmail, logs it and rewrites state.json. Argument lists only, never a shell; every value is checked first.
 MAIL_BIN = Path(HOME) / "dev" / "mail" / ".venv" / "bin" / "mail"
 MAIL_BIN_ENV = "PI_STATUS_MAIL_BIN"  # tests point this at a fake
-MAIL_TIMEOUT = 60
+MAIL_TIMEOUT = 120  # Accept all can label a few hundred threads (six Gmail calls at a time)
 MAIL_CHOICES = ("action", "respond", "review", "delete", "later", "done")
+MAIL_SUGGESTED = ("action", "respond", "review", "delete")  # what a suggestion can be, so what Accept all accepts
 MAIL_MAX_IDS = 500
 THREAD_ID = re.compile(r"[0-9a-f]{10,24}")
 # its exit codes: 0 ok, 1 Gmail error, 2 sign-in expired, 3 usage, 5 refused (unknown thread, not marked, ...)
@@ -755,6 +756,20 @@ def mail_args(action: str, body) -> list[str] | str:
         if queue not in MAIL_CHOICES:
             return "queue must be one of " + ", ".join(MAIL_CHOICES)
         return ["decide", thread, queue]
+    if action == "accept":
+        items = body.get("items")
+        if not isinstance(items, list) or not items:
+            return "items must be a non-empty list of {thread, queue}"
+        if len(items) > MAIL_MAX_IDS:
+            return f"at most {MAIL_MAX_IDS} at a time"
+        pairs = {}
+        for it in items:
+            if not isinstance(it, dict) or not isinstance(it.get("thread"), str) or not THREAD_ID.fullmatch(it["thread"]):
+                return "each item needs a Gmail thread id"
+            if it.get("queue") not in MAIL_SUGGESTED:
+                return "each item's queue must be one of " + ", ".join(MAIL_SUGGESTED)
+            pairs[it["thread"]] = it["queue"]
+        return ["accept", *(f"{t}:{q}" for t, q in pairs.items())]
     if action == "trash":
         ids = body.get("ids")
         if not isinstance(ids, list) or not ids:
@@ -780,7 +795,7 @@ def mail_output(stdout: str):
 
 
 def mail_action(action: str, body) -> tuple[int, dict]:
-    """Run one choice (decide, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
+    """Run one choice (decide, accept, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
     fresh /api/emails payload so the page redraws without fetching again."""
     args = mail_args(action, body)
     if isinstance(args, str):

@@ -244,6 +244,17 @@ def test_mail_undo_and_trash_arguments(base_url, fake_mail):
     assert fake_mail.calls() == [["undo", DELETE_ID, *WEB], ["trash", "--yes", DELETE_ID, *WEB]]   # duplicates dropped
 
 
+def test_mail_accept_arguments_and_checks(base_url, fake_mail):
+    items = [{"thread": ACTION_ID, "queue": "action"}, {"thread": DELETE_ID, "queue": "delete"},
+             {"thread": ACTION_ID, "queue": "action"}]
+    assert post_json(base_url + "/api/emails/accept", {"items": items}, HB)[0] == 200
+    assert fake_mail.calls() == [["accept", f"{ACTION_ID}:action", f"{DELETE_ID}:delete", *WEB]]   # duplicates dropped
+    for bad in ([], [{"thread": ACTION_ID, "queue": "later"}], [{"thread": "x; rm -rf", "queue": "action"}], ["a001"]):
+        status, out = post_json(base_url + "/api/emails/accept", {"items": bad}, HB)
+        assert status == 400 and out["ok"] is False
+    assert len(fake_mail.calls()) == 1                                                  # refused ones never ran
+
+
 @pytest.mark.parametrize("code, status", [(5, 409), (2, 401), (1, 502), (3, 400), (7, 500)])
 def test_mail_failures_map_to_http_status_with_the_error_and_state(base_url, fake_mail, code, status):
     fake_mail.reply(code, {"ok": False, "error": f"failed with {code}"})

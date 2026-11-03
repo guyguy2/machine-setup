@@ -1854,6 +1854,52 @@ def test_emails_trash_all_marked_after_confirming(make_page, base_url, fake_mail
     assert cards(page).count() == 1                            # the suggested-only one still needs a Delete click first
 
 
+def test_emails_accept_all_in_a_queue(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/delete")
+    bar = page.locator("#view .mail-accept")
+    assert bar.locator("span").inner_text() == "1 suggestion not chosen yet"   # the coupons; PROMO is already chosen
+    messages = []
+
+    def accept(dialog):
+        messages.append(dialog.message)
+        dialog.accept()
+    page.once("dialog", accept)
+    bar.locator("button.accept").click()
+    page.locator("#view .mail-flash").wait_for()
+    assert messages == ["Accept 1 suggestion?\n\n1 → Delete: marked for Trash (nothing is trashed yet)\n\n"
+                        "All are marked read. Each card keeps its Undo."]
+    assert fake_mail.calls() == [["accept", "000000000000de02:delete", "--via", "web", "--json"]]
+    assert page.locator("#view .mail-flash").inner_text() == "Accepted 1 suggestion."
+    assert page.locator("#view .mail-accept").count() == 0                     # nothing left to accept
+    assert page.locator("#view .mail-trash button.danger").inner_text() == "Trash all 2 marked"   # trashing stays separate
+
+
+def test_emails_accept_all_across_queues_and_cancel(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/all")
+    bar = page.locator("#view .mail-accept")
+    assert bar.locator("button.accept").inner_text() == "Accept all 4 suggested"
+    messages = []
+
+    def dismiss(dialog):
+        messages.append(dialog.message)
+        dialog.dismiss()
+    page.once("dialog", dismiss)
+    bar.locator("button.accept").click()
+    page.wait_for_timeout(200)
+    assert messages[0].split("\n")[2:6] == ["1 → Action: labelled, stay in your inbox", "1 → Respond: labelled, stay in your inbox",
+                                            "1 → Review: labelled and archived", "1 → Delete: marked for Trash (nothing is trashed yet)"]
+    assert fake_mail.calls() == []                                              # cancelled: nothing ran
+
+
+@pytest.mark.parametrize("queue", ["inbox", "waiting", "drafts", "later"])
+def test_emails_no_accept_where_nothing_is_suggested(make_page, base_url, fake_mail, queue):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/" + queue)
+    assert page.locator("#view .mail-accept").count() == 0
+
+
 def test_emails_no_trash_bar_when_nothing_is_marked(make_page, base_url):
     page = make_page()
     open_emails(page, base_url, "emails/delete", data=mail_api(trash={"marked": []}))
