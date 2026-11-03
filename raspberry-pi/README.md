@@ -75,6 +75,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data is not restored, by design | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `rei` | the REI dashboard: clones the private repo to `~/dev/rei` (needs the `github` step), `uv sync`, its `deploy/pi/install.sh` (links and enables `rei.service` and `rei-proxy.service`; `rei-vault-sync.timer` only once the rclone remote `gdrive:` exists), then `tailscale serve --https=8446` (tailnet only). Prints its manual follow-ups (section 4) | `~/dev/rei` |
+| `mail` | the email sorter behind Home Base's Emails tab: clones the private repo to `~/dev/mail` (needs the `github` step), `uv sync`, links and enables `mail-sync.timer` (every 10 min). Needs the gws Gmail sign-in and Claude Code signed in; its data (`~/.local/share/mail`) isn't backed up, `uv run mail bootstrap` relearns the last two weeks | `~/dev/mail` |
 | `shell` | login shell → zsh | |
 | `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |
 

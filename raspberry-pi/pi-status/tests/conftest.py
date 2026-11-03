@@ -1,3 +1,4 @@
+import os
 import shutil
 import threading
 from http.server import ThreadingHTTPServer
@@ -5,7 +6,21 @@ from http.server import ThreadingHTTPServer
 import pytest
 from playwright.sync_api import sync_playwright
 
-from pi_status import Handler
+from mail_fixture import write_fresh
+from pi_status import Handler, collect
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fake_mail_state(tmp_path_factory):
+    """Point /api/emails at the FAKE fixture for the whole run, so no test ever reads real mail."""
+    path = write_fresh(tmp_path_factory.mktemp("mail") / "state.json")
+    old = os.environ.get(collect.MAIL_STATE_ENV)
+    os.environ[collect.MAIL_STATE_ENV] = str(path)
+    yield path
+    if old is None:
+        os.environ.pop(collect.MAIL_STATE_ENV, None)
+    else:
+        os.environ[collect.MAIL_STATE_ENV] = old
 
 
 @pytest.fixture(scope="session")

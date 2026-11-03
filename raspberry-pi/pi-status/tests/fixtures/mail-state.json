@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "generated": "2026-01-15T12:00:00-05:00",
+  "mode": "suggest",
+  "actions_enabled": false,
+  "window_days": 14,
+  "sync": {
+    "ok": true,
+    "last_success": "2026-01-15T12:00:00-05:00",
+    "error": null,
+    "bootstrap": {"done": true, "threads": 4200, "senders": 610}
+  },
+  "queues": [
+    {"id": "inbox", "title": "Inbox", "hint": "Not sorted yet", "count": 1},
+    {"id": "action", "title": "Action", "hint": "Something to do: pay, sign, book", "count": 2},
+    {"id": "respond", "title": "Respond", "hint": "Someone is waiting for your reply", "count": 1},
+    {"id": "review", "title": "Review", "hint": "Worth reading, then archive", "count": 2},
+    {"id": "drafts", "title": "Drafts", "hint": "Replies ready to edit and send", "count": 1},
+    {"id": "waiting", "title": "Waiting", "hint": "You wrote; they owe you a reply", "count": 2, "overdue": 1},
+    {"id": "delete", "title": "Delete", "hint": "Safe to trash, with a reason for each", "count": 1},
+    {"id": "agent-notes", "title": "Agent Notes", "hint": "Questions and rules for you to approve", "count": 3}
+  ],
+  "threads": [
+    {
+      "id": "t-action-1", "queue": "action",
+      "from_name": "Example School", "from_addr": "office@school.example",
+      "subject": "Field trip form due Friday",
+      "snippet": "Please sign and return the attached form by Friday so your child can join the museum trip.",
+      "date": "2026-01-15T11:42:00-05:00", "unread": true, "messages": 2,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-action-1",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "action", "why": "Has a form and a deadline (Friday).", "source": "claude", "confidence": 0.86,
+              "todo": "Sign field trip form", "alternatives": ["review", "respond"]},
+      "sender": {"received": 14, "opened": 12, "replied": 3}
+    },
+    {
+      "id": "t-inbox-1", "queue": "inbox",
+      "from_name": "Neighborhood Garden Club", "from_addr": "hello@garden-club.example",
+      "subject": "Spring planting day",
+      "snippet": "We're planning the spring planting day and would love a few volunteers.",
+      "date": "2026-01-15T11:05:00-05:00", "unread": true, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-inbox-1",
+      "waiting_days": null, "overdue": false, "rec": null, "sender": null
+    },
+    {
+      "id": "t-respond-1", "queue": "respond",
+      "from_name": "Sam Rivera", "from_addr": "sam.rivera@friends.example",
+      "subject": "Dinner next week?",
+      "snippet": "Are you free Tuesday or Wednesday? Let me know which works and I'll book a table.",
+      "date": "2026-01-15T09:30:00-05:00", "unread": false, "messages": 3,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-respond-1",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "respond", "why": "A direct question to you, and you usually reply to this sender.", "source": "rule",
+              "confidence": 0.93, "todo": null, "alternatives": ["action"]},
+      "sender": {"received": 40, "opened": 40, "replied": 31}
+    },
+    {
+      "id": "t-action-2", "queue": "action",
+      "from_name": "City Water Utility", "from_addr": "billing@water.example",
+      "subject": "Your bill is ready",
+      "snippet": "Your January statement is available. Amount due by the 28th.",
+      "date": "2026-01-14T16:20:00-05:00", "unread": false, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-action-2",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "action", "why": "A bill with a due date.", "source": "rule", "confidence": 0.97,
+              "todo": "Pay water bill", "alternatives": ["review"]},
+      "sender": {"received": 12, "opened": 11, "replied": 0}
+    },
+    {
+      "id": "t-review-1", "queue": "review",
+      "from_name": "The Weekly Example", "from_addr": "newsletter@weekly.example",
+      "subject": "This week: five small gardens worth a visit",
+      "snippet": "Plus a recipe for winter soup and the best new podcasts.",
+      "date": "2026-01-14T07:00:00-05:00", "unread": true, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-review-1",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "review", "why": "A newsletter you open most weeks.", "source": "rule", "confidence": 0.8,
+              "todo": null, "alternatives": ["delete"]},
+      "sender": {"received": 52, "opened": 38, "replied": 0}
+    },
+    {
+      "id": "t-review-2", "queue": "review",
+      "from_name": "Example Bank", "from_addr": "alerts@bank.example",
+      "subject": "Your statement is available",
+      "snippet": "Your monthly statement for the account ending 0000 is ready to view.",
+      "date": "2026-01-13T08:15:00-05:00", "unread": false, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-review-2",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "review", "why": "A statement; nothing due.", "source": "claude", "confidence": 0.71,
+              "todo": null, "alternatives": ["action", "delete"]},
+      "sender": {"received": 24, "opened": 20, "replied": 0}
+    },
+    {
+      "id": "t-drafts-1", "queue": "drafts",
+      "from_name": "Pat Lee", "from_addr": "pat.lee@work.example",
+      "subject": "Re: Notes from Monday",
+      "snippet": "Thanks Pat, here are my notes. I added two questions at the end.",
+      "date": "2026-01-13T17:45:00-05:00", "unread": false, "messages": 4,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-drafts-1",
+      "waiting_days": null, "overdue": false, "rec": null,
+      "sender": {"received": 9, "opened": 9, "replied": 6}
+    },
+    {
+      "id": "t-waiting-1", "queue": "waiting",
+      "from_name": "Example Plumbing", "from_addr": "jobs@plumbing.example",
+      "subject": "Quote for the kitchen sink",
+      "snippet": "You: Could you send a quote for replacing the kitchen sink?",
+      "date": "2026-01-05T10:00:00-05:00", "unread": false, "messages": 2,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-waiting-1",
+      "waiting_days": 10, "overdue": true, "rec": null,
+      "sender": {"received": 2, "opened": 2, "replied": 1}
+    },
+    {
+      "id": "t-waiting-2", "queue": "waiting",
+      "from_name": "Example Library", "from_addr": "desk@library.example",
+      "subject": "Room booking for the book club",
+      "snippet": "You: Is the small meeting room free on the 30th?",
+      "date": "2026-01-12T14:00:00-05:00", "unread": false, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-waiting-2",
+      "waiting_days": 3, "overdue": false, "rec": null,
+      "sender": {"received": 5, "opened": 4, "replied": 2}
+    },
+    {
+      "id": "t-delete-1", "queue": "delete",
+      "from_name": "Deals Example", "from_addr": "promo@deals.example",
+      "subject": "Last chance: 70% off everything",
+      "snippet": "Our biggest sale ends tonight. Don't miss out on these deals.",
+      "date": "2026-01-12T06:00:00-05:00", "unread": true, "messages": 1,
+      "gmail_url": "https://mail.google.com/mail/u/0/#all/t-delete-1",
+      "waiting_days": null, "overdue": false,
+      "rec": {"queue": "delete", "why": "A promotion from a sender you never open.", "source": "rule", "confidence": 0.95,
+              "todo": null, "alternatives": ["review"]},
+      "sender": null
+    }
+  ],
+  "notes": [
+    {"id": "n1", "date": "2026-01-15T12:00:00-05:00", "level": "info",
+     "title": "Learned from past mail", "text": "610 senders. 120 of them you never open."},
+    {"id": "n2", "date": "2026-01-15T11:50:00-05:00", "level": "question",
+     "title": "Always put Deals Example in Delete?", "text": "You haven't opened any of its 30 emails."},
+    {"id": "n3", "date": "2026-01-15T10:00:00-05:00", "level": "warn",
+     "title": "One thread couldn't be sorted", "text": "Its message was too large to read; it stays in Inbox."}
+  ]
+}

@@ -762,3 +762,72 @@ def test_rei_stopped_skips_healthz_and_is_not_published_locally(monkeypatch):
     d = collect.rei()
     assert d["unit_state"] == "failed" and not d["published"] and d["url"] == ""
     assert d["health"]["reachable"] is False and seen == {}   # nothing asked a stopped app
+
+
+# ---------- emails (/api/emails reads the sorter's state.json; FAKE data only) ----------
+
+from datetime import timedelta  # noqa: E402
+
+from mail_fixture import write_fresh  # noqa: E402
+
+
+@pytest.fixture
+def mail_file(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    monkeypatch.setenv(collect.MAIL_STATE_ENV, str(path))
+    return path
+
+
+def test_emails_path_defaults_to_the_sorters_file(monkeypatch):
+    monkeypatch.delenv(collect.MAIL_STATE_ENV, raising=False)
+    assert collect.mail_state_path() == collect.MAIL_STATE
+    assert str(collect.MAIL_STATE).endswith(".local/share/mail/state.json")
+
+
+def test_emails_missing_file_is_not_connected_with_the_setup_command(mail_file):
+    assert collect.emails() == {"connected": False, "setup": "systemctl --user enable --now mail-sync.timer"}
+
+
+def test_emails_fresh_file_is_passed_through_with_derived_fields(mail_file):
+    write_fresh(mail_file)
+    data = collect.emails()
+    assert data["connected"] is True and data["stale"] is False and 200 <= data["age_s"] <= 300
+    assert data["needs_you"] == 3                       # Action 2 + Respond 1
+    assert [q["id"] for q in data["queues"]][6] == "delete"
+    assert len(data["threads"]) == 10 and len(data["notes"]) == 3
+    assert data["threads"][0]["from_addr"] == "office@school.example"
+    assert data["actions_enabled"] is False and "error" not in data
+
+
+def test_emails_stale_after_30_minutes(mail_file):
+    write_fresh(mail_file, age=timedelta(minutes=29))
+    assert collect.emails()["stale"] is False
+    write_fresh(mail_file, age=timedelta(minutes=31))
+    assert collect.emails()["stale"] is True
+
+
+@pytest.mark.parametrize("generated", [None, "yesterday", 12])
+def test_emails_unreadable_generated_time_counts_as_stale(mail_file, generated):
+    write_fresh(mail_file, generated=generated)
+    data = collect.emails()
+    assert data["stale"] is True and data["age_s"] is None
+
+
+def test_emails_failed_sync_is_passed_through(mail_file):
+    write_fresh(mail_file, sync={"ok": False, "last_success": None, "error": "AUTH EXPIRED: run gws-login"})
+    data = collect.emails()
+    assert data["sync"]["ok"] is False and data["sync"]["error"].startswith("AUTH EXPIRED")
+
+
+@pytest.mark.parametrize("text, words", [("{not json", "not valid JSON"), ("[1, 2]", "not a JSON object")])
+def test_emails_bad_file_is_an_error_not_a_crash(mail_file, text, words):
+    mail_file.write_text(text)
+    data = collect.emails()
+    assert data["connected"] is False and words in data["error"] and data["setup"]
+
+
+def test_emails_missing_lists_are_filled_in(mail_file):
+    mail_file.write_text(json.dumps({"version": 1, "generated": "2026-01-01T00:00:00+00:00"}))
+    data = collect.emails()
+    assert data["queues"] == [] and data["threads"] == [] and data["notes"] == []
+    assert data["needs_you"] == 0 and data["sync"]["ok"] is False

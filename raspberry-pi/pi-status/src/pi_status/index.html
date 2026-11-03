@@ -80,6 +80,8 @@
   .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
   .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
   .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .pill.info { background: var(--accent-bg); color: var(--accent); }
+  .pill.question { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
 
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: .875rem; }
@@ -147,28 +149,76 @@
   .note pre, .prompt { margin: 0 0 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
 
-  /* emails (placeholder): a queue column and a main pane inside the content area */
+  /* emails: a queue column and a main pane inside the content area (suggestions from the mail sorter) */
+  :root { --orange: #ea580c; --teal: #0d9488; }
+  @media (prefers-color-scheme: dark) { :root { --orange: #fb923c; --teal: #2dd4bf; } }
   .mail { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; }
-  .mail .card { margin-bottom: 0; }
+  .mail > .card { margin-bottom: 0; }
   .mail-side { padding: 12px; }
   .mail-search { width: 100%; font: inherit; font-size: .875rem; padding: 6px 10px; border: 1px solid var(--track);
                  border-radius: 8px; background: var(--bg); color: var(--text); }
   .mail-search:disabled { color: var(--muted); cursor: not-allowed; }
   .mail-fresh { margin: 8px 2px 10px; }
-  .mail-all, .queues a { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px;
+  .mail-warn { margin: -4px 2px 10px; padding: 6px 8px; border-radius: 8px; font-size: .8125rem; overflow-wrap: anywhere;
+               background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--text); }
+  .mail-warn.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+  .mail-all, .queues a { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
                          border-radius: 8px; color: var(--text); text-decoration: none; font-size: .9375rem; }
-  .mail-all { font-weight: 600; border-radius: 0; border-bottom: 1px solid var(--track); }
+  .mail-all { font-weight: 600; }
+  .mail-all:hover { background: var(--track); }
+  .mail-all[aria-current="page"], .queues a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+  .mail-all:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .mail-side h3 { margin: 10px 10px 4px; }
   .queues { display: flex; flex-direction: column; gap: 2px; }
   .queues a:hover { background: var(--track); }
-  .queues a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   .queues a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .q-name { flex: 1 1 auto; }
+  .q-badge { display: inline-flex; align-items: center; gap: 6px; }
+  .q-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--q, var(--muted)); }
+  .q-action { --q: var(--bad); } .q-respond { --q: var(--orange); } .q-review { --q: var(--accent); }
+  .q-drafts { --q: var(--teal); } .q-waiting { --q: var(--muted); } .q-waiting.overdue, .q-agent-notes { --q: var(--warn); }
   .count { min-width: 2.2em; padding: 0 6px; border-radius: 99px; background: var(--track); color: var(--muted);
            font-size: .75rem; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
-  .mail-pane { min-height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-               text-align: center; padding: 32px 24px; }
-  .mail-pane h3 { margin: 0 0 4px; font-size: 1.125rem; }
-  .mail-pane p { margin: 4px 0; max-width: 46ch; }
+  .count.inbox { background: var(--accent); color: var(--card); }
+  .mail-pane { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .mail-pane > .card { margin-bottom: 0; }
+  .mail-head h3 { margin: 0; font-size: 1.125rem; }
+  .mail-head p { margin: 2px 0 0; }
+  .mail-only { padding: 6px 10px; border-radius: 8px; background: var(--accent-bg); color: var(--text); font-size: .875rem; }
+  .mail-empty { min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+                text-align: center; padding: 32px 24px; }
+  .mail-empty h3 { margin: 0 0 4px; font-size: 1.125rem; }
+  .mail-empty p { margin: 4px 0; max-width: 46ch; }
+  .mail-empty .ssh-row { width: 100%; max-width: 520px; text-align: left; grid-template-columns: minmax(0, 1fr) auto; }
+  .mail-empty .ssh-label { grid-column: 1 / 3; }
+  /* one card per thread */
+  .thread { overflow-wrap: anywhere; }
+  .thread-top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .thread .from { font-weight: 600; }
+  .thread .addr { color: var(--muted); font-size: .8125rem; }
+  .thread .when { margin-left: auto; color: var(--muted); font-size: .8125rem; white-space: nowrap; }
+  .thread .unread-dot { align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .thread .subject { margin-top: 2px; }
+  .thread.unread .subject { font-weight: 600; }
+  .thread .snippet { color: var(--muted); font-size: .875rem; margin-top: 2px;
+                     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  .thread .facts { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; font-size: .875rem; }
+  .thread .suggest b { font-weight: 600; }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: .6875rem; font-weight: 600;
+         background: var(--track); color: var(--muted); vertical-align: 1px; white-space: nowrap; }
+  .tag.claude { background: color-mix(in srgb, var(--s4) 18%, transparent); color: var(--s4); }
+  .thread .waiting.overdue { color: var(--warn); font-weight: 600; }
+  .thread .choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+  .choice:disabled { cursor: not-allowed; opacity: .6; }
+  .choice.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }
+  .gmail { margin-left: auto; text-decoration: none; display: inline-block; text-align: center; }
+  .note-card { border-left: 3px solid var(--accent); }
+  .note-card.warn { border-left-color: var(--warn); }
+  .note-card.question { border-left-color: var(--teal); }
+  .note-card h4 { margin: 0; font-size: 1rem; }
+  .note-card p { margin: 4px 0 0; }
+  .nav-badge { display: inline-block; margin-left: 6px; min-width: 1.5em; padding: 0 5px; border-radius: 99px; background: var(--bad);
+               color: #fff; font-size: .6875rem; font-weight: 700; line-height: 1.5; text-align: center; vertical-align: 1px; }
 
   /* rei (launcher for its own dashboard app) */
   .rei dl { margin: 10px 0 4px; }
@@ -214,8 +264,10 @@
     /* emails: the queue column becomes wrapping chips above the pane */
     .mail { grid-template-columns: minmax(0, 1fr); }
     .queues { flex-direction: row; flex-wrap: wrap; gap: 6px; }
-    .queues a { border: 1px solid var(--track); border-radius: 99px; padding: 4px 6px 4px 12px; font-size: .875rem; }
-    .mail-pane { min-height: 0; padding: 24px 16px; }
+    .queues a { border: 1px solid var(--track); border-radius: 99px; padding: 4px 8px 4px 12px; font-size: .875rem; }
+    .mail-empty { min-height: 0; padding: 24px 16px; }
+    .thread .addr { display: none; }  /* the name carries it on hover/long-press */
+    .gmail { margin-left: 0; }
   }
 </style>
 </head>
@@ -319,7 +371,8 @@ const procCols = [
 const cmdCol = { label: "Command", mono: true, cmd: true, value: p => p.cmd };
 
 function brand(s) {
-  document.title = "Home Base · " + s.hostname;
+  pageTitle = "Home Base · " + s.hostname;
+  setTitle();  // "(N) Home Base · <host>" while N emails need you
   $("host").textContent = s.hostname;
   $("model").textContent = s.model;
 }
@@ -344,6 +397,7 @@ function problems() {
     }),
     svc && [...svc.user, ...svc.system].filter(r => r.active === "failed" && !agentUnits.has(r.unit))
       .map(r => item("bad", `${r.unit} failed`, "#system/services")),
+    (p => p && item(p.kind, "Email sorter: " + p.text, "#emails"))(mailProblem(lastMail)),
     v?.stale && item("warn", "Newer pi-status code on disk", null,
       v.can_restart && h("button", { class: "copy", type: "button", onclick: e => restartServer(e.currentTarget) }, "Restart now")),
   ].flat().filter(Boolean);
@@ -809,39 +863,198 @@ function ports(list) {
   ];
 }
 
-// ---------- home: Emails is a placeholder (no api, so refresh() renders it without fetching); REI is live ----------
+// ---------- home: Emails shows the mail sorter's suggestions (/api/emails reads its state.json); REI is live ----------
 const NO_COUNT = "—";
 
-// Emails' queues (#emails/<id>), in triage order
+// Emails' queues (#emails/<id>), in triage order. state.json sends the same eight with counts (and its own hints);
+// these titles and hints are for when it isn't connected yet.
 const QUEUES = [
-  { id: "inbox", title: "Inbox", what: "New mail that hasn't been sorted yet." },
-  { id: "action", title: "Action", what: "Mail that needs you to do something." },
-  { id: "respond", title: "Respond", what: "Mail waiting for a reply from you." },
-  { id: "review", title: "Review", what: "Mail to read when you have time." },
-  { id: "drafts", title: "Drafts", what: "Replies drafted for you to check and send." },
-  { id: "waiting", title: "Waiting", what: "Threads where you're waiting on someone else." },
-  { id: "spam", title: "Spam", what: "Mail flagged as spam, to check before it's deleted." },
-  { id: "agent-notes", title: "Agent Notes", what: "Notes the agents left about your mail." },
+  { id: "inbox", title: "Inbox", hint: "Not sorted yet" },
+  { id: "action", title: "Action", hint: "Something to do: pay, sign, book" },
+  { id: "respond", title: "Respond", hint: "Someone is waiting for your reply" },
+  { id: "review", title: "Review", hint: "Worth reading, then archive" },
+  { id: "drafts", title: "Drafts", hint: "Replies ready to edit and send" },
+  { id: "waiting", title: "Waiting", hint: "You wrote; they owe you a reply" },
+  { id: "delete", title: "Delete", hint: "Safe to trash, with a reason for each" },
+  { id: "agent-notes", title: "Agent Notes", hint: "Questions and rules for you to approve" },
 ];
+const CHOICES = ["action", "respond", "review", "delete"];  // where a card can be moved; the others are set by the sorter
+const NO_DOT = new Set(["inbox", "delete"]);                 // Inbox is a highlighted pill, Delete a plain count
+const NOTE_LEVEL = { info: ["info", ""], warn: ["warning", "warn"], question: ["question", "question"] };
+const queueTitle = id => (QUEUES.find(q => q.id === id) || { title: id }).title;
 
-function emails() {
-  const q = QUEUES.find(q => q.id === subpath) || QUEUES[0];
-  const count = () => h("span", { class: "count", "aria-label": "count not available" }, NO_COUNT);
+let lastMail = null;  // the last /api/emails answer: the nav badge, the tab title and Overview's attention list read it
+let mailQuery = "";   // what's in the Emails search box; cleared when you pick a queue
+let pageTitle = "Home Base";
+
+function ago(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  if (s < 7 * 86400) return Math.floor(s / 86400) + "d ago";
+  return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+const needsYou = d => d && d.connected ? d.needs_you || 0 : 0;  // Action + Respond
+
+// A broken sorter (unreadable file, failed run, or no run for 30 minutes), or null. Not set up yet isn't a problem.
+function mailProblem(d) {
+  if (!d) return null;
+  if (d.error) return { kind: "bad", text: d.error };
+  if (!d.connected) return null;
+  const failed = d.sync.ok === false;
+  if (!failed && !d.stale) return null;
+  const head = failed ? "last run failed" : d.age_s == null ? "can't tell when it last ran" : `hasn't sorted mail for ${dur(d.age_s)}`;
+  return { kind: failed ? "bad" : "warn", text: head + (d.sync.error ? ": " + d.sync.error : "") };
+}
+
+function setTitle() {
+  const n = needsYou(lastMail);
+  document.title = (n > 0 ? `(${n}) ` : "") + pageTitle;
+}
+
+// The Emails nav link's red "needs you" badge, the tab title, and Overview's attention list (if it's on screen)
+function mailBadge(d) {
+  lastMail = d;
+  const n = needsYou(d);
+  const link = $("nav").querySelector("a[data-tab=emails]");
+  link.querySelector(".nav-badge")?.remove();
+  if (n > 0) link.append(h("span", { class: "nav-badge", title: `${n} need${n === 1 ? "s" : ""} you (Action + Respond)` }, String(n)));
+  setTitle();
+  if (overviewData) $("view").querySelector(".attention")?.replaceWith(attentionCard());
+}
+
+// Once on page load and on Refresh when another tab is open (the Emails tab's own fetch does it there); never polls
+async function loadMail() {
+  try { mailBadge(await getJSON("/api/emails")); } catch {}  // the badge just stays as it was
+}
+
+function queueBadge(d, q) {
+  if (!d.connected) return h("span", { class: "count", "aria-label": "count not available" }, NO_COUNT);
+  if (!q.count) return null;  // an empty queue shows nothing at all
+  const overdue = q.id === "waiting" && q.overdue > 0;
+  return h("span", { class: "q-badge", title: overdue ? `${q.overdue} overdue` : null },
+    !NO_DOT.has(q.id) && h("span", { class: `q-dot q-${q.id}${overdue ? " overdue" : ""}` }),
+    h("span", { class: "count" + (q.id === "inbox" ? " inbox" : "") }, String(q.count)));
+}
+
+function threadCard(d, t, inQueue) {
+  const rec = t.rec, s = t.sender;
+  // the suggestion first, then its alternatives, then the rest
+  const order = [...new Set([rec?.queue, ...(rec?.alternatives || []), ...CHOICES])].filter(c => CHOICES.includes(c));
+  const days = t.waiting_days;
+  return h("div", { class: "card thread" + (t.unread ? " unread" : ""), "data-thread": t.id, "data-queue": t.queue },
+    h("div", { class: "thread-top" },
+      t.unread && h("span", { class: "unread-dot", title: "Unread", role: "img", "aria-label": "unread" }),
+      h("span", { class: "from", title: t.from_addr }, t.from_name || t.from_addr || "(unknown sender)"),
+      t.from_name && t.from_addr && h("span", { class: "addr" }, t.from_addr),
+      t.messages > 1 && h("span", { class: "count", title: `${t.messages} messages` }, String(t.messages)),
+      inQueue && pill(queueTitle(t.queue)),
+      h("span", { class: "when", title: new Date(t.date).toLocaleString() }, ago(t.date))),
+    h("div", { class: "subject" }, t.subject || "(no subject)"),
+    t.snippet && h("div", { class: "snippet" }, t.snippet),
+    h("div", { class: "facts" },
+      rec && h("div", { class: "suggest" }, "Suggested: ", h("b", {}, queueTitle(rec.queue)), rec.why ? " — " + rec.why : "",
+        rec.source && h("span", { class: "tag " + (rec.source === "claude" ? "claude" : "rule"), title: "who suggested it" },
+                        rec.source === "claude" ? "Claude" : "rule"),
+        typeof rec.confidence === "number" && h("span", { class: "tag", title: "confidence" }, Math.round(rec.confidence * 100) + "%")),
+      rec?.todo && h("div", { class: "todo" }, "To do: " + rec.todo),
+      days != null && h("div", { class: "waiting" + (t.overdue ? " overdue" : "") },
+        `waiting ${days} day${days === 1 ? "" : "s"}${t.overdue ? " · overdue" : ""}`),
+      h("div", { class: "detail history" },
+        s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender")),
+    h("div", { class: "choices", role: "group", "aria-label": "Move to" },
+      order.map(c => h("button", { class: "copy choice" + (c === rec?.queue ? " primary" : ""), type: "button", "data-choice": c,
+                                   disabled: !d.actions_enabled,
+                                   title: d.actions_enabled ? null : "Suggestions only: nothing is changed in Gmail yet" }, queueTitle(c))),
+      /^https:\/\//.test(t.gmail_url || "") &&
+        h("a", { class: "copy gmail", href: t.gmail_url, target: "_blank", rel: "noopener" }, "Open in Gmail")));
+}
+
+function noteCard(n) {
+  const level = NOTE_LEVEL[n.level] ? n.level : "info";
+  const [word, kind] = NOTE_LEVEL[level];
+  return h("div", { class: "card note-card " + level, "data-level": level },
+    h("div", { class: "card-head" }, h("h4", {}, n.title || ""), pill(word, kind || "info"),
+      h("span", { class: "detail", style: "margin-left:auto", title: new Date(n.date).toLocaleString() }, ago(n.date))),
+    n.text && h("p", {}, n.text));
+}
+
+// The main pane: the selected queue's cards, or search matches from every queue
+function mailPane(d, sel) {
+  if (!d.connected) return [h("div", { class: "card mail-empty" },
+    h("h3", {}, sel.title), h("p", { class: "detail" }, sel.hint),
+    d.error ? h("p", {}, "The mail sorter's state file can't be read: " + d.error)
+            : [h("p", { class: "empty" }, "Emails aren't connected yet. Once the mail sorter runs, this pane lists the threads " +
+                 "in each queue, newest first, each with a suggestion."),
+               copyRow("Turn on the mail sorter (it runs every 10 minutes):", d.setup, "mail sorter setup command")])];
+  const q = mailQuery.trim(), needle = q.toLowerCase();
+  let title = sel.title, hint = sel.hint, cards, none;
+  if (needle) {
+    const hits = d.threads.filter(t => [t.from_name, t.from_addr, t.subject, t.snippet].some(f => String(f || "").toLowerCase().includes(needle)));
+    title = `Search: “${q}”`;
+    hint = `${hits.length} match${hits.length === 1 ? "" : "es"} across all queues`;
+    cards = hits.map(t => threadCard(d, t, true));
+    none = "No emails match.";
+  } else if (sel.id === "agent-notes") {
+    cards = d.notes.map(noteCard);
+    none = "No notes from the sorter.";
+  } else if (sel.id === "all") {
+    cards = d.threads.map(t => threadCard(d, t, true));
+    none = "No threads in the last " + (d.window_days || "few") + " days.";
+  } else {
+    cards = d.threads.filter(t => t.queue === sel.id).map(t => threadCard(d, t, false));
+    none = sel.id === "inbox" ? "Inbox zero: nothing left to sort." : `Nothing in ${sel.title}.`;
+  }
+  return [
+    h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
+    !d.actions_enabled && (needle || sel.id !== "agent-notes") &&
+      h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet."),
+    cards.length ? cards : h("div", { class: "card empty" }, none),
+  ];
+}
+
+function emails(d) {
+  mailBadge(d);
+  const queues = QUEUES.map(q => ({ ...q, ...(d.connected && d.queues.find(x => x.id === q.id)) }));
+  const all = { id: "all", title: "All inboxes",
+                hint: d.window_days ? `Every thread with activity in the last ${d.window_days} days` : "Every thread", count: d.threads?.length };
+  const sel = subpath === "all" ? all : queues.find(q => q.id === subpath) || queues[0];
+  const problem = mailProblem(d);
+  const paneKids = () => mailPane(d, sel).flat(Infinity).filter(Boolean);
+  const pane = h("div", { class: "mail-pane" }, paneKids());
+  const search = h("input", { class: "mail-search", type: "search", placeholder: "Search emails…", "aria-label": "Search emails",
+                              disabled: !d.connected });
+  search.value = mailQuery;
+  search.addEventListener("input", () => { mailQuery = search.value; pane.replaceChildren(...paneKids()); });
+  // picking the queue that's already open clears the search (there's no hashchange to do it)
+  const pick = e => {
+    if (e.currentTarget.getAttribute("href") !== location.hash || !mailQuery) return;
+    e.preventDefault();
+    mailQuery = search.value = "";
+    pane.replaceChildren(...paneKids());
+  };
+  const boot = d.sync?.bootstrap;
   return [
     h("h2", {}, "Emails"),
     h("div", { class: "mail" },
       h("div", { class: "card mail-side" },
-        h("input", { class: "mail-search", type: "search", placeholder: "Search emails…", "aria-label": "Search emails", disabled: true }),
-        h("div", { class: "sub mail-fresh" }, "Email data: not connected yet"),
-        h("div", { class: "mail-all" }, h("span", {}, "All inboxes"), count()),
+        search,
+        h("div", { class: "sub mail-fresh", title: d.generated ? new Date(d.generated).toLocaleString() : null },
+          d.error ? "Email data: can't be read" : !d.connected ? "Email data: not connected yet"
+                  : `sorted ${ago(d.generated) || "at an unknown time"}${boot && !boot.done ? " · still learning from past mail" : ""}`),
+        problem && h("div", { class: "mail-warn " + problem.kind, role: "status" }, problem.text),
+        h("a", { class: "mail-all", href: "#emails/all", "data-queue": "all", "aria-current": sel === all ? "page" : null, onclick: pick },
+          h("span", { class: "q-name" }, all.title),
+          d.connected ? all.count > 0 && h("span", { class: "count" }, String(all.count)) : queueBadge(d, all)),
         h("h3", { class: "label", id: "queues-label" }, "Queues"),
-        h("div", { class: "queues", role: "navigation", "aria-labelledby": "queues-label" }, QUEUES.map(x =>
-          h("a", { href: "#emails/" + x.id, "data-queue": x.id, "aria-current": x === q ? "page" : null }, h("span", {}, x.title), count())))),
-      h("div", { class: "card mail-pane" },
-        h("h3", {}, q.title),
-        h("p", { class: "detail" }, q.what),
-        h("p", { class: "empty" }, "Emails aren't connected yet. Once they are, this pane will list the messages in each queue, " +
-          "newest first, with counts in the queue list and search across all inboxes."))),
+        h("div", { class: "queues", role: "navigation", "aria-labelledby": "queues-label" }, queues.map(x =>
+          h("a", { href: "#emails/" + x.id, "data-queue": x.id, "aria-current": x === sel ? "page" : null, onclick: pick },
+            h("span", { class: "q-name" }, x.title), queueBadge(d, x))))),
+      pane),
   ];
 }
 
@@ -893,7 +1106,7 @@ const SYSTEM = [
   { id: "ports", title: "Ports", api: "/api/ports", render: ports },
 ];
 
-// `group` is the sidebar section; a tab without `api` is rendered straight away, nothing fetched
+// `group` is the sidebar section; a tab without `api` would be rendered straight away, nothing fetched
 const TABS = [
   { id: "overview", group: "Pi", title: "Overview", api: "/api/status",
     also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"], render: overview },
@@ -902,7 +1115,8 @@ const TABS = [
   { id: "websites", group: "Pi", title: "Websites", api: "/api/websites", render: websites },
   { id: "network", group: "Pi", title: "Network", api: "/api/network", render: network },
   { id: "system", group: "Pi", title: "System", sub: SYSTEM },
-  { id: "emails", group: "Home", title: "Emails", render: emails },
+  // keep: switching queues (#emails/<queue>) redraws from the data already loaded instead of fetching again
+  { id: "emails", group: "Home", title: "Emails", api: "/api/emails", keep: true, render: emails },
   { id: "rei", group: "Home", title: "REI", api: "/api/rei", render: rei },
 ];
 
@@ -947,6 +1161,7 @@ async function loadVersion() {
 let current = TABS[0];
 let subpath = "";  // what follows the tab in the hash: #lab/<run note> opens that note, #system/ports a sub-tab
 let currentView = current;  // what's on screen: the tab itself, or the System sub-tab
+let lastLoad = null;        // the view refresh() last rendered and what it was given, for tabs with `keep`
 
 function subtabs() {
   return h("div", { class: "seg subtabs", role: "navigation", "aria-label": current.title },
@@ -981,6 +1196,7 @@ async function refresh() {
       ...(v.also || []).map(url => getJSON(url).catch(() => null)),  // optional extras never break the tab
     ]);
     if (v !== currentView) return;  // user switched tabs while this was loading
+    lastLoad = { view: v, args: [data, ...extra] };
     show(tab, v.render(data, ...extra));
     $("conn").replaceChildren(h("span", { class: "dot" }), "updated " + new Date().toLocaleTimeString());
   } catch (e) {
@@ -995,12 +1211,22 @@ function route() {
     history.replaceState(null, "", `#system/${id}`);
     return route();
   }
+  if (id === "emails" && rest[0] === "spam") {  // the Spam queue is now Delete
+    history.replaceState(null, "", "#emails/delete");
+    return route();
+  }
+  const before = currentView;
   current = TABS.find(t => t.id === id) || TABS[0];
   subpath = decodeURIComponent(rest.join("/"));
   currentView = current.sub ? current.sub.find(s => s.id === subpath) || current.sub[0] : current;
   for (const a of $("nav").querySelectorAll("a[data-tab]")) {
     if (a.dataset.tab === current.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
+  }
+  mailQuery = "";
+  if (currentView === before && currentView.keep && lastLoad?.view === currentView) {
+    show(current, currentView.render(...lastLoad.args));
+    return;
   }
   $("view").replaceChildren();
   refresh();  // once per tab visit; nothing polls in the background, use the Refresh button for fresh numbers
@@ -1009,12 +1235,13 @@ function route() {
 addEventListener("hashchange", route);
 route();
 loadVersion();
+if (current.id !== "emails") loadMail();  // the Emails badge and tab title; the Emails tab fetches it itself
 
 $("refresh").addEventListener("click", async e => {
   const btn = e.currentTarget;
   btn.disabled = true;
   btn.textContent = "Refreshing…";
-  await Promise.all([refresh(), loadVersion()]);
+  await Promise.all([refresh(), loadVersion(), current.id !== "emails" && loadMail()]);
   btn.disabled = false;
   btn.textContent = "Refresh";
 });

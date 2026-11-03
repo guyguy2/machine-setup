@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
 CLK_TCK = os.sysconf("SC_CLK_TCK")
@@ -662,6 +663,61 @@ def rei() -> dict:
         "publish": f"sudo tailscale serve --bg --https={REI['port']} http://127.0.0.1:{REI_PROXY_PORT}",
         "start": f"systemctl --user start {REI['unit']}",
         "folder": REI["folder"],
+    }
+
+
+# ---------- emails (suggestions from the private mail sorter, read from one file) ----------
+
+MAIL_STATE = Path(HOME) / ".local" / "share" / "mail" / "state.json"  # written by `mail run` (mail-sync.timer)
+MAIL_STATE_ENV = "PI_STATUS_MAIL_STATE"  # tests and screenshots point this at a fake file
+MAIL_SETUP = "systemctl --user enable --now mail-sync.timer"
+MAIL_STALE_S = 30 * 60  # the sorter runs every 10 minutes; three missed runs means it's broken
+
+
+def mail_state_path() -> Path:
+    return Path(os.environ.get(MAIL_STATE_ENV) or MAIL_STATE)
+
+
+def iso_age(value, now: float) -> float | None:
+    """Seconds since an ISO 8601 time with an offset (None when it's missing or unreadable)."""
+    try:
+        when = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.astimezone()  # no offset: read it as local time
+    return now - when.timestamp()
+
+
+def emails() -> dict:
+    """The sorter's state.json as it is, plus `connected`, `stale`, `age_s` (since `generated`) and `needs_you`
+    (Action + Respond). Missing file: not set up yet. Unreadable file: an `error` the page shows."""
+    path = mail_state_path()
+    try:
+        text = path.read_text()
+    except FileNotFoundError:
+        return {"connected": False, "setup": MAIL_SETUP}
+    except OSError as e:
+        return {"connected": False, "setup": MAIL_SETUP, "error": f"can't read {path.name}: {e.strerror or e}"}
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        return {"connected": False, "setup": MAIL_SETUP, "error": f"{path.name} is not valid JSON ({e})"}
+    if not isinstance(data, dict):
+        return {"connected": False, "setup": MAIL_SETUP, "error": f"{path.name} is not a JSON object"}
+    for key in ("queues", "threads", "notes"):
+        if not isinstance(data.get(key), list):
+            data[key] = []
+    if not isinstance(data.get("sync"), dict):
+        data["sync"] = {"ok": False, "error": "no sync status in the file"}
+    age = iso_age(data.get("generated"), time.time())
+    counts = {q.get("id"): q.get("count") for q in data["queues"] if isinstance(q, dict)}
+    return {
+        **data,
+        "connected": True,
+        "age_s": None if age is None else max(0, round(age)),
+        "stale": age is None or age > MAIL_STALE_S,
+        "needs_you": sum(c for c in (counts.get("action"), counts.get("respond")) if isinstance(c, int)),
     }
 
 
