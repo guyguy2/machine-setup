@@ -1198,7 +1198,7 @@ def test_websites_fit_phone(make_page, base_url):
 
 # ---------- nav groups, the Home tabs (Emails and REI) ----------
 
-QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Delete", "Agent Notes"]
+QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Later", "Delete", "Agent Notes"]
 GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
   [g.querySelector('.nav-label').textContent, [...g.querySelectorAll('a')].map(a => a.firstChild.textContent)])"""
 
@@ -1372,8 +1372,10 @@ def test_emails_thread_card(make_page, base_url):
     assert card.locator(".history").inner_text() == "opened 12 of 14, replied 3"
     # the suggestion first, then its alternatives, then the rest; all disabled while actions are off
     buttons = card.locator(".choice")
-    assert buttons.all_inner_texts() == ["Action", "Review", "Respond", "Delete"]
-    assert "primary" in buttons.first.get_attribute("class") and "primary" not in buttons.nth(1).get_attribute("class")
+    assert [b.get_attribute("data-choice") for b in buttons.all()] == ["action", "review", "respond", "delete", "later"]
+    # the recommendation is outlined and says so; nothing is solid until you choose
+    assert "suggested" in buttons.first.get_attribute("class") and buttons.first.locator(".hint").inner_text() == "suggested"
+    assert card.locator(".choice.suggested").count() == 1 and card.locator(".choice.primary").count() == 0
     assert all(b.is_disabled() for b in buttons.all())
     link = card.locator("a.gmail")
     assert link.inner_text() == "Open in Gmail" and link.get_attribute("href") == "https://mail.google.com/mail/u/0/#all/000000000000a001"
@@ -1387,7 +1389,7 @@ def test_emails_buttons_enabled_when_actions_are(make_page, base_url):
     open_emails(page, base_url, "emails/action")
     assert page.locator("#view .mail-only").count() == 0
     assert page.locator("#view .mail-help").inner_text() == \
-        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all"
+        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · Later: left as is, unread · the rest mark it read"
     assert all(not b.is_disabled() for b in cards(page).first.locator("button").all())
 
 
@@ -1398,8 +1400,8 @@ def test_emails_new_sender_and_unsuggested_thread(make_page, base_url):
     page.click("#view .queues a[data-queue=inbox]")
     page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
     card = cards(page).first
-    assert card.locator(".suggest").count() == 0 and card.locator(".choice.primary").count() == 0
-    assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete"]
+    assert card.locator(".suggest").count() == 0 and card.locator(".choice.primary, .choice.suggested").count() == 0
+    assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete", "Later"]
 
 
 def test_emails_waiting_days_amber_when_overdue(make_page, base_url):
@@ -1776,8 +1778,9 @@ def test_emails_decided_cards(make_page, base_url, fake_mail):
     bank = card(page, BANK)
     assert bank.locator(".decided").inner_text() == "✓ You chose Review"
     chosen = bank.locator(".choice.chosen")
-    assert chosen.inner_text() == "Review" and chosen.get_attribute("aria-pressed") == "true" and chosen.is_disabled()
+    assert chosen.inner_text() == "✓ Review" and chosen.get_attribute("aria-pressed") == "true" and chosen.is_disabled()
     assert "primary" in chosen.get_attribute("class") and bank.locator(".choice.primary").count() == 1
+    assert bank.locator(".choice.suggested").count() == 0  # once you've chosen, only your choice is highlighted
     assert bank.locator("button.undo").inner_text() == "Undo" and bank.locator(".choice.done").count() == 0   # Done: Action/Respond only
     page.click("#view .queues a[data-queue=action]")
     water = card(page, WATER)

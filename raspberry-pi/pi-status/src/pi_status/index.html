@@ -36,6 +36,23 @@
   nav a:hover { background: var(--track); }
   nav a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
   nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* sidebar icons (Lucide shapes, ISC license) drawn as CSS masks in the text color, so the links' DOM stays plain text */
+  #app { display: flex; align-items: center; gap: 8px; }
+  #app::before { content: ""; flex: none; width: 22px; height: 22px; background: var(--accent);
+                 -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8'/%3E%3Cpath d='M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8'/%3E%3Cpath d='M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E") center / contain no-repeat; }
+  nav a { display: flex; align-items: center; gap: 10px; }
+  nav a::before { content: ""; flex: none; width: 18px; height: 18px; background: currentColor; opacity: .85;
+                  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+  nav a[aria-current="page"]::before { opacity: 1; }
+  nav a[data-tab=overview] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='7' height='9' x='3' y='3' rx='1'/%3E%3Crect width='7' height='5' x='14' y='3' rx='1'/%3E%3Crect width='7' height='9' x='14' y='12' rx='1'/%3E%3Crect width='7' height='5' x='3' y='16' rx='1'/%3E%3C/svg%3E"); }
+  nav a[data-tab=agents] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 8V4H8'/%3E%3Crect width='16' height='12' x='4' y='8' rx='2'/%3E%3Cpath d='M2 14h2'/%3E%3Cpath d='M20 14h2'/%3E%3Cpath d='M15 13v2'/%3E%3Cpath d='M9 13v2'/%3E%3C/svg%3E"); }
+  nav a[data-tab=lab] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2'/%3E%3Cpath d='M8.5 2h7'/%3E%3Cpath d='M7 16h10'/%3E%3C/svg%3E"); }
+  nav a[data-tab=websites] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20'/%3E%3Cpath d='M2 12h20'/%3E%3C/svg%3E"); }
+  nav a[data-tab=network] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h.01'/%3E%3Cpath d='M2 8.82a15 15 0 0 1 20 0'/%3E%3Cpath d='M5 12.859a10 10 0 0 1 14 0'/%3E%3Cpath d='M8.5 16.429a5 5 0 0 1 7 0'/%3E%3C/svg%3E"); }
+  nav a[data-tab=system] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='16' height='16' x='4' y='4' rx='2'/%3E%3Crect width='6' height='6' x='9' y='9' rx='1'/%3E%3Cpath d='M15 2v2'/%3E%3Cpath d='M15 20v2'/%3E%3Cpath d='M2 15h2'/%3E%3Cpath d='M2 9h2'/%3E%3Cpath d='M20 15h2'/%3E%3Cpath d='M20 9h2'/%3E%3Cpath d='M9 2v2'/%3E%3Cpath d='M9 20v2'/%3E%3C/svg%3E"); }
+  nav a[data-tab=emails] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='20' height='16' x='2' y='4' rx='2'/%3E%3Cpath d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/%3E%3C/svg%3E"); }
+  nav a[data-tab=rei] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z'/%3E%3Cpath d='M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2'/%3E%3Cpath d='M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2'/%3E%3Cpath d='M10 6h4'/%3E%3Cpath d='M10 10h4'/%3E%3Cpath d='M10 14h4'/%3E%3Cpath d='M10 18h4'/%3E%3C/svg%3E"); }
+  nav a .nav-badge { margin-left: -2px; }
   .version { margin-top: auto; padding: 12px 8px 0; font: .75rem/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
   .version .stale { display: block; color: var(--warn); font-weight: 600; }
   .version .copy { margin-top: 6px; font-size: .75rem; }
@@ -210,7 +227,9 @@
   .thread .waiting.overdue { color: var(--warn); font-weight: 600; }
   .thread .choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
   .choice:disabled { cursor: not-allowed; opacity: .6; }
-  .choice.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }
+  .choice.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }  /* your choice */
+  .choice.suggested { border-color: var(--accent); color: var(--accent); font-weight: 600; }  /* the recommendation, not chosen yet */
+  .choice.suggested .hint { margin-left: 6px; font-size: .6875rem; font-weight: 500; opacity: .8; }
   .gmail { margin-left: auto; text-decoration: none; display: inline-block; text-align: center; }
   .choice:focus-visible, .undo:focus-visible, .danger:focus-visible, .gmail:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .thread .decided { color: var(--ok); font-weight: 600; }
@@ -262,7 +281,8 @@
     .nav-group + .nav-group { border-top: 1px solid var(--track); }
     .nav-label, .nav-group:first-child .nav-label { align-self: start; padding: 12px 0 0 8px; }  /* level with the first row */
     .nav-links { flex-direction: row; flex-wrap: wrap; gap: 0; }
-    nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; }
+    nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; justify-content: center; }
+    nav a::before { display: none; }  /* no room for tab icons in the phone rows */
     .content { padding: 16px; }
     .ssh-row, .page-row { grid-template-columns: minmax(0, 1fr) auto; }
     .ssh-label { grid-column: 1 / 3; }
@@ -893,11 +913,12 @@ const QUEUES = [
   { id: "review", title: "Review", hint: "Worth reading, then archive" },
   { id: "drafts", title: "Drafts", hint: "Replies ready to edit and send" },
   { id: "waiting", title: "Waiting", hint: "You wrote; they owe you a reply" },
+  { id: "later", title: "Later", hint: "Not sure yet: left in your inbox, unread" },
   { id: "delete", title: "Delete", hint: "Safe to trash, with a reason for each" },
   { id: "agent-notes", title: "Agent Notes", hint: "Questions and rules for you to approve" },
 ];
-const CHOICES = ["action", "respond", "review", "delete"];  // where a card can be moved; the others are set by the sorter
-const NO_DOT = new Set(["inbox", "delete"]);                 // Inbox is a highlighted pill, Delete a plain count
+const CHOICES = ["action", "respond", "review", "delete", "later"];  // where a card can be moved; the others are set by the sorter
+const NO_DOT = new Set(["inbox", "delete", "later"]);                 // Inbox is a highlighted pill, Delete and Later plain counts
 const NOTE_LEVEL = { info: ["info", ""], warn: ["warning", "warn"], question: ["question", "question"] };
 const queueTitle = id => (QUEUES.find(q => q.id === id) || { title: id }).title;
 
@@ -1019,7 +1040,7 @@ function trashAll(btn, ids) {
 
 function decidedText(dec) {
   if (dec.via === "gmail") return "✓ Labelled in Gmail";
-  return `✓ You chose ${queueTitle(dec.queue)}${dec.queue === "delete" ? " · marked for Trash" : ""}`;
+  return `✓ You chose ${queueTitle(dec.queue)}${dec.queue === "delete" ? " · marked for Trash" : dec.queue === "later" ? " · left unread in your inbox" : ""}`;
 }
 
 function threadCard(d, t, inQueue) {
@@ -1049,12 +1070,14 @@ function threadCard(d, t, inQueue) {
         s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender"),
       dec && h("div", { class: "decided" }, decidedText(dec))),
     h("div", { class: "choices", role: "group", "aria-label": "Move to" },
-      // undecided: the suggestion is the primary button; decided: your choice is, pressed and not clickable again
-      order.map(c => h("button", { class: "copy choice" + (c === (chosen || rec?.queue) ? " primary" : "") + (c === chosen ? " chosen" : ""),
+      // undecided: the suggestion is outlined with "suggested"; decided: your choice is solid with a ✓, pressed and not clickable again
+      order.map(c => h("button", { class: "copy choice" + (c === chosen ? " primary chosen" : !chosen && c === rec?.queue ? " suggested" : ""),
                                    type: "button", "data-choice": c, "aria-pressed": chosen ? String(c === chosen) : null,
                                    disabled: !live || c === chosen, "data-locked": c === chosen ? "1" : null,
                                    title: live ? (c === chosen ? "Your choice" : null) : "Suggestions only: nothing is changed in Gmail yet",
-                                   onclick: e => decide(e.currentTarget, t, c) }, queueTitle(c))),
+                                   onclick: e => decide(e.currentTarget, t, c) },
+                         c === chosen ? "✓ " + queueTitle(c) : queueTitle(c),
+                         !chosen && c === rec?.queue && h("span", { class: "hint" }, "suggested"))),
       live && (chosen === "action" || chosen === "respond") &&
         h("button", { class: "copy choice done", type: "button", "data-choice": "done", title: "Archive it and drop the label",
                       onclick: e => decide(e.currentTarget, t, "done") }, "Done"),
@@ -1106,7 +1129,7 @@ function mailPane(d, sel) {
   return [
     h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
     (needle || sel.id !== "agent-notes") && (d.actions_enabled
-      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all")
+      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · Later: left as is, unread · the rest mark it read")
       : h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet.")),
     flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
       flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",

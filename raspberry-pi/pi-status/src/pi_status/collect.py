@@ -729,7 +729,7 @@ def emails() -> dict:
 MAIL_BIN = Path(HOME) / "dev" / "mail" / ".venv" / "bin" / "mail"
 MAIL_BIN_ENV = "PI_STATUS_MAIL_BIN"  # tests point this at a fake
 MAIL_TIMEOUT = 60
-MAIL_CHOICES = ("action", "respond", "review", "delete", "done")
+MAIL_CHOICES = ("action", "respond", "review", "delete", "later", "done")
 MAIL_MAX_IDS = 500
 THREAD_ID = re.compile(r"[0-9a-f]{10,24}")
 # its exit codes: 0 ok, 1 Gmail error, 2 sign-in expired, 3 usage, 5 refused (unknown thread, not marked, ...)

@@ -793,7 +793,7 @@ def test_emails_fresh_file_is_passed_through_with_derived_fields(mail_file):
     data = collect.emails()
     assert data["connected"] is True and data["stale"] is False and 200 <= data["age_s"] <= 300
     assert data["needs_you"] == 3                       # Action 2 + Respond 1
-    assert [q["id"] for q in data["queues"]][6] == "delete"
+    assert [q["id"] for q in data["queues"]][7] == "delete"
     assert len(data["threads"]) == 11 and len(data["notes"]) == 3 and data["trash"]["marked"] == ["000000000000de01"]
     assert data["threads"][0]["from_addr"] == "office@school.example"
     assert data["actions_enabled"] is True and "error" not in data
