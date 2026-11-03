@@ -329,7 +329,7 @@ MSG
 fi
 
 if want mail; then
-  say "Email sorter (private repo ~/dev/mail: mail-sync.timer every 10 min writes the state Home Base's Emails tab shows)"
+  say "Email sorter (private repo ~/dev/mail: mail-sync.timer every hour writes the state Home Base's Emails tab shows)"
   mail=$HOME/dev/mail
   if [[ -d $mail ]]; then echo "  $mail already there"
   elif ! have gh || ! gh auth status >/dev/null 2>&1; then echo "  gh not signed in (private repo; run the github step first)"

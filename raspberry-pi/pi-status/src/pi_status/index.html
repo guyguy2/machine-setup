@@ -918,7 +918,7 @@ function ago(iso) {
 
 const needsYou = d => d && d.connected ? d.needs_you || 0 : 0;  // Action + Respond
 
-// A broken sorter (unreadable file, failed run, or no run for 30 minutes), or null. Not set up yet isn't a problem.
+// A broken sorter (unreadable file, failed run, or no run for 3 hours), or null. Not set up yet isn't a problem.
 function mailProblem(d) {
   if (!d) return null;
   if (d.error) return { kind: "bad", text: d.error };
@@ -1080,7 +1080,7 @@ function mailPane(d, sel) {
     d.error ? h("p", {}, "The mail sorter's state file can't be read: " + d.error)
             : [h("p", { class: "empty" }, "Emails aren't connected yet. Once the mail sorter runs, this pane lists the threads " +
                  "in each queue, newest first, each with a suggestion."),
-               copyRow("Turn on the mail sorter (it runs every 10 minutes):", d.setup, "mail sorter setup command")])];
+               copyRow("Turn on the mail sorter (it runs every hour):", d.setup, "mail sorter setup command")])];
   const q = mailQuery.trim(), needle = q.toLowerCase();
   let title = sel.title, hint = sel.hint, cards, none;
   if (needle) {
