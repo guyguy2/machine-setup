@@ -223,7 +223,7 @@ def test_mail_choices_validate_input_and_run_nothing(base_url, fake_mail, action
 def test_mail_choices_refuse_bad_and_oversized_bodies(base_url, fake_mail):
     assert post_json(base_url + "/api/emails/undo", b"{not json", HB)[0] == 400
     assert post_json(base_url + "/api/emails/undo", b"", HB)[0] == 400
-    big = json.dumps({"ids": ["0" * 24] * 1400}).encode()   # > 32 KB
+    big = json.dumps({"ids": ["0" * 24] * 2600}).encode()   # > 64 KB
     assert post_json(base_url + "/api/emails/trash", big, HB)[0] == 413
     assert fake_mail.calls() == []
 
@@ -262,6 +262,29 @@ def test_mail_accept_arguments_and_checks(base_url, fake_mail):
         status, out = post_json(base_url + "/api/emails/accept", {"items": bad}, HB)
         assert status == 400 and out["ok"] is False
     assert len(fake_mail.calls()) == 1                                                  # refused ones never ran
+
+
+def test_mail_draft_arguments_and_checks(base_url, fake_mail):
+    fake_mail.reply(0, {"ok": True})
+    url = base_url + "/api/emails/"
+    assert post_json(url + "draft", {"thread": ACTION_ID}, HB)[0] == 200
+    assert post_json(url + "draft", {"thread": ACTION_ID, "note": " --json  yes\n"}, HB)[0] == 200
+    text = "--yes\nHi,\n\nFine.\n"
+    assert post_json(url + "draft-save", {"thread": ACTION_ID, "text": text}, HB)[0] == 200
+    assert post_json(url + "draft-drop", {"thread": ACTION_ID}, HB)[0] == 200
+    assert fake_mail.calls() == [["draft", ACTION_ID, *WEB], ["draft", ACTION_ID, "--note", "--json yes", *WEB],
+                                 ["draft-save", ACTION_ID, text, *WEB], ["draft-drop", ACTION_ID, *WEB]]  # line breaks kept
+    for action, bad in [("draft", {"thread": "x"}), ("draft", {"thread": ACTION_ID, "note": "x" * 501}),
+                        ("draft", {"thread": ACTION_ID, "note": 3}), ("draft-save", {"thread": ACTION_ID}),
+                        ("draft-save", {"thread": ACTION_ID, "text": " \n "}),
+                        ("draft-save", {"thread": ACTION_ID, "text": "x" * 8001}), ("draft-drop", {})]:
+        assert post_json(url + action, bad, HB)[0] == 400, (action, bad)
+    assert len(fake_mail.calls()) == 4
+
+
+def test_mail_draft_does_not_wait_for_other_choices(base_url, fake_mail):
+    with pi_status.collect.mail_lock:              # a long choice is running; Claude writing a draft doesn't queue behind it
+        assert post_json(base_url + "/api/emails/draft", {"thread": ACTION_ID}, HB)[0] == 200
 
 
 @pytest.mark.parametrize("code, status", [(5, 409), (2, 401), (1, 502), (3, 400), (7, 500)])

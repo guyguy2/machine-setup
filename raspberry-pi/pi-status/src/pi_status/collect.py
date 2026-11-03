@@ -1,5 +1,6 @@
 """Data collectors for the status page (stdlib only; reads /proc, shells out sparingly)."""
 
+import contextlib
 import json
 import os
 import platform
@@ -733,6 +734,8 @@ MAIL_CHOICES = ("action", "respond", "review", "delete", "nar", "later", "done")
 MAIL_REASON_MAX = 500
 MAIL_SUGGESTED = ("action", "respond", "review", "delete")  # what a suggestion can be, so what Accept all accepts
 MAIL_MAX_IDS = 500
+MAIL_NOTE_MAX = 500  # what you ask a draft to say
+MAIL_DRAFT_MAX = 8000  # a reply draft's text
 THREAD_ID = re.compile(r"[0-9a-f]{10,24}")
 # its exit codes: 0 ok, 1 Gmail error, 2 sign-in expired, 3 usage, 5 refused (unknown thread, not marked, ...)
 MAIL_EXIT_STATUS = {0: 200, 1: 502, 2: 401, 3: 400, 5: 409}
@@ -754,6 +757,22 @@ def mail_args(action: str, body) -> list[str] | str:
         if not isinstance(text, str) or len(text) > MAIL_REASON_MAX:
             return f"text must be a string of at most {MAIL_REASON_MAX} characters"
         return ["reason", thread, " ".join(text.split())]  # one line; an argument, never a shell
+    if action in ("draft", "draft-save", "draft-drop"):
+        thread = body.get("thread")
+        if not isinstance(thread, str) or not THREAD_ID.fullmatch(thread):
+            return "thread must be a Gmail thread id"
+        if action == "draft-drop":
+            return ["draft-drop", thread]
+        if action == "draft":
+            note = body.get("note") or ""
+            if not isinstance(note, str) or len(note) > MAIL_NOTE_MAX:
+                return f"note must be a string of at most {MAIL_NOTE_MAX} characters"
+            note = " ".join(note.split())
+            return ["draft", thread, *(["--note", note] if note else [])]
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > MAIL_DRAFT_MAX:
+            return f"text must be the draft, 1 to {MAIL_DRAFT_MAX} characters"
+        return ["draft-save", thread, text]  # line breaks kept; an argument, never a shell
     if action in ("decide", "undo"):
         thread = body.get("thread")
         if not isinstance(thread, str) or not THREAD_ID.fullmatch(thread):
@@ -803,14 +822,15 @@ def mail_output(stdout: str):
 
 
 def mail_action(action: str, body) -> tuple[int, dict]:
-    """Run one choice (decide, accept, reason, undo, trash) and return the HTTP status, the command's JSON and, under `state`, the
-    fresh /api/emails payload so the page redraws without fetching again."""
+    """Run one choice (decide, accept, reason, undo, trash, draft...) and return the HTTP status, the command's JSON and, under
+    `state`, the fresh /api/emails payload so the page redraws without fetching again."""
     args = mail_args(action, body)
     if isinstance(args, str):
         return 400, {"ok": False, "error": args}
     exe = mail_bin()
     try:
-        with mail_lock:
+        # Claude writing a draft takes half a minute and changes no labels, so it doesn't hold up your other clicks
+        with contextlib.nullcontext() if args[0] == "draft" else mail_lock:
             done = subprocess.run([str(exe), *args, "--via", "web", "--json"], capture_output=True, text=True,
                                   timeout=MAIL_TIMEOUT, stdin=subprocess.DEVNULL)
     except FileNotFoundError:

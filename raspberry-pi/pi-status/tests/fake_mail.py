@@ -2,7 +2,8 @@
 
 conftest.py wraps this in an executable and points PI_STATUS_MAIL_BIN at it. It appends its argv to
 $FAKE_MAIL_DIR/calls.jsonl, then either replays $FAKE_MAIL_DIR/reply.json ({"exit": n, "stdout": "..."}) or acts
-like the real command on the state file in $PI_STATUS_MAIL_STATE: decide, undo and trash rewrite it.
+like the real command on the state file in $PI_STATUS_MAIL_STATE: decide, undo, trash and the draft commands rewrite it.
+A draft "written by Claude" is canned text that echoes the note.
 """
 
 import json
@@ -83,6 +84,29 @@ def main(argv: list[str]) -> None:
         t["decided"] = None
         t["queue"] = (t.get("rec") or {}).get("queue") or "inbox"
         out = {"ok": True, "thread": t["id"]}
+    elif cmd in ("draft", "draft-save", "draft-drop"):
+        t = by_id.get(args[0]) or finish(5, {"ok": False, "error": "unknown thread"})
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        d = t.get("draft")
+        if cmd == "draft":
+            note = args[2] if args[1:2] == ["--note"] else None
+            body = f"Hi {t['from_name'].split()[0]},\n\nThanks for your note. [your answer]{' (' + note + ')' if note else ''}\n\nMe"
+            t["draft"] = {**(d or {"in_gmail": False, "saved": None}), "body": body, "note": note, "source": "claude",
+                          "updated": now, "older": False}
+            t["draft"]["unsaved"] = t["draft"]["in_gmail"]
+            out = {"ok": True, "thread": t["id"], "body": body}
+        elif cmd == "draft-save":
+            if (d or {}).get("gmail_edited"):
+                finish(5, {"ok": False, "error": "this draft was changed in Gmail since; edit it there (Open in Gmail)"})
+            updated = bool(d and d.get("in_gmail"))
+            t["draft"] = {**(d or {"note": None}), "body": args[1], "source": "you", "updated": now, "in_gmail": True,
+                          "saved": now, "unsaved": False, "older": False}
+            out = {"ok": True, "thread": t["id"], "gmail_draft_id": "r1", "updated": updated}
+        else:
+            if not d:
+                finish(5, {"ok": False, "error": "no draft to discard"})
+            t["draft"] = None
+            out = {"ok": True, "thread": t["id"], "in_gmail": d["in_gmail"]}
     elif cmd == "trash" and args[:1] == ["--yes"]:
         ids = args[1:]
         marked = set(state.get("trash", {}).get("marked", []))

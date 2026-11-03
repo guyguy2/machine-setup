@@ -240,6 +240,20 @@
   .linkish { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: .875rem; cursor: pointer; }
   .linkish:hover { text-decoration: underline; }
   .linkish:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .draft { margin-top: 10px; padding: 10px; border: 1px solid var(--track); border-radius: 8px; display: grid; gap: 8px; }
+  .draft-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: .875rem; }
+  .draft-head b { font-weight: 600; }
+  .draft-head .status { color: var(--muted); }
+  .draft-head .status.ok { color: var(--ok); }
+  .draft-head .status.warn { color: var(--warn); }
+  .draft textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--track); border-radius: 6px;
+                    background: var(--bg); color: var(--text); font: inherit; font-size: .9375rem; line-height: 1.45; resize: vertical; }
+  .draft textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .draft-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .draft-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: .875rem; }
+  .draft-ask input { flex: 1 1 260px; min-width: 0; padding: 4px 8px; border: 1px solid var(--track); border-radius: 6px;
+                     background: var(--bg); color: var(--text); font: inherit; }
+  .draft-ask .wait { color: var(--muted); }
   .act-error { margin-top: 8px; padding: 6px 8px; border-radius: 8px; font-size: .875rem;
                background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--text); }
   .mail-help { color: var(--muted); font-size: .8125rem; }
@@ -1016,11 +1030,12 @@ async function mailAct(btn, action, body, said) {
   if (r?.ok && out.ok !== false && out.state) {
     mailFlash = said(out.state, out);
     redrawMail(out.state, body.thread);
-    return;
+    return true;
   }
   spin.remove();
   buttons.forEach(b => (b.disabled = b.dataset.locked === "1"));
   box.append(h("div", { class: "act-error", role: "alert" }, out.error || `Failed (${r?.status})`));
+  return false;
 }
 
 function redrawMail(state, thread) {
@@ -1092,6 +1107,99 @@ function trashAll(btn, ids) {
   mailAct(btn, "trash", { ids }, (state, out) => ({ text: `Moved ${typeof out.trashed === "number" ? out.trashed : n} to Gmail Trash.` }));
 }
 
+// ---- reply drafts: Claude writes one when you ask; you edit it here; Save puts it in Gmail Drafts (never sends) ----
+const draftEdits = {};  // thread id -> your unsaved edits, kept across redraws
+const canDraft = t => t.draft || t.queue === "respond" || t.rec?.queue === "respond" || t.decided?.queue === "respond";
+
+function focusDraft(thread) {
+  $("view").querySelector(`.thread[data-thread="${CSS.escape(thread)}"] .draft textarea`)?.focus();
+}
+
+// "Draft a reply" (or "Redo"): an optional one-line note on what to say, then Claude writes it (about half a minute)
+function draftAsk(t, onCancel, redo) {
+  const input = h("input", { type: "text", maxlength: "500", "aria-label": "What should the reply say? (optional)",
+                             value: t.draft?.note || "", placeholder: "Optional: what to say, e.g. yes to Friday, ask the price" });
+  const go = h("button", { class: "copy accept", type: "button", onclick: () => write() }, redo ? "Rewrite" : "Write draft");
+  const wait = h("span", { class: "wait", hidden: true }, "Claude is writing… about half a minute");
+  async function write() {
+    const edited = draftEdits[t.id] != null && draftEdits[t.id] !== t.draft?.body;
+    if (redo && edited && !confirm("Replace your edits with a new draft?")) return;
+    wait.hidden = false;
+    // your old edits go before the redraw, so the new draft shows
+    const ok = await mailAct(go, "draft", { thread: t.id, note: input.value }, () => { delete draftEdits[t.id]; return mailFlash; });
+    if (ok) focusDraft(t.id);
+    else wait.hidden = true;
+  }
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !go.disabled) write();
+    if (e.key === "Escape") onCancel();
+  });
+  setTimeout(() => input.focus());
+  return h("div", { class: "draft-ask" }, input, go, h("button", { class: "linkish", type: "button", onclick: onCancel }, "Cancel"), wait);
+}
+
+function draftStatus(dr) {
+  if (dr.in_gmail && !dr.unsaved) return ["ok", "In Gmail Drafts · send it from Gmail"];
+  if (dr.in_gmail) return ["warn", "Changed here · Gmail still has the older version"];
+  return ["", "Only here · not in Gmail yet"];
+}
+
+function draftBox(t) {
+  const dr = t.draft, extra = h("div");
+  const text = draftEdits[t.id] ?? dr.body;
+  const area = h("textarea", { rows: String(Math.max(4, Math.min(14, text.split("\n").length + 1))),
+                               "aria-label": `Reply draft for ${t.subject || "this email"}` }, text);
+  const [cls, said] = draftStatus(draftEdits[t.id] != null && draftEdits[t.id] !== dr.body ? { ...dr, unsaved: true } : dr);
+  const status = h("span", { class: "status " + cls }, said);
+  area.addEventListener("input", () => {
+    draftEdits[t.id] = area.value;
+    if (dr.in_gmail) {
+      const [c, w] = draftStatus({ ...dr, unsaved: area.value !== dr.body || dr.unsaved });
+      status.className = "status " + c;
+      status.textContent = w;
+    }
+  });
+  const save = h("button", { class: "copy accept", type: "button",
+                             title: "Put this text in Gmail Drafts as a reply in the thread (to the sender only). Nothing is ever sent from here.",
+                             // the card stays and its status line says "In Gmail Drafts"
+                             onclick: e => mailAct(e.currentTarget, "draft-save", { thread: t.id, text: area.value },
+                                                   () => { delete draftEdits[t.id]; return mailFlash; }) },
+                  dr.in_gmail ? "Update Gmail draft" : "Save to Gmail drafts");
+  const copy = h("button", { class: "copy", type: "button", "aria-label": "Copy the draft", onclick: async () => {
+    try { await navigator.clipboard.writeText(area.value); copy.textContent = "Copied"; }
+    catch { area.select(); copy.textContent = "Press Ctrl+C"; }  // the clipboard needs HTTPS
+    setTimeout(() => (copy.textContent = "Copy"), 1500);
+  } }, "Copy");
+  const redo = h("button", { class: "copy", type: "button", title: "Have Claude write it again, optionally with a note",
+                             onclick: () => extra.replaceChildren(draftAsk(t, () => extra.replaceChildren(), true)) }, "Redo…");
+  const discard = h("button", { class: "linkish", type: "button",
+                                title: dr.in_gmail ? "Forget it here; the copy in Gmail Drafts stays" : "Forget this draft",
+                                onclick: e => {
+                                  if (!confirm(dr.in_gmail ? "Discard this draft here? The copy in Gmail Drafts stays there." : "Discard this draft?")) return;
+                                  mailAct(e.currentTarget, "draft-drop", { thread: t.id }, () => { delete draftEdits[t.id]; return mailFlash; });
+                                } }, "Discard");
+  return h("div", { class: "draft" },
+    h("div", { class: "draft-head" },
+      h("b", {}, "Reply draft"),
+      h("span", { class: "tag" + (dr.source === "claude" ? " claude" : "") }, dr.source === "claude" ? "Claude" : "edited by you"),
+      status,
+      dr.older && h("span", { class: "status warn" }, "· a newer message came in since")),
+    dr.note && h("div", { class: "detail" }, `You asked: “${dr.note}”`),
+    area,
+    h("div", { class: "draft-actions" }, save, copy, redo, discard),
+    extra);
+}
+
+function draftSection(t) {
+  if (t.draft) return draftBox(t);
+  const place = h("div", { class: "draft-place" });
+  const start = () => place.replaceChildren(
+    h("button", { class: "copy", type: "button", title: "Claude writes a reply for you to edit here; nothing goes to Gmail until you save it",
+                  onclick: () => place.replaceChildren(draftAsk(t, start, false)) }, "✎ Draft a reply"));
+  start();
+  return place;
+}
+
 function decidedText(dec) {
   if (dec.via === "gmail") return "✓ Labelled in Gmail";
   return `✓ You chose ${queueTitle(dec.queue)}${dec.queue === "delete" ? " · marked for Trash" : dec.queue === "later" ? " · left unread in your inbox" : ""}`;
@@ -1124,6 +1232,7 @@ function threadCard(d, t, inQueue) {
         s ? `opened ${s.opened} of ${s.received}, replied ${s.replied}` : "new sender"),
       dec && h("div", { class: "decided" }, decidedText(dec)),
       dec && live && reasonLine(t.id, dec.reason, () => mailFlash)),  // the card redraws with it; keep any flash
+    live && canDraft(t) && draftSection(t),
     h("div", { class: "choices", role: "group", "aria-label": "Move to" },
       // undecided: the suggestion is outlined with "suggested"; decided: your choice is solid with a ✓, pressed and not clickable again
       order.map(c => h("button", { class: "copy choice" + (c === chosen ? " primary chosen" : !chosen && c === rec?.queue ? " suggested" : ""),
@@ -1187,7 +1296,7 @@ function mailPane(d, sel) {
   return [
     h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
     (needle || sel.id !== "agent-notes") && (d.actions_enabled
-      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread")
+      ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread · ✎ Draft a reply: Claude writes, you edit, Save puts it in Gmail Drafts (never sent)")
       : h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet.")),
     flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
       flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
