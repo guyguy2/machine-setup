@@ -532,6 +532,36 @@ def dashboards() -> list[dict]:
     return result
 
 
+# ---------- websites ----------
+# Sites for the home network, including devices without Tailscale. Each app listens on 127.0.0.1 behind its own Caddy
+# (`proxy` unit) on all interfaces: HTTPS on `port` and `path` under the Pi's tailnet name with Tailscale's Let's Encrypt
+# certificate, which Pi-hole resolves to the LAN IP for the Wi-Fi (local DNS record), and the old plain-HTTP
+# `redirect_port` sending bookmarks there.
+
+WEBSITES = [
+    {"name": "DreamBase", "what": "A family dashboard; saves to dreambase_data.json in its folder",
+     "unit": "dreambase.service", "proxy": "dreambase-proxy.service", "port": 8091, "path": "/site/", "redirect_port": 8090,
+     "folder": "~/dev/websites/dreambase"},
+]
+
+
+def websites() -> list[dict]:
+    listening = {p["port"] for p in ports() if p["exposure"] != "local only"}
+    dns_name = tailscale_info().get("dns_name", "")
+    lan_ip = default_route().get("prefsrc", "")
+    result = []
+    for w in WEBSITES:
+        states = [run("systemctl", "--user", "is-active", u) or "unknown" for u in (w["unit"], w["proxy"])]
+        result.append({
+            "name": w["name"], "what": w["what"], "units": [w["unit"], w["proxy"]], "folder": w["folder"],
+            "unit_state": next((s for s in states if s != "active"), "active"),  # the app or its proxy, whichever isn't up
+            "running": w["port"] in listening,
+            "url": f"https://{dns_name}:{w['port']}{w['path']}" if dns_name else "",
+            "redirects": [f"http://{host}:{w['redirect_port']}/" for host in (lan_ip, f"{platform.node()}.local") if host],
+        })
+    return result
+
+
 # ---------- network ----------
 
 def default_route() -> dict:
