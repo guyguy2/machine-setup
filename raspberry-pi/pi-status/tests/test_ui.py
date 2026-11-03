@@ -1389,7 +1389,7 @@ def test_emails_buttons_enabled_when_actions_are(make_page, base_url):
     open_emails(page, base_url, "emails/action")
     assert page.locator("#view .mail-only").count() == 0
     assert page.locator("#view .mail-help").inner_text() == \
-        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread"
+        "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread · ✎ Draft a reply: Claude writes, you edit, Save puts it in Gmail Drafts (never sent)"
     assert all(not b.is_disabled() for b in cards(page).first.locator("button").all())
 
 
@@ -1950,3 +1950,92 @@ def test_emails_decided_cards_fit_phone(make_page, base_url, fake_mail, size):
         assert box["x"] >= 0 and box["x"] + box["width"] <= size[0]
     assert page.evaluate(OVERFLOWING) == []
     no_page_scroll(page)
+
+
+SAM, PAT = "000000000000c001", "000000000000e001"
+
+
+def test_emails_draft_a_reply_edit_and_save_to_gmail(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/respond")
+    assert card(page, SCHOOL).count() == 0
+    sam = card(page, SAM)
+    sam.get_by_role("button", name="✎ Draft a reply").click()
+    note = sam.locator(".draft-ask input")
+    assert note.evaluate("e => e === document.activeElement")
+    note.fill("yes  to\tFriday")
+    note.press("Enter")
+    area = card(page, SAM).locator(".draft textarea")
+    area.wait_for()
+    assert area.evaluate("e => e === document.activeElement")                   # ready to edit
+    assert "(yes to Friday)" in area.input_value()
+    head = card(page, SAM).locator(".draft-head")
+    assert "Claude" in head.inner_text() and "Only here · not in Gmail yet" in head.inner_text()
+    assert card(page, SAM).locator(".draft .detail").inner_text() == "You asked: “yes to Friday”"
+    area.fill("Hi Sam,\n\nFriday at noon works.\n\nMe")
+    card(page, SAM).get_by_role("button", name="Save to Gmail drafts").click()
+    card(page, SAM).get_by_role("button", name="Update Gmail draft").wait_for()
+    head = card(page, SAM).locator(".draft-head")
+    assert "edited by you" in head.inner_text() and "In Gmail Drafts · send it from Gmail" in head.inner_text()
+    assert card(page, SAM).get_by_role("button", name="Update Gmail draft").count() == 1
+    assert fake_mail.calls() == [["draft", SAM, "--note", "yes to Friday", "--via", "web", "--json"],
+                                 ["draft-save", SAM, "Hi Sam,\n\nFriday at noon works.\n\nMe", "--via", "web", "--json"]]
+    assert page.errors == []
+
+
+def test_emails_draft_edits_survive_a_redraw_and_mark_gmail_out_of_date(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/drafts")
+    pat = card(page, PAT)
+    assert "In Gmail Drafts" in pat.locator(".draft-head").inner_text()
+    pat.locator(".draft textarea").fill("Hi Pat, new text")
+    assert "Changed here · Gmail still has the older version" in pat.locator(".draft-head").inner_text()
+    page.locator("#view .queues a[data-queue=respond], #view .queues [data-queue=respond]").first.click()
+    page.locator("#view .queues a[data-queue=drafts], #view .queues [data-queue=drafts]").first.click()
+    assert card(page, PAT).locator(".draft textarea").input_value() == "Hi Pat, new text"   # your edit is kept
+    assert fake_mail.calls() == []
+
+
+def test_emails_redo_with_a_note_and_cancel_and_discard(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/drafts")
+    pat = card(page, PAT)
+    pat.get_by_role("button", name="Redo…").click()
+    pat.locator(".draft-ask input").press("Escape")
+    assert pat.locator(".draft-ask").count() == 0 and pat.locator(".draft").count() == 1   # back as it was, not nested
+    pat.locator(".draft textarea").fill("my edit")
+    pat.get_by_role("button", name="Redo…").click()
+    messages = []
+    page.once("dialog", lambda d: (messages.append(d.message), d.dismiss()))
+    pat.get_by_role("button", name="Rewrite").click()
+    assert messages == ["Replace your edits with a new draft?"] and fake_mail.calls() == []
+    page.once("dialog", lambda d: d.accept())
+    pat.get_by_role("button", name="Rewrite").click()
+    page.wait_for_function("document.querySelector('#view .draft textarea')?.value.startsWith('Hi Pat,')")
+    assert "Changed here · Gmail still has the older version" in card(page, PAT).locator(".draft-head").inner_text()
+    page.once("dialog", lambda d: (messages.append(d.message), d.accept()))
+    card(page, PAT).get_by_role("button", name="Discard").click()
+    page.wait_for_function("!document.querySelector('#view .draft')")
+    assert messages[-1] == "Discard this draft here? The copy in Gmail Drafts stays there."
+    assert [c[0] for c in fake_mail.calls()] == ["draft", "draft-drop"]
+
+
+def test_emails_draft_offered_only_where_a_reply_fits(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/all")
+    offered = [c.get_attribute("data-thread") for c in cards(page).all()
+               if c.locator(".draft, .draft-place").count()]
+    assert offered == [SAM, PAT]                       # Respond, and a draft you already have; not Action, Review...
+
+
+def test_emails_draft_failure_shows_the_error_and_keeps_the_note(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/respond")
+    fake_mail.reply(1, {"ok": False, "error": "Claude couldn't write a draft: timed out"})
+    sam = card(page, SAM)
+    sam.get_by_role("button", name="✎ Draft a reply").click()
+    sam.locator(".draft-ask input").fill("decline")
+    sam.get_by_role("button", name="Write draft").click()
+    sam.locator(".act-error").wait_for()
+    assert sam.locator(".act-error").inner_text() == "Claude couldn't write a draft: timed out"
+    assert sam.locator(".draft-ask input").input_value() == "decline" and not sam.locator(".draft-ask .wait").is_visible()

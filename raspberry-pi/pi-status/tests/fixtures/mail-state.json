@@ -278,7 +278,8 @@
         "replied": 6,
         "trashed": 0
       },
-      "decided": null
+      "decided": null,
+      "draft": { "body": "Hi Pat,\n\nHere are my notes from Monday. Two questions at the end.\n\nMe", "note": null, "source": "you", "updated": "2026-01-13T17:50:00-05:00", "in_gmail": true, "saved": "2026-01-13T17:50:00-05:00", "unsaved": false, "older": false }
     },
     {
       "id": "000000000000f001",

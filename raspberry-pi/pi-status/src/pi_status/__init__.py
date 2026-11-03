@@ -9,7 +9,7 @@ from importlib.resources import files
 
 from . import collect
 
-MAX_BODY = 32 * 1024  # POST bodies: 500 thread ids fit in about 14 KB
+MAX_BODY = 64 * 1024  # POST bodies: 500 thread ids fit in about 14 KB, an 8000-character draft in under 50 KB
 
 ROUTES = {
     "/api/status": collect.status,
@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         restart = False
         agent = re.fullmatch(r"/api/agents/([\w.@-]+)/(start|stop)", path)
-        mail = re.fullmatch(r"/api/emails/(decide|accept|reason|undo|trash)", path)
+        mail = re.fullmatch(r"/api/emails/(decide|accept|reason|undo|trash|draft|draft-save|draft-drop)", path)
         if path != "/api/restart" and not agent and not mail:
             code, body = 404, {"error": "not found"}
         elif self.headers.get("X-Requested-With") != "pi-status":
