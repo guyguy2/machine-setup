@@ -8,7 +8,7 @@ from mail_fixture import fresh
 from pi_status import collect
 
 TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
-        "emails", "emails/action", "emails/agent-notes", "rei"]
+        "emails", "emails/action", "emails/agent-notes", "rei", "settings"]
 NAV = ["Overview", "Agents", "Agent Lab", "Websites", "Network", "System", "Emails", "REI"]
 NAV_GROUPS = {"Pi": NAV[:6], "Home": NAV[6:]}
 SYSTEM = ["docker", "services", "processes", "ports"]
@@ -43,7 +43,7 @@ def test_tab_renders_without_errors(make_page, base_url, tab):
     open_tab(page, base_url, tab)
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab.split("/")[0]
     assert page.locator("#view h2").inner_text()
-    assert page.locator("#conn").inner_text().startswith("updated")
+    page.wait_for_function("document.getElementById('conn').textContent.startsWith('updated')", timeout=5000)
     assert page.errors == []
 
 
@@ -64,14 +64,14 @@ def test_sidebar_hostname_loads_on_any_tab(make_page, base_url):
 def test_sidebar_is_on_the_left_on_desktop(make_page, base_url):
     page = make_page(1100, 900)
     open_tab(page, base_url, "overview")
-    nav, view = page.locator("nav").bounding_box(), page.locator("#view").bounding_box()
+    nav, view = page.locator("#nav").bounding_box(), page.locator("#view").bounding_box()
     assert nav["x"] < view["x"] and nav["y"] < 200
 
 
 def test_nav_becomes_top_strip_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     open_tab(page, base_url, "overview")
-    nav, view = page.locator("nav").bounding_box(), page.locator("#view").bounding_box()
+    nav, view = page.locator("#nav").bounding_box(), page.locator("#view").bounding_box()
     assert nav["y"] < view["y"] and nav["width"] <= PHONE[0]
 
 
@@ -717,10 +717,16 @@ def test_failed_agent_control_shows_the_error(make_page, base_url):
     assert "Couldn't start openclaw-gateway.service: Unit not loaded." in page.locator("#view .alert").inner_text()
 
 
-def test_dark_mode_uses_dark_scrollbars(make_page, base_url):
-    page = make_page()
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_dark_mode_uses_dark_scrollbars(browser, base_url, scheme):
+    ctx = browser.new_context(color_scheme=scheme)
+    page = ctx.new_page()
     open_tab(page, base_url, "overview")
-    assert "dark" in page.evaluate("getComputedStyle(document.documentElement).colorScheme")
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == scheme
+    page.evaluate("localStorage.setItem('pi-status.settings', JSON.stringify({theme: 'neon'}))")
+    page.reload(); page.wait_for_selector("#view h2")
+    assert page.evaluate("getComputedStyle(document.documentElement).colorScheme") == "dark"   # a dark theme, whatever the system
+    ctx.close()
 
 
 def line_count(page, selector):
@@ -850,7 +856,7 @@ def test_lab_scoreboard_keeps_agents_without_runs(make_page, base_url):
 def test_nav_lists_every_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "overview")
-    assert page.locator("nav a").evaluate_all("as => as.map(a => a.firstChild.textContent)") == NAV   # without the Emails badge
+    assert page.locator("nav a").evaluate_all("as => as.map(a => a.firstChild.textContent)") == NAV + ["Settings"]   # without the Emails badge
 
 
 def test_every_nav_link_is_on_screen_on_phone(make_page, base_url):
@@ -1123,7 +1129,7 @@ def test_version_shares_the_status_line_on_phone(make_page, base_url):
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
     page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
-    app, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "nav"])
+    app, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "#nav"])
     mid = lambda box: box["y"] + box["height"] / 2
     # two header lines: the version shares the status line, or the status line sits beside the title
     assert abs(version["y"] - conn["y"]) < 12 or abs(mid(conn) - mid(app)) < 12, (app, conn, version)
@@ -1203,7 +1209,7 @@ def test_websites_fit_phone(make_page, base_url):
 
 QUEUES = ["Inbox", "Action", "Respond", "Review", "Drafts", "Waiting", "Later", "Delete", "Agent Notes"]
 GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
-  [g.querySelector('.nav-label').textContent, [...g.querySelectorAll('a')].map(a => a.firstChild.textContent)])"""
+  [g.querySelector('.nav-label').firstChild.textContent, [...g.querySelectorAll('a')].map(a => a.firstChild.textContent)])"""
 
 
 def settled(page):
@@ -1225,6 +1231,289 @@ def test_nav_is_grouped_into_pi_and_home(make_page, base_url):
     assert labels.all_inner_texts() == ["PI", "HOME"]   # small uppercase headings
     pi, home = (page.locator("nav .nav-group").nth(i).bounding_box() for i in (0, 1))
     assert pi["y"] + pi["height"] <= home["y"] and abs(pi["x"] - home["x"]) < 1   # stacked in the sidebar
+
+
+def test_nav_groups_fold(make_page, base_url):
+    page = make_page()
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail_api(needs_you=0)))   # no badge
+    open_tab(page, base_url, "overview")
+    visible = lambda: [a.inner_text().split("\n")[0] for a in page.locator("#nav a").all() if a.is_visible()]
+    pi, home = page.locator("nav button.nav-label").all()
+    assert pi.get_attribute("aria-expanded") == "true" and visible() == NAV
+    pi.click()   # folded: all its tabs hide, the open one too
+    assert pi.get_attribute("aria-expanded") == "false" and visible() == ["Emails", "REI"]
+    home.click()
+    assert visible() == []
+    page.reload()   # remembered across loads
+    page.wait_for_selector("#view h2")
+    assert visible() == []
+    pi.click(); home.click()
+    assert visible() == NAV
+
+
+def test_folded_group_shows_the_badge_on_its_label(make_page, base_url):
+    page = make_page()
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail_api()))
+    open_tab(page, base_url, "emails")
+    page.wait_for_selector("nav a[data-tab=emails] .nav-badge")
+    home = page.locator("nav button.nav-label").nth(1)
+    assert not home.locator(".nav-badge").is_visible()   # only while folded
+    home.click()
+    assert not page.locator("nav a[data-tab=emails]").is_visible()
+    assert home.locator(".nav-badge").inner_text() == "3" and home.inner_text().startswith("HOME")
+    home.click()
+    assert not home.locator(".nav-badge").is_visible()
+
+
+def test_no_folding_on_phone(make_page, base_url):
+    page = make_page(*PHONE)
+    page.goto(base_url)
+    page.evaluate("localStorage.setItem('pi-status.folded', JSON.stringify(['Pi', 'Home']))")
+    open_tab(page, base_url, "overview")
+    page.reload(); page.wait_for_selector("#view h2")
+    assert all(a.is_visible() for a in page.locator("nav a").all())
+
+
+# ---------- settings: themes ----------
+
+THEME_IDS = ["system", "light", "dark", "neon", "terminal"]
+ROOT_JS = "[document.documentElement.dataset.theme, document.documentElement.dataset.mode, getComputedStyle(document.body).backgroundColor]"
+
+
+def test_settings_lists_the_themes_with_classic_chosen(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    assert page.locator("#view h2").inner_text() == "Settings"
+    assert page.locator(".theme-opt input").evaluate_all("is => is.map(i => i.value)") == THEME_IDS
+    assert page.locator(".theme-opt input:checked").get_attribute("value") == "system"
+    assert page.locator(".side a[aria-current=page]").get_attribute("data-tab") == "settings"
+    assert "no live data" not in page.locator("#conn").inner_text()
+    assert page.errors == []
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_classic_follows_the_system(browser, base_url, scheme):
+    ctx = browser.new_context(color_scheme=scheme)
+    page = ctx.new_page()
+    open_tab(page, base_url, "overview")
+    theme, mode, _ = page.evaluate(ROOT_JS)
+    assert (theme, mode) == ("system", scheme)
+    ctx.close()
+
+
+def test_choosing_a_theme_applies_and_is_remembered(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    page.click(".theme-opt[data-theme-id=neon]")
+    theme, mode, bg = page.evaluate(ROOT_JS)
+    assert (theme, mode) == ("neon", "dark") and bg != "rgb(245, 245, 247)"
+    neon_bg = bg
+    page.reload(); page.wait_for_selector("#view h2")
+    assert page.evaluate(ROOT_JS) == ["neon", "dark", neon_bg]
+    assert page.locator(".theme-opt input:checked").get_attribute("value") == "neon"
+    page.goto(f"{base_url}/#overview"); page.wait_for_selector("#view h2")   # every tab, not just Settings
+    assert page.evaluate(ROOT_JS)[0] == "neon"
+    page.goto(f"{base_url}/#settings"); page.wait_for_selector("#view h2")
+    page.click(".theme-opt[data-theme-id=light]")
+    assert page.evaluate(ROOT_JS) == ["light", "light", "rgb(245, 245, 247)"]
+
+
+def test_theme_previews_draw_each_theme(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    bgs = page.locator(".theme-preview").evaluate_all("ps => ps.map(p => getComputedStyle(p).backgroundColor)")
+    assert len(set(bgs[1:])) == 4   # light, dark, neon and terminal each look different
+
+
+def test_unknown_or_blocked_theme_falls_back_to_classic(make_page, base_url):
+    page = make_page()
+    page.goto(base_url)
+    page.evaluate("localStorage.setItem('pi-status.settings', JSON.stringify({theme: 'nope'}))")
+    page.reload(); page.wait_for_selector("#view h2")
+    assert page.evaluate(ROOT_JS)[0] == "system"
+
+
+@pytest.mark.parametrize("theme", ["neon", "terminal"])
+@pytest.mark.parametrize("tab", ["overview", "emails", "settings"])
+def test_themed_tabs_render_without_errors(make_page, base_url, theme, tab):
+    page = make_page(*PHONE)
+    set_prefs(page, base_url, {"theme": theme}, tab=tab)
+    page.wait_for_timeout(200)
+    assert page.evaluate(ROOT_JS)[0] == theme and page.errors == []
+    no_page_scroll(page)
+
+
+def set_prefs(page, base_url, prefs, tab="overview"):
+    """Store Settings in the browser, then load the page fresh so the <head> script reads them."""
+    page.goto(base_url)
+    page.evaluate("p => localStorage.setItem('pi-status.settings', JSON.stringify(p))", prefs)
+    page.goto(f"{base_url}/#{tab}")
+    page.reload()
+    page.wait_for_selector("#view h2")
+
+
+def stored(page):
+    return page.evaluate("JSON.parse(localStorage.getItem('pi-status.settings') || '{}')")
+
+
+def test_bad_stored_settings_are_ignored(make_page, base_url):
+    page = make_page()
+    page.goto(base_url)
+    page.evaluate("localStorage.setItem('pi-status.settings', '[1, 2')")
+    page.reload(); page.wait_for_selector("#view h2")
+    assert page.evaluate("Object.assign({}, document.documentElement.dataset)") == {
+        "theme": "system", "mode": "light", "text": "default", "density": "comfortable", "motion": "full"}
+    assert page.errors == []
+
+
+def test_text_size_density_and_motion(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    root_px = "parseFloat(getComputedStyle(document.documentElement).fontSize)"
+    assert page.evaluate(root_px) == 16
+    page.click("[data-pref=text] button[data-value=large]")
+    assert page.evaluate(root_px) == 18 and stored(page)["text"] == "large"
+    assert page.locator("[data-pref=text] button[aria-pressed=true]").inner_text() == "Large"
+    pad = "parseFloat(getComputedStyle(document.querySelector('#view .card')).paddingTop)"
+    roomy = page.evaluate(pad)
+    page.click("[data-pref=density] button[data-value=compact]")
+    assert page.evaluate(pad) < roomy
+    page.click("[data-pref=motion] button[data-value=reduce]")
+    assert page.evaluate("getComputedStyle(document.querySelector('nav a')).transitionDuration") in ("0s", "")
+    page.reload(); page.wait_for_selector("#view h2")   # remembered
+    assert page.evaluate("[document.documentElement.dataset.text, document.documentElement.dataset.density]") == ["large", "compact"]
+
+
+def test_start_page(make_page, base_url):
+    page = make_page()
+    set_prefs(page, base_url, {"start": "emails"}, tab="settings")
+    assert page.locator("select[aria-label='Start page']").input_value() == "emails"
+    page.goto(base_url + "/")
+    page.wait_for_selector("#view h2")
+    assert page.url.endswith("#emails") and page.locator("#view h2").first.inner_text().startswith("Emails")
+    page.goto(f"{base_url}/#agents"); page.wait_for_selector("#view h2")   # a #tab still wins
+    assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "agents"
+
+
+def test_reset_all_settings(make_page, base_url):
+    page = make_page()
+    set_prefs(page, base_url, {"theme": "neon", "text": "large", "shortcuts": False}, tab="settings")
+    page.locator("#nav button.nav-label").first.click()
+    page.once("dialog", lambda d: d.accept())
+    page.click("#reset-all")
+    assert page.evaluate("document.documentElement.dataset.theme") == "system"
+    assert stored(page) == {} and page.evaluate("localStorage.getItem('pi-status.folded')") in (None, "[]")
+    assert page.locator("#nav .nav-group.folded").count() == 0
+    assert page.locator(".theme-opt input:checked").get_attribute("value") == "system"
+
+
+# ---------- settings: keyboard shortcuts ----------
+
+def press(page, *keys):
+    for k in keys:
+        page.keyboard.press(k)
+
+
+def test_shortcut_goes_to_a_tab(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    press(page, "g", "e")
+    page.wait_for_url("**/#emails")
+    press(page, "g", "Comma")
+    page.wait_for_url("**/#settings")
+    press(page, "[")
+    page.wait_for_url("**/#rei")
+    press(page, "]")
+    page.wait_for_url("**/#settings")
+    press(page, "]")
+    page.wait_for_url("**/#overview")   # wraps around
+
+
+def test_shortcut_help_lists_what_is_on(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    press(page, "Shift+Slash")
+    help = page.locator("#keys-help")
+    text = help.inner_text()
+    assert help.is_visible() and "Emails" in text and "Gmail" in text and "Next theme" in text
+    press(page, "Escape")
+    assert not help.is_visible()
+
+
+def test_shortcuts_dont_fire_while_typing(make_page, base_url):
+    page = make_page()
+    page.route("**/api/emails", lambda r: r.fulfill(json=mail_api()))
+    open_tab(page, base_url, "emails")
+    press(page, "Slash")   # focuses the search box
+    assert page.evaluate("document.activeElement.classList.contains('mail-search')")
+    page.keyboard.type("ge")
+    page.wait_for_timeout(200)
+    assert page.url.endswith("#emails") and page.locator(".mail-search").input_value() == "ge"
+
+
+def test_shortcuts_can_be_turned_off(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    page.click("#keys-on")
+    assert stored(page)["shortcuts"] is False and page.locator("#keys-card.keys-off").count() == 1
+    page.click("#view h2")   # out of the checkbox
+    press(page, "g", "o")
+    page.wait_for_timeout(200)
+    assert page.url.endswith("#settings")
+
+
+def test_one_shortcut_off_and_new_keys(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    page.check("input[aria-label='Agents on']")
+    page.uncheck("input[aria-label='Agents on']")
+    assert stored(page)["keysOff"] == ["go-agents"]
+    box = page.locator("input[aria-label='Keys for Network']")
+    box.fill("x  y")
+    box.press("Enter")
+    assert box.input_value() == "x y" and stored(page)["keymap"] == {"go-network": "x y"}
+    page.click("#view h2")
+    press(page, "g", "a")
+    page.wait_for_timeout(200)
+    assert page.url.endswith("#settings")   # turned off
+    press(page, "x", "y")
+    page.wait_for_url("**/#network")
+
+
+@pytest.mark.parametrize("keys, error", [("g e", "Already used by “Emails” (g e)"), ("g", "Already used by “Overview” (g o)"),
+                                         ("abcd", "Use 1–3 single keys"), ("a b c d", "Use 1–3 single keys")])
+def test_bad_keys_are_refused(make_page, base_url, keys, error):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    box = page.locator("input[aria-label='Keys for Refresh']")
+    box.fill(keys)
+    box.press("Enter")
+    assert box.get_attribute("aria-invalid") == "true"
+    assert page.locator("#keys-card .key-err").filter(has_text=error).count() == 1
+    assert "keymap" not in stored(page)
+
+
+def test_website_shortcuts(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "settings")
+    page.evaluate("() => { window.opened = []; window.open = u => { window.opened.push(u); return null; }; }")
+    page.click("#view h2")
+    press(page, "o", "r")
+    host = page.evaluate("location.hostname")
+    assert page.evaluate("window.opened") == [f"https://{host}:8446/"]
+    page.click("#add-site")
+    row = page.locator("#keys-card .keys-sites tbody tr").last
+    row.locator("input[aria-label='Website name']").fill("Example")
+    row.locator("input[aria-label='Website address']").fill("https://example.com/")
+    keys = row.locator(".key-input")
+    keys.fill("o e"); keys.press("Enter")
+    site = stored(page)["sites"][-1]
+    assert site == {"name": "Example", "url": "https://example.com/", "keys": "o e", "on": True}
+    page.click("#view h2")
+    press(page, "o", "e")
+    assert page.evaluate("window.opened")[-1] == "https://example.com/"
+    row.locator("button", has_text="Remove").click()
+    assert all(x["name"] != "Example" for x in stored(page)["sites"])
 
 
 @pytest.mark.parametrize("size", [PHONE, NARROW_PHONE])
@@ -1722,7 +2011,7 @@ def test_phone_header_stays_two_lines_on_the_emails_tab(make_page, base_url):
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
     open_tab(page, base_url, "emails")
     settled(page)
-    host, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "nav"])
+    host, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "#nav"])
     conn_mid, host_mid = conn["y"] + conn["height"] / 2, host["y"] + host["height"] / 2
     assert abs(conn_mid - host_mid) < 12 or abs(version["y"] - conn["y"]) < 12, (host, conn, version)  # no line of its own
     assert version["y"] < nav["y"]

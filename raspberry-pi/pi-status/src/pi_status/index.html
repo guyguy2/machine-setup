@@ -5,18 +5,47 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Home Base</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231f9d55'/%3E%3C/svg%3E">
+<script>
+  // Settings (one JSON object per browser; storage may be blocked, then everything is the default). Runs before the
+  // page paints, so the theme, text size and density never flash. The Settings tab edits `prefs` through savePrefs().
+  const SETTINGS_KEY = "pi-status.settings";
+  const THEME_MODES = { system: null, light: "light", dark: "dark", neon: "dark", terminal: "dark" };
+  const PREF_CHOICES = { text: ["small", "default", "large", "larger"], density: ["comfortable", "compact"], motion: ["full", "reduce"] };
+  const systemDark = matchMedia("(prefers-color-scheme: dark)");
+  let prefs = {};
+  try { prefs = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch {}
+  if (typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
+  const pref = k => PREF_CHOICES[k].includes(prefs[k]) ? prefs[k] : PREF_CHOICES[k][k === "text" ? 1 : 0];
+  const prefTheme = () => Object.hasOwn(THEME_MODES, prefs.theme) ? prefs.theme : "system";
+  function applyPrefs() {
+    const r = document.documentElement.dataset, t = prefTheme();
+    r.theme = t;
+    r.mode = THEME_MODES[t] || (systemDark.matches ? "dark" : "light");
+    for (const k in PREF_CHOICES) r[k] = pref(k);
+  }
+  function savePrefs(change) {
+    Object.assign(prefs, change);
+    for (const k in change) if (change[k] === undefined) delete prefs[k];
+    applyPrefs();
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(prefs)); } catch {}
+  }
+  applyPrefs();
+  systemDark.addEventListener("change", applyPrefs);
+</script>
 <style>
-  :root {
-    color-scheme: light dark;
+  /* data-mode (light/dark) and data-theme on <html> are set by the script below from Settings; "system" follows the OS.
+     Plain attribute selectors (not :root) so Settings' preview tiles can carry a theme of their own. */
+  :root, [data-mode=light] {
+    color-scheme: light;
     --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --track: #e5e5ea;
     --ok: #1f9d55; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --accent-bg: #e8f0fe;
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #111113; --card: #1c1c1f; --text: #f2f2f4; --muted: #9a9aa2; --track: #2c2c30;
+  [data-mode=dark] { color-scheme: dark; --bg: #111113; --card: #1c1c1f; --text: #f2f2f4; --muted: #9a9aa2; --track: #2c2c30;
             --accent: #60a5fa; --accent-bg: #1e2a44; --ok: #34d399; --warn: #fbbf24; --bad: #f87171; }
-  }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 system-ui, -apple-system, sans-serif; }
+  html { font-size: 16px; }
+  [data-text=small] { font-size: 14px; } [data-text=large] { font-size: 18px; } [data-text=larger] { font-size: 20px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.4 system-ui, -apple-system, sans-serif; }
 
   /* layout: sidebar on the left, tabs at its top */
   .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100vh; }
@@ -32,6 +61,18 @@
   .nav-label { padding: 14px 12px 4px; color: var(--muted); font-size: .6875rem; font-weight: 600;
                text-transform: uppercase; letter-spacing: .06em; }
   .nav-group:first-child .nav-label { padding-top: 2px; }
+  /* a label is a button that folds its group; a folded group hides all its tabs, and a badge inside moves to the label */
+  button.nav-label { display: flex; align-items: center; gap: 4px; width: 100%; border: 0; border-radius: 6px;
+                     background: none; font-family: inherit; text-align: left; cursor: pointer; }
+  button.nav-label:hover { color: var(--text); }
+  button.nav-label:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  button.nav-label::after { content: ""; width: 10px; height: 10px; margin-left: auto; background: currentColor; transition: transform .15s;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; }
+  .nav-group.folded button.nav-label::after { transform: rotate(-90deg); }
+  .nav-group.folded .nav-links { display: none; }
+  button.nav-label .nav-badge { display: none; margin-left: 6px; }
+  .nav-group.folded button.nav-label .nav-badge { display: inline-block; }
   nav a { display: block; padding: 9px 12px; border-radius: 8px; color: var(--text); text-decoration: none; }
   nav a:hover { background: var(--track); }
   nav a[aria-current="page"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
@@ -139,8 +180,8 @@
   @media (pointer: coarse) { .copy, .seg a, .seg button { min-height: 36px; } }  /* fingers, not a mouse */
 
   /* agent lab: one fixed color per agent (validated categorical slots 1-3, light and dark) */
-  :root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #8e5bd0; }
-  @media (prefers-color-scheme: dark) { :root { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #a37be0; } }
+  :root, [data-mode=light] { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #8e5bd0; }
+  [data-mode=dark] { --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #a37be0; }
   .s1 { --s: var(--s1); } .s2 { --s: var(--s2); } .s3 { --s: var(--s3); } .s4 { --s: var(--s4); }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--s); margin-right: 6px; }
   .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .875rem; margin-bottom: 10px; }
@@ -167,8 +208,8 @@
   .note code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
 
   /* emails: a queue column and a main pane inside the content area (suggestions from the mail sorter) */
-  :root { --orange: #ea580c; --teal: #0d9488; }
-  @media (prefers-color-scheme: dark) { :root { --orange: #fb923c; --teal: #2dd4bf; } }
+  :root, [data-mode=light] { --orange: #ea580c; --teal: #0d9488; }
+  [data-mode=dark] { --orange: #fb923c; --teal: #2dd4bf; }
   .mail { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; }
   .mail > .card { margin-bottom: 0; }
   .mail-side { padding: 12px; }
@@ -292,6 +333,115 @@
   .rei-open { display: inline-block; margin-top: 10px; padding: 6px 14px; text-align: center; text-decoration: none; }
   .rei-open:disabled { opacity: .55; cursor: not-allowed; }
 
+  /* sidebar foot: Settings, above the version */
+  .nav-foot { margin-top: auto; padding-top: 12px; }
+  .nav-foot + .version { margin-top: 0; }
+  nav a[data-tab=settings] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 4h-7'/%3E%3Cpath d='M10 4H3'/%3E%3Cpath d='M21 12h-9'/%3E%3Cpath d='M8 12H3'/%3E%3Cpath d='M21 20h-5'/%3E%3Cpath d='M12 20H3'/%3E%3Cpath d='M14 2v4'/%3E%3Cpath d='M8 10v4'/%3E%3Cpath d='M16 18v4'/%3E%3C/svg%3E"); }
+
+  /* settings: theme tiles, each a small drawing of the page in that theme */
+  .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-top: 12px; }
+  .theme-opt { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 10px; cursor: pointer;
+               border: 1px solid var(--track); border-radius: 10px; }
+  .theme-opt:hover { border-color: var(--muted); }
+  .theme-opt:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .theme-opt:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .theme-opt input { position: absolute; opacity: 0; pointer-events: none; }  /* the whole tile is the radio; arrow keys still work */
+  .theme-name { font-weight: 600; }
+  .theme-name::after { content: " ✓"; color: var(--accent); visibility: hidden; }
+  .theme-opt:has(input:checked) .theme-name::after { visibility: visible; }
+  .theme-preview { display: grid; grid-template-columns: 32% 1fr; height: 78px; margin-bottom: 6px; overflow: hidden;
+                   border: 1px solid var(--track); border-radius: 6px; background: var(--bg); }
+  .tp-side { display: flex; flex-direction: column; gap: 5px; padding: 8px 6px; background: var(--card); }
+  .tp-side i, .tp-bar { display: block; height: 5px; border-radius: 3px; background: var(--track); }
+  .tp-side i.on { background: var(--accent); }
+  .tp-main { padding: 8px; }
+  .tp-card { display: flex; flex-direction: column; gap: 7px; padding: 7px; border-radius: 4px; background: var(--card); }
+  .tp-bar::before { content: ""; display: block; width: 60%; height: 100%; border-radius: inherit; background: var(--accent); }
+  .tp-dots { display: flex; gap: 5px; }
+  .tp-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  .tp-dots i:nth-child(2) { background: var(--warn); } .tp-dots i:nth-child(3) { background: var(--bad); }
+
+  /* settings: rows of choices, the shortcut tables */
+  .set-rows > * + * { border-top: 1px solid var(--track); }
+  .set-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 0; }
+  .set-row .seg { margin: 0; }
+  .set-label { font-weight: 600; }
+  .set-select, .key-input, .site-input { font: inherit; font-size: .875rem; padding: 4px 8px; border: 1px solid var(--track);
+                                        border-radius: 6px; background: var(--bg); color: var(--text); }
+  .key-input { width: 6.5em; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .site-input { width: 100%; min-width: 7em; }
+  .key-input[aria-invalid=true] { border-color: var(--bad); }
+  .key-err { display: block; color: var(--bad); font-size: .8125rem; }
+  .set-check { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+  .keys-table td { vertical-align: middle; }
+  .keys-table td.on { width: 2em; }
+  .keys-off .keys-table, .keys-off .keys-sites { opacity: .45; }
+  .set-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; border: 1px solid var(--track); border-bottom-width: 2px;
+        border-radius: 5px; background: var(--bg); font: .8125rem/1.5 ui-monospace, "SF Mono", Menlo, monospace; text-align: center; }
+  .then { color: var(--muted); font-size: .75rem; margin: 0 3px; }
+  .keys-help { width: min(760px, calc(100% - 32px)); max-height: calc(100vh - 64px); padding: 16px 20px; overflow-y: auto;
+               border: 1px solid var(--track); border-radius: 12px; background: var(--card); color: var(--text); }
+  .keys-help::backdrop { background: rgba(0, 0, 0, .55); }
+  .keys-help h2:focus { outline: none; }
+  .keys-groups { columns: 2 300px; column-gap: 32px; }
+  .keys-group { break-inside: avoid; padding: 6px 0 10px; }
+  .keys-group h3 { margin-top: 0; }   /* so both columns start level */
+  .keys-help h3 { margin: 14px 0 6px; font-size: .8125rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .keys-help dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  .keys-help dd { margin: 0; }
+  .keys-help form { margin-top: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+  /* density and motion (Settings) */
+  [data-density=compact] .content { padding: 12px 18px 24px; }
+  [data-density=compact] .card { padding: 10px 12px; margin-bottom: 8px; }
+  [data-density=compact] .grid { gap: 8px; }
+  [data-density=compact] nav a { padding: 6px 10px; }
+  [data-density=compact] .nav-label { padding-top: 10px; }
+  [data-density=compact] h3 { margin-top: 14px; }
+  [data-motion=reduce] *, [data-motion=reduce] *::before, [data-motion=reduce] *::after { transition: none !important; scroll-behavior: auto !important; }
+  [data-motion=reduce] .spin { animation-duration: 3s; }
+
+  /* ---------- theme: Neon (dark; cyan and hot pink, soft glows on what's active, text itself stays plain) ---------- */
+  [data-theme=neon] {
+    --bg: #07060d; --card: #100e1b; --text: #ece8ff; --muted: #8f89b8; --track: #262041;
+    --accent: #22e4ff; --accent-bg: rgba(34, 228, 255, .10); --ok: #3dff9a; --warn: #ffd23f; --bad: #ff3d81;
+    --orange: #ff8f3d; --teal: #2ef2d0; --s1: #22e4ff; --s2: #ff3d81; --s3: #3dff9a; --s4: #b26bff;
+    --glow: rgba(34, 228, 255, .35); --glow-pink: rgba(255, 61, 129, .45);
+  }
+  :root[data-theme=neon] body { background: radial-gradient(1100px 600px at 0 0, rgba(178, 107, 255, .10), transparent 60%),
+                                            radial-gradient(900px 500px at 100% 100%, rgba(34, 228, 255, .06), transparent 60%), var(--bg);
+                                background-attachment: fixed; }
+  [data-theme=neon] .side { background: rgba(16, 14, 27, .82); border-right-color: rgba(34, 228, 255, .16); }
+  [data-theme=neon] .card { border: 1px solid rgba(34, 228, 255, .09); box-shadow: 0 8px 28px rgba(0, 0, 0, .4); }
+  [data-theme=neon] #app { filter: drop-shadow(0 0 6px var(--glow)); }
+  [data-theme=neon] nav a[aria-current="page"], [data-theme=neon] .queues a[aria-current="page"], [data-theme=neon] .mail-all[aria-current="page"] {
+    box-shadow: inset 3px 0 0 var(--accent), 0 0 18px rgba(34, 228, 255, .14); }
+  [data-theme=neon] .seg a[aria-current="page"], [data-theme=neon] .seg button[aria-pressed="true"] { box-shadow: 0 0 12px var(--glow); }
+  [data-theme=neon] .copy:hover { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 10px var(--glow); }
+  [data-theme=neon] .copy.danger:hover { border-color: var(--bad); background: var(--bad); box-shadow: 0 0 12px var(--glow-pink); }
+  [data-theme=neon] .dot { box-shadow: 0 0 7px var(--ok); }
+  [data-theme=neon] .dot.off, [data-theme=neon] .dot.bad { box-shadow: 0 0 7px var(--bad); }
+  [data-theme=neon] .dot.warn { box-shadow: 0 0 7px var(--warn); } [data-theme=neon] .dot.idle { box-shadow: none; }
+  [data-theme=neon] .nav-badge { box-shadow: 0 0 10px var(--glow-pink); }
+  [data-theme=neon] .bar > i { box-shadow: 0 0 8px currentColor; color: var(--ok); }
+  [data-theme=neon] .bar > i.warn { color: var(--warn); } [data-theme=neon] .bar > i.bad { color: var(--bad); }
+  [data-theme=neon] .tp-side i.on, [data-theme=neon] .tp-bar::before { box-shadow: 0 0 6px var(--accent); }
+  [data-theme=neon] .keys-help { box-shadow: 0 0 32px rgba(34, 228, 255, .18); }
+  [data-theme=neon] kbd { border-color: rgba(34, 228, 255, .35); }
+
+  /* ---------- theme: Terminal (dark; green phosphor, monospace, square corners) ---------- */
+  [data-theme=terminal] {
+    --bg: #050a06; --card: #0b140d; --text: #b8f5c0; --muted: #62a06b; --track: #18291c;
+    --accent: #5cff8a; --accent-bg: rgba(92, 255, 138, .10); --ok: #5cff8a; --warn: #ffcc4d; --bad: #ff6b5c;
+    --orange: #ffa24d; --teal: #4dffd2; --s1: #5cff8a; --s2: #ffcc4d; --s3: #4dd2ff; --s4: #ff7ad9;
+  }
+  :root[data-theme=terminal] body { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9375rem; }
+  [data-theme=terminal] .card { border: 1px solid var(--track); border-radius: 3px; }
+  [data-theme=terminal] nav a, [data-theme=terminal] .queues a, [data-theme=terminal] .mail-all, [data-theme=terminal] .copy { border-radius: 3px; }
+  [data-theme=terminal] nav a[aria-current="page"] { box-shadow: inset 3px 0 0 var(--accent); }
+  [data-theme=terminal] h2::before { content: "> "; color: var(--accent); }
+
   /* phones: sidebar becomes a tab strip along the top */
   @media (max-width: 720px) {
     .layout { display: block; }
@@ -302,12 +452,19 @@
     #host, #model { display: none; }  /* Overview and Network list them too */
     #refresh { order: 2; margin: 0; }
     #conn { order: 3; }
+    .nav-foot { order: 2; margin: 0; padding: 0; }
+    .nav-foot a { padding: 4px 8px; }
     .version { order: 4; margin: 0; padding: 0; }
     nav { order: 5; flex: 1 1 100%; margin: 0 -8px; }
     /* one row per group, its label on the left: Pi's six tabs take two rows on narrow phones, Home's two one */
     .nav-group { display: grid; grid-template-columns: 48px minmax(0, 1fr); align-items: center; }
     .nav-group + .nav-group { border-top: 1px solid var(--track); }
     .nav-label, .nav-group:first-child .nav-label { align-self: start; padding: 12px 0 0 8px; }  /* level with the first row */
+    /* no folding on phones: the groups are already one or two rows */
+    button.nav-label { pointer-events: none; }
+    button.nav-label::after { display: none; }
+    .nav-group.folded .nav-links { display: flex; }
+    .nav-group.folded button.nav-label .nav-badge { display: none; }
     .nav-links { flex-direction: row; flex-wrap: wrap; gap: 0; }
     nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; justify-content: center; }
     nav a::before { display: none; }  /* no room for tab icons in the phone rows */
@@ -348,6 +505,7 @@
       <button class="copy" id="refresh" type="button">Refresh</button>
     </div>
     <nav id="nav" aria-label="Sections"></nav>
+    <nav class="nav-foot" id="nav-foot" aria-label="Settings"></nav>
     <div class="version" id="version"></div>
   </aside>
   <main class="content" id="view"></main>
@@ -1042,8 +1200,11 @@ function mailBadge(d) {
   lastMail = d;
   const n = needsYou(d);
   const link = $("nav").querySelector("a[data-tab=emails]");
-  link.querySelector(".nav-badge")?.remove();
-  if (n > 0) link.append(h("span", { class: "nav-badge", title: `${n} need${n === 1 ? "s" : ""} you (Action + Respond)` }, String(n)));
+  const label = link.closest(".nav-group").querySelector(".nav-label");  // shows the badge while the group is folded
+  for (const el of [link, label]) {
+    el.querySelector(".nav-badge")?.remove();
+    if (n > 0) el.append(h("span", { class: "nav-badge", title: `${n} need${n === 1 ? "s" : ""} you (Action + Respond)` }, String(n)));
+  }
   setTitle();
   if (overviewData) $("view").querySelector(".attention")?.replaceWith(attentionCard());
 }
@@ -1464,6 +1625,271 @@ function rei(d) {
   ];
 }
 
+// ---------- settings (one per browser, in `prefs`; see the script in <head>) ----------
+const THEMES = [
+  { id: "system", name: "Classic", note: "Light or dark, following your system" },
+  { id: "light", name: "Classic light", note: "Always light" },
+  { id: "dark", name: "Classic dark", note: "Always dark" },
+  { id: "neon", name: "Neon", note: "Dark, cyan and pink, soft glows" },
+  { id: "terminal", name: "Terminal", note: "Green phosphor, monospace" },
+];
+
+function themePreview(id) {
+  const mode = THEME_MODES[id] || (systemDark.matches ? "dark" : "light");
+  return h("div", { class: "theme-preview", "data-theme": id, "data-mode": mode, "aria-hidden": "true" },
+    h("div", { class: "tp-side" }, h("i", { class: "on" }), h("i"), h("i"), h("i")),
+    h("div", { class: "tp-main" }, h("div", { class: "tp-card" }, h("span", { class: "tp-bar" }),
+      h("div", { class: "tp-dots" }, h("i"), h("i"), h("i")))));
+}
+
+// A row with a label and one button per choice (the chosen one pressed)
+function choiceRow(label, note, key, options) {
+  const seg = h("div", { class: "seg", role: "group", "aria-label": label, "data-pref": key }, options.map(([v, text]) =>
+    h("button", { type: "button", "data-value": v, "aria-pressed": String(pref(key) === v), onclick: () => {
+      savePrefs({ [key]: v });
+      for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.value === v));
+    } }, text)));
+  return h("div", { class: "set-row" }, h("div", {}, h("div", { class: "set-label" }, label), note && h("div", { class: "sub" }, note)), seg);
+}
+
+// ---------- keyboard shortcuts ----------
+// Built-in ones have an id; their keys and on/off live in prefs.keymap / prefs.keysOff. Website shortcuts live in
+// prefs.sites (each with its own name, url, keys and on). Keys are 1–3 single characters separated by spaces: "g e"
+// means press g, then e. Shortcuts never fire while you type in a box, or with Ctrl, Cmd or Alt held.
+const GO_KEYS = { overview: "o", agents: "a", lab: "l", websites: "w", network: "n", system: "s", emails: "e", rei: "r", settings: "," };
+const SITE_DEFAULTS = [   // {host} is the address this page was opened on (the Pi's tailnet name)
+  { name: "Gmail", url: "https://mail.google.com/", keys: "o m", on: true },
+  { name: "REI", url: "https://{host}:8446/", keys: "o r", on: true },
+  { name: "Hermes dashboard", url: "https://{host}:8443/hermes/", keys: "o h", on: true },
+  { name: "Pi-hole admin", url: "https://{host}:8445/pihole/admin/", keys: "o p", on: true },
+  { name: "GitHub", url: "https://github.com/", keys: "o g", on: true },
+  { name: "Todoist", url: "https://app.todoist.com/", keys: "o t", on: true },
+];
+
+function builtinShortcuts() {
+  return [
+    ...TABS.map(t => ({ id: "go-" + t.id, group: "Go to", label: t.title, keys: "g " + GO_KEYS[t.id], run: () => go(t.id) })),
+    { id: "prev-tab", group: "Move around", label: "Previous tab", keys: "[", run: () => stepTab(-1) },
+    { id: "next-tab", group: "Move around", label: "Next tab", keys: "]", run: () => stepTab(1) },
+    { id: "next-queue", group: "Move around", label: "Emails: next queue", keys: "j", run: () => stepQueue(1) },
+    { id: "prev-queue", group: "Move around", label: "Emails: previous queue", keys: "k", run: () => stepQueue(-1) },
+    { id: "search", group: "Move around", label: "Emails: search", keys: "/", run: focusSearch },
+    { id: "fold-pi", group: "Move around", label: "Fold or open the Pi group", keys: "f p", run: () => $("nav-Pi")?.click() },
+    { id: "fold-home", group: "Move around", label: "Fold or open the Home group", keys: "f h", run: () => $("nav-Home")?.click() },
+    { id: "refresh", group: "Do", label: "Refresh", keys: "r", run: () => $("refresh").click() },
+    { id: "theme", group: "Do", label: "Next theme", keys: "t", run: nextTheme },
+    { id: "help", group: "Do", label: "Show the shortcuts", keys: "?", run: showKeys },
+  ];
+}
+
+const siteList = () => Array.isArray(prefs.sites) ? prefs.sites : SITE_DEFAULTS.map(x => ({ ...x }));
+const siteUrl = url => String(url || "").replaceAll("{host}", location.hostname);
+
+function shortcuts() {   // every shortcut with its current keys and on/off; `site` is the index into siteList()
+  const keymap = prefs.keymap || {}, off = prefs.keysOff || [];
+  return [
+    ...builtinShortcuts().map(x => ({ ...x, keys: keymap[x.id] ?? x.keys, on: !off.includes(x.id) })),
+    ...siteList().map((x, i) => ({ id: "site-" + i, site: i, group: "Open", label: x.name || x.url, keys: x.keys || "", on: x.on !== false,
+                                   run: () => window.open(siteUrl(x.url), "_blank", "noopener") })),
+  ];
+}
+
+const shortcutsOn = () => prefs.shortcuts !== false;
+
+// "G  e" -> "G e"; null when it isn't 1–3 single characters
+function normKeys(text) {
+  const parts = String(text).trim().split(/\s+/).filter(Boolean);
+  return parts.length >= 1 && parts.length <= 3 && parts.every(k => [...k].length === 1) ? parts.join(" ") : null;
+}
+
+// Another enabled shortcut that the same keys would also fire (equal, or one is the start of the other)
+function clash(keys, id) {
+  return shortcuts().find(x => x.id !== id && x.on && x.keys &&
+    (x.keys === keys || x.keys.startsWith(keys + " ") || keys.startsWith(x.keys + " ")));
+}
+
+const go = id => { location.hash = "#" + id; };
+function stepTab(d) {
+  const i = TABS.indexOf(current);
+  go(TABS[(i + d + TABS.length) % TABS.length].id);
+}
+function stepQueue(d) {
+  if (current.id !== "emails") return go("emails");
+  const links = [...$("view").querySelectorAll(".mail-all, .queues a")];
+  const i = links.findIndex(a => a.getAttribute("aria-current") === "page");
+  links[(i + d + links.length) % links.length]?.click();
+}
+function focusSearch() {
+  const now = $("view").querySelector(".mail-search");
+  if (now) return now.focus();
+  go("emails");
+  let tries = 0;
+  const t = setInterval(() => {   // wait for the Emails tab to draw its search box
+    const el = $("view").querySelector(".mail-search");
+    if (el || ++tries > 50) { clearInterval(t); el?.focus(); }
+  }, 100);
+}
+function nextTheme() {
+  const i = THEMES.findIndex(t => t.id === prefTheme());
+  savePrefs({ theme: THEMES[(i + 1) % THEMES.length].id });
+  if (current.id === "settings") show(current, settings());
+}
+
+const keysLabel = keys => keys.split(" ").flatMap((k, i) => [i ? h("span", { class: "then" }, "then") : null, h("kbd", {}, k)]);
+
+function showKeys() {
+  const old = $("keys-help");
+  if (old?.open) { old.close(); return; }
+  old?.remove();
+  const list = shortcuts().filter(x => x.on && x.keys);
+  const groups = [...new Set(list.map(x => x.group))];
+  const d = h("dialog", { id: "keys-help", class: "keys-help", "aria-labelledby": "keys-help-title" },
+    h("h2", { id: "keys-help-title", tabindex: "-1", autofocus: true }, "Keyboard shortcuts"),   // focus the top, not the link at the bottom
+    list.length ? h("div", { class: "keys-groups" }, groups.map(g => h("div", { class: "keys-group" }, h("h3", {}, g),
+      h("dl", {}, list.filter(x => x.group === g).flatMap(x => [h("dt", {}, keysLabel(x.keys)), h("dd", {}, x.label)])))))
+      : h("p", { class: "sub" }, "None are turned on."),
+    h("form", { method: "dialog" },
+      h("a", { href: "#settings", onclick: () => d.close() }, "Change them in Settings"),
+      h("button", { class: "copy", type: "submit" }, "Close")));
+  document.body.append(d);
+  d.showModal();
+}
+
+let keyBuf = [], keyTimer = null;
+addEventListener("keydown", e => {
+  if (!shortcutsOn() || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  // typing, not a shortcut (a ticked checkbox or a chosen radio still lets them through)
+  if (e.target.closest?.("input:not([type=checkbox], [type=radio]), textarea, select, [contenteditable]")) return;
+  if ([...e.key].length !== 1 || e.key === " ") return;   // Enter, arrows, Tab, Space keep their usual jobs
+  const list = shortcuts().filter(x => x.on && x.keys);
+  const look = buf => {
+    const seq = buf.join(" ");
+    return { hit: list.find(x => x.keys === seq), more: list.some(x => x.keys.startsWith(seq + " ")) };
+  };
+  let buf = [...keyBuf, e.key], r = look(buf);
+  if (!r.hit && !r.more && keyBuf.length) { buf = [e.key]; r = look(buf); }   // a fresh start, not the rest of a sequence
+  clearTimeout(keyTimer);
+  keyBuf = [];
+  if (r.hit) { e.preventDefault(); $("keys-help")?.close(); r.hit.run(); }
+  else if (r.more) { e.preventDefault(); keyBuf = buf; keyTimer = setTimeout(() => { keyBuf = []; }, 1500); }
+});
+
+// A keys box: saves on Enter or leaving it, refuses what isn't keys or what another shortcut already uses
+function keyInput(x, save) {
+  const err = h("span", { class: "key-err", role: "alert" });
+  const input = h("input", { class: "key-input", type: "text", value: x.keys, "aria-label": `Keys for ${x.label}`,
+                             autocomplete: "off", spellcheck: "false" });
+  input.addEventListener("change", () => {
+    const keys = input.value.trim() === "" ? "" : normKeys(input.value);
+    const other = keys && clash(keys, x.id);
+    const why = keys === null ? "Use 1–3 single keys with spaces between, like g e"
+              : other ? `Already used by “${other.label}” (${other.keys})` : "";
+    input.setAttribute("aria-invalid", String(!!why));
+    err.textContent = why;
+    if (why) return;
+    input.value = keys;
+    save(keys);
+  });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); });
+  return [input, err];
+}
+
+function shortcutsCard() {
+  const card = h("div", { class: "card" + (shortcutsOn() ? "" : " keys-off"), id: "keys-card" });
+  const redraw = () => card.replaceWith(shortcutsCard());
+  const all = shortcuts();
+  const onBox = (x, toggle) => h("input", { type: "checkbox", checked: x.on, "aria-label": `${x.label} on`, onchange: e => toggle(e.target.checked) });
+  const builtinRows = all.filter(x => !("site" in x)).map(x => h("tr", {},
+    h("td", { class: "on", "data-label": "On" }, onBox(x, on => {
+      const off = new Set(prefs.keysOff || []);
+      on ? off.delete(x.id) : off.add(x.id);
+      savePrefs({ keysOff: [...off] });
+    })),
+    h("td", { "data-label": "What" }, x.group === "Go to" ? `Go to ${x.label}` : x.label),
+    h("td", { "data-label": "Keys" }, keyInput(x, keys => savePrefs({ keymap: { ...(prefs.keymap || {}), [x.id]: keys } })))));
+  const setSite = (i, change) => {
+    const list = siteList();
+    Object.assign(list[i], change);
+    savePrefs({ sites: list });
+  };
+  const siteRows = all.filter(x => "site" in x).map(x => {
+    const site = siteList()[x.site];
+    const text = (field, label) => h("input", { class: "site-input", type: "text", value: site[field] || "", "aria-label": label,
+      autocomplete: "off", spellcheck: "false", onchange: e => { setSite(x.site, { [field]: e.target.value.trim() }); } });
+    return h("tr", {},
+      h("td", { class: "on", "data-label": "On" }, onBox(x, on => setSite(x.site, { on }))),
+      h("td", { "data-label": "Name" }, text("name", "Website name")),
+      h("td", { "data-label": "Address" }, text("url", "Website address")),
+      h("td", { "data-label": "Keys" }, keyInput(x, keys => setSite(x.site, { keys }))),
+      h("td", { "data-label": "" }, h("button", { class: "copy", type: "button", "aria-label": `Remove ${x.label}`, onclick: () => {
+        savePrefs({ sites: siteList().filter((_, i) => i !== x.site) });
+        redraw();
+      } }, "Remove")));
+  });
+  card.append(
+    h("h3", { style: "margin-top:0" }, "Keyboard shortcuts"),
+    h("label", { class: "set-check" },
+      h("input", { type: "checkbox", id: "keys-on", checked: shortcutsOn(), onchange: e => { savePrefs({ shortcuts: e.target.checked }); redraw(); } }),
+      "Use keyboard shortcuts"),
+    h("div", { class: "sub", style: "margin:4px 0 8px" }, "Press ", h("kbd", {}, "?"), " on any tab for the list. Two keys like ",
+      ...keysLabel("g e"), " mean press g, then e. They never fire while you type in a box. Change a shortcut's keys in its box (Enter saves); leave it empty to have none."),
+    h("table", { class: "keys-table" }, h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "What"), h("th", {}, "Keys"))), h("tbody", {}, builtinRows)),
+    h("h3", {}, "Open a website"),
+    h("div", { class: "sub" }, "Opens in a new tab. In an address, ", h("span", { class: "mono" }, "{host}"), " is this Pi's address (",
+      h("span", { class: "mono" }, location.hostname), ")."),
+    h("div", { class: "keys-sites" },
+      h("table", { class: "keys-table" }, h("thead", {}, h("tr", {}, h("th", {}, "On"), h("th", {}, "Name"), h("th", {}, "Address"), h("th", {}, "Keys"), h("th", {}, ""))),
+        h("tbody", {}, siteRows))),
+    h("div", { class: "set-actions" },
+      h("button", { class: "copy", type: "button", id: "add-site", onclick: () => {
+        savePrefs({ sites: [...siteList(), { name: "", url: "https://", keys: "", on: true }] });
+        redraw();
+        $("keys-card").querySelector(".keys-sites tbody tr:last-child .site-input")?.focus();
+      } }, "Add website"),
+      h("button", { class: "copy", type: "button", onclick: () => { savePrefs({ keymap: undefined, keysOff: undefined, sites: undefined }); redraw(); } },
+        "Reset shortcuts")));
+  return card;
+}
+
+function settings() {
+  const cur = prefTheme();
+  const startSel = h("select", { class: "set-select", "aria-label": "Start page", onchange: e => savePrefs({ start: e.target.value }) },
+    TABS.map(t => h("option", { value: t.id, selected: (prefs.start || TABS[0].id) === t.id }, t.title)));
+  return [
+    h("h2", {}, "Settings"),
+    h("div", { class: "sub", style: "margin:-6px 0 12px" }, "Saved in this browser only, so your Mac and your phone can each have their own."),
+    h("div", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Theme"),
+      h("div", { class: "themes", role: "radiogroup", "aria-label": "Theme" }, THEMES.map(t =>
+        h("label", { class: "theme-opt", "data-theme-id": t.id },
+          h("input", { type: "radio", name: "theme", value: t.id, checked: t.id === cur, onchange: () => savePrefs({ theme: t.id }) }),
+          themePreview(t.id),
+          h("span", { class: "theme-name" }, t.name),
+          h("span", { class: "sub" }, t.note))))),
+    h("div", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Display"),
+      h("div", { class: "set-rows" },
+        choiceRow("Text size", null, "text", [["small", "Small"], ["default", "Default"], ["large", "Large"], ["larger", "Larger"]]),
+        choiceRow("Density", "Compact fits more on the screen", "density", [["comfortable", "Comfortable"], ["compact", "Compact"]]),
+        choiceRow("Motion", "Reduced turns off animations and transitions", "motion", [["full", "Full"], ["reduce", "Reduced"]]),
+        h("div", { class: "set-row" },
+          h("div", {}, h("div", { class: "set-label" }, "Start page"), h("div", { class: "sub" }, "What opens at the plain address, without a #tab")),
+          startSel))),
+    shortcutsCard(),
+    h("div", { class: "card" },
+      h("h3", { style: "margin-top:0" }, "Reset"),
+      h("div", { class: "sub" }, "Back to the defaults: Classic theme, default text, all shortcuts, every sidebar group open."),
+      h("div", { class: "set-actions" }, h("button", { class: "copy danger", type: "button", id: "reset-all", onclick: () => {
+        if (!confirm("Reset all settings in this browser?")) return;
+        prefs = {};
+        try { localStorage.removeItem(SETTINGS_KEY); localStorage.removeItem(FOLD_KEY); } catch {}
+        applyPrefs();
+        for (const g of document.querySelectorAll(".nav-group.folded")) g.querySelector(".nav-label").click();
+        show(current, settings());
+      } }, "Reset all settings"))),
+  ];
+}
+
 // System's sub-tabs (#system/<id>)
 const SYSTEM = [
   { id: "docker", title: "Docker", api: "/api/docker", render: docker },
@@ -1484,6 +1910,8 @@ const TABS = [
   // keep: switching queues (#emails/<queue>) redraws from the data already loaded instead of fetching again
   { id: "emails", group: "Home", title: "Emails", api: "/api/emails", keep: true, render: emails },
   { id: "rei", group: "Home", title: "REI", api: "/api/rei", render: rei },
+  // no group: its link is at the bottom of the sidebar; `local`: nothing to load, the status line is left as it is
+  { id: "settings", title: "Settings", local: true, render: settings },
 ];
 
 // ---------- version (bottom of the sidebar) ----------
@@ -1534,9 +1962,24 @@ function subtabs() {
     current.sub.map(s => h("a", { href: `#${current.id}/${s.id}`, "aria-current": s === currentView ? "page" : null }, s.title)));
 }
 
-$("nav").append(...[...new Set(TABS.map(t => t.group))].map(g => h("div", { class: "nav-group", role: "group", "aria-labelledby": "nav-" + g },
-  h("div", { class: "nav-label", id: "nav-" + g }, g),
+// Folded groups are remembered per browser (a convenience: storage may be blocked, then every group starts open)
+const FOLD_KEY = "pi-status.folded";
+let folded = [];
+try { folded = JSON.parse(localStorage.getItem(FOLD_KEY)) || []; } catch {}
+
+function toggleGroup(btn) {
+  const g = btn.closest(".nav-group"), on = g.classList.toggle("folded");
+  btn.setAttribute("aria-expanded", String(!on));
+  folded = on ? [...new Set([...folded, g.dataset.group])] : folded.filter(x => x !== g.dataset.group);
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(folded)); } catch {}
+}
+
+$("nav").append(...[...new Set(TABS.map(t => t.group))].filter(Boolean).map(g => h("div", { class: "nav-group" + (folded.includes(g) ? " folded" : ""),
+    role: "group", "aria-labelledby": "nav-" + g, "data-group": g },
+  h("button", { class: "nav-label", id: "nav-" + g, type: "button", "aria-expanded": String(!folded.includes(g)),
+                title: "Show or hide this group", onclick: e => toggleGroup(e.currentTarget) }, g),
   h("div", { class: "nav-links" }, TABS.filter(t => t.group === g).map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title))))));
+$("nav-foot").append(...TABS.filter(t => !t.group).map(t => h("a", { href: "#" + t.id, "data-tab": t.id }, t.title)));
 
 async function getJSON(url) {
   const r = await fetch(url, { cache: "no-store" });
@@ -1554,7 +1997,7 @@ async function refresh() {
   const tab = current, v = currentView;
   if (!v.api) {  // a placeholder: nothing to load, so no "updated" time and never "unreachable"
     show(tab, v.render());
-    $("conn").replaceChildren(h("span", { class: "dot idle" }), "no live data");
+    if (!v.local) $("conn").replaceChildren(h("span", { class: "dot idle" }), "no live data");
     return;
   }
   try {
@@ -1574,6 +2017,10 @@ async function refresh() {
 
 function route() {
   const [id, ...rest] = location.hash.slice(1).split("/");
+  if (!id && prefs.start && prefs.start !== TABS[0].id && TABS.some(t => t.id === prefs.start)) {   // Settings' start page
+    history.replaceState(null, "", "#" + prefs.start);
+    return route();
+  }
   if (SYSTEM.some(s => s.id === id)) {  // old bookmarks (#ports) now live under System; no extra history entry
     history.replaceState(null, "", `#system/${id}`);
     return route();
@@ -1586,7 +2033,7 @@ function route() {
   current = TABS.find(t => t.id === id) || TABS[0];
   subpath = decodeURIComponent(rest.join("/"));
   currentView = current.sub ? current.sub.find(s => s.id === subpath) || current.sub[0] : current;
-  for (const a of $("nav").querySelectorAll("a[data-tab]")) {
+  for (const a of document.querySelectorAll(".side a[data-tab]")) {
     if (a.dataset.tab === current.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
@@ -1614,7 +2061,12 @@ $("refresh").addEventListener("click", async e => {
   btn.textContent = "Refresh";
 });
 // the sidebar shows the hostname whichever tab is open
-if (current.id !== "overview") fetch("/api/status").then(r => r.json()).then(brand).catch(() => {});
+// (on a tab with nothing to load, such as Settings, it also says whether the Pi answered)
+const connWaiting = () => current.local && $("conn").textContent === "connecting…";
+if (current.id !== "overview") fetch("/api/status").then(r => r.json()).then(d => {
+  brand(d);
+  if (connWaiting()) $("conn").replaceChildren(h("span", { class: "dot" }), "updated " + new Date().toLocaleTimeString());
+}).catch(() => { if (connWaiting()) $("conn").replaceChildren(h("span", { class: "dot off" }), "unreachable"); });
 </script>
 </body>
 </html>
