@@ -305,3 +305,30 @@ def test_mail_missing_command_is_503(base_url):
     # the session default: a mail command that doesn't exist, so nothing real can run in tests
     status, out = post_json(base_url + "/api/emails/undo", {"thread": ACTION_ID}, HB)
     assert status == 503 and "isn't installed" in out["error"]
+
+
+def test_mail_sync_now_starts_once_and_reports_running(base_url, monkeypatch):
+    running = {"now": False, "started": 0}
+
+    def start():
+        running["started"] += 1
+        running["now"] = True
+    monkeypatch.setattr(pi_status.collect, "mail_syncing", lambda: running["now"])
+    monkeypatch.setattr(pi_status.collect, "mail_sync_start", start)
+    status, out = post_json(base_url + "/api/emails/sync", {}, HB)
+    assert status == 202 and out["ok"] is True and out["state"]["syncing"] is True
+    assert post_json(base_url + "/api/emails/sync", {}, HB)[0] == 202
+    assert running["started"] == 1                                   # already running: not started twice
+    assert post_json(base_url + "/api/emails/sync", {})[0] == 403    # the custom header, as for every POST
+
+
+def test_mail_sync_now_start_failure_is_500(base_url, monkeypatch):
+    monkeypatch.setattr(pi_status.collect, "mail_syncing", lambda: False)
+    monkeypatch.setattr(pi_status.collect, "mail_sync_start", lambda: "Failed to connect to bus")
+    status, out = post_json(base_url + "/api/emails/sync", {}, HB)
+    assert status == 500 and out["error"] == "couldn't start the mail sorter: Failed to connect to bus"
+
+
+def test_mail_tests_never_point_at_the_real_sorter_unit():
+    assert pi_status.collect.mail_unit() == "pi-status-test-no-such-unit.service"
+    assert pi_status.collect.mail_syncing() is False

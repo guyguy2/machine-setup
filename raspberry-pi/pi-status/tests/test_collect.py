@@ -768,7 +768,7 @@ def test_rei_stopped_skips_healthz_and_is_not_published_locally(monkeypatch):
 
 from datetime import timedelta  # noqa: E402
 
-from mail_fixture import write_fresh  # noqa: E402
+from mail_fixture import fresh, write_fresh  # noqa: E402
 
 
 @pytest.fixture
@@ -791,7 +791,7 @@ def test_emails_missing_file_is_not_connected_with_the_setup_command(mail_file):
 def test_emails_fresh_file_is_passed_through_with_derived_fields(mail_file):
     write_fresh(mail_file)
     data = collect.emails()
-    assert data["connected"] is True and data["stale"] is False and 200 <= data["age_s"] <= 300
+    assert data["connected"] is True and data["stale"] is False and 200 <= data["age_s"] <= 300 and data["every_s"] == 3600
     assert data["needs_you"] == 3                       # Action 2 + Respond 1
     assert [q["id"] for q in data["queues"]][7] == "delete"
     assert len(data["threads"]) == 11 and len(data["notes"]) == 3 and data["trash"]["marked"] == ["000000000000de01"]
@@ -806,11 +806,19 @@ def test_emails_stale_after_3_hours(mail_file):
     assert collect.emails()["stale"] is True
 
 
-@pytest.mark.parametrize("generated", [None, "yesterday", 12])
-def test_emails_unreadable_generated_time_counts_as_stale(mail_file, generated):
-    write_fresh(mail_file, generated=generated)
+@pytest.mark.parametrize("last", [None, "yesterday", 12])
+def test_emails_unreadable_last_check_counts_as_stale(mail_file, last):
+    write_fresh(mail_file, sync={"ok": True, "last_success": last, "error": None})
     data = collect.emails()
     assert data["stale"] is True and data["age_s"] is None
+
+
+def test_emails_age_is_the_last_gmail_check_not_the_last_click(mail_file):
+    data = fresh(age=timedelta(hours=4))
+    data["generated"] = fresh()["generated"]           # a click rewrote the file just now; Gmail wasn't checked
+    mail_file.write_text(json.dumps(data))
+    got = collect.emails()
+    assert got["stale"] is True and got["age_s"] >= 4 * 3600 - 5
 
 
 def test_emails_failed_sync_is_passed_through(mail_file):

@@ -672,7 +672,42 @@ def rei() -> dict:
 MAIL_STATE = Path(HOME) / ".local" / "share" / "mail" / "state.json"  # written by `mail run` (mail-sync.timer)
 MAIL_STATE_ENV = "PI_STATUS_MAIL_STATE"  # tests and screenshots point this at a fake file
 MAIL_SETUP = "systemctl --user enable --now mail-sync.timer"
-MAIL_STALE_S = 3 * 3600  # the sorter runs every hour; two missed runs means it's broken
+MAIL_EVERY_S = 3600  # mail-sync.timer checks Gmail every hour
+MAIL_UNIT_ENV = "PI_STATUS_MAIL_UNIT"  # tests point this at a unit that doesn't exist
+MAIL_STALE_S = 3 * 3600  # two missed runs means it's broken
+
+
+def mail_unit() -> str:
+    return os.environ.get(MAIL_UNIT_ENV) or "mail-sync.service"
+
+
+def mail_syncing() -> bool:
+    """Is the sorter checking Gmail right now (the timer's run or a Sync now)? A oneshot is "activating" meanwhile."""
+    return run("systemctl", "--user", "is-active", mail_unit()) in ("activating", "active", "reloading")
+
+
+def mail_sync_start() -> str | None:
+    """Start the timer's own service without waiting for it; the error, if systemd refused."""
+    try:
+        done = subprocess.run(["systemctl", "--user", "start", "--no-block", mail_unit()], capture_output=True,
+                              text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    return (done.stderr.strip() or f"systemctl exit {done.returncode}") if done.returncode else None
+
+
+def mail_sync_now() -> tuple[int, dict]:
+    """Sync now from the page: the same run as the hourly timer (which then counts its hour from this one). If one
+    is already running, this just reports it. The page then watches `syncing` until it's done."""
+    if not mail_syncing():
+        error = mail_sync_start()
+        if error:
+            return 500, {"ok": False, "error": f"couldn't start the mail sorter: {error[:300]}", "state": emails()}
+        for _ in range(20):  # the job is queued; give systemd a moment to show it running
+            if mail_syncing():
+                break
+            time.sleep(0.1)
+    return 202, {"ok": True, "state": emails()}
 
 
 def mail_state_path() -> Path:
@@ -691,8 +726,9 @@ def iso_age(value, now: float) -> float | None:
 
 
 def emails() -> dict:
-    """The sorter's state.json as it is, plus `connected`, `stale`, `age_s` (since `generated`) and `needs_you`
-    (Action + Respond). Missing file: not set up yet. Unreadable file: an `error` the page shows."""
+    """The sorter's state.json as it is, plus `connected`, `age_s` (since Gmail was last checked: sync.last_success,
+    not `generated`, which a click rewrites too), `stale`, `every_s` (how often it checks) and `needs_you` (Action +
+    Respond). Missing file: not set up yet. Unreadable file: an `error` the page shows."""
     path = mail_state_path()
     try:
         text = path.read_text()
@@ -714,13 +750,15 @@ def emails() -> dict:
         data["trash"] = {"marked": []}
     if not isinstance(data.get("sync"), dict):
         data["sync"] = {"ok": False, "error": "no sync status in the file"}
-    age = iso_age(data.get("generated"), time.time())
+    age = iso_age(data["sync"].get("last_success"), time.time())
     counts = {q.get("id"): q.get("count") for q in data["queues"] if isinstance(q, dict)}
     return {
         **data,
         "connected": True,
         "age_s": None if age is None else max(0, round(age)),
         "stale": age is None or age > MAIL_STALE_S,
+        "every_s": MAIL_EVERY_S,
+        "syncing": mail_syncing(),
         "needs_you": sum(c for c in (counts.get("action"), counts.get("respond")) if isinstance(c, int)),
     }
 
@@ -824,6 +862,8 @@ def mail_output(stdout: str):
 def mail_action(action: str, body) -> tuple[int, dict]:
     """Run one choice (decide, accept, reason, undo, trash, draft...) and return the HTTP status, the command's JSON and, under
     `state`, the fresh /api/emails payload so the page redraws without fetching again."""
+    if action == "sync":
+        return mail_sync_now()
     args = mail_args(action, body)
     if isinstance(args, str):
         return 400, {"ok": False, "error": args}

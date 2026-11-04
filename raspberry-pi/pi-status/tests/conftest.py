@@ -15,10 +15,12 @@ from pi_status import Handler, collect
 @pytest.fixture(scope="session", autouse=True)
 def fake_mail_state(tmp_path_factory):
     """Point /api/emails at the FAKE fixture for the whole run, so no test ever reads real mail, and the choice
-    buttons at a `mail` command that doesn't exist, so none can touch it (tests that click use `fake_mail`)."""
+    buttons at a `mail` command that doesn't exist, so none can touch it (tests that click use `fake_mail`), and Sync now
+    at a systemd unit that doesn't exist, so no test starts the real sorter."""
     folder = tmp_path_factory.mktemp("mail")
     path = write_fresh(folder / "state.json")
-    env = {collect.MAIL_STATE_ENV: str(path), collect.MAIL_BIN_ENV: str(folder / "no-mail-command-here")}
+    env = {collect.MAIL_STATE_ENV: str(path), collect.MAIL_BIN_ENV: str(folder / "no-mail-command-here"),
+           collect.MAIL_UNIT_ENV: "pi-status-test-no-such-unit.service"}
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     yield path
