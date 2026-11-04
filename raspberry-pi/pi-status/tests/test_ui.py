@@ -1777,6 +1777,29 @@ def test_emails_decide_by_keyboard_moves_the_card_then_undo_brings_it_back(make_
     assert page.errors == []
 
 
+def test_emails_choice_says_what_it_did_where_the_card_was(make_page, base_url, fake_mail):
+    page = make_page()
+    page.set_viewport_size({"width": 900, "height": 500})                   # short, so the page scrolls
+    open_live_emails(page, base_url, "emails/action")
+    water = card(page, WATER)                                               # the lower card, below SCHOOL
+    water.scroll_into_view_if_needed()
+    page.evaluate("window.scrollBy(0, 120)")
+    top = water.evaluate("e => e.getBoundingClientRect().top")
+    water.locator(".choice[data-choice=review]").click()
+    flash = page.locator("#view .mail-flash")
+    flash.wait_for()
+    assert flash.evaluate("e => e.previousElementSibling.dataset.thread") == SCHOOL   # in its place, not at the top
+    assert abs(flash.evaluate("e => e.getBoundingClientRect().top") - top) < 2      # and the screen didn't jump
+    flash.locator(".reason .linkish").click()                               # Add a reason, right there
+    flash.locator(".reason input").fill("paid already")
+    flash.locator(".reason input").press("Enter")
+    page.wait_for_function("document.querySelector('#view .mail-flash .reason .said')")
+    flash = page.locator("#view .mail-flash")
+    assert flash.evaluate("e => e.previousElementSibling.dataset.thread") == SCHOOL
+    assert abs(flash.evaluate("e => e.getBoundingClientRect().top") - top) < 2
+    assert page.errors == []
+
+
 def test_emails_decided_cards(make_page, base_url, fake_mail):
     page = make_page()
     open_live_emails(page, base_url, "emails/review")

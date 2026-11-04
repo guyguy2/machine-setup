@@ -1064,11 +1064,16 @@ function queueBadge(d, q) {
 }
 
 // ---- choices: POST to /api/emails/<action>, which runs the sorter's `mail` command and answers with the new state ----
-let mailFlash = null;  // what the last choice did, shown above the cards when its card has left the view
+// What the last choice did, shown where its card was when the card has left the view (you work up from the bottom,
+// so it must not jump to the top). `before`: the cards that came before it, nearest first, to find that place.
+let mailFlash = null;
 
 async function mailAct(btn, action, body, said) {
   const box = btn.closest(".thread, .mail-trash, .mail-accept, .mail-flash");  // a reason box is inside one of these  // its buttons are locked while this runs
   const buttons = [...box.querySelectorAll("button")];
+  const top = box.getBoundingClientRect().top;  // after the redraw, this place stays put on screen
+  const before = [...$("view").querySelectorAll(".thread")]  // the cards above this one, nearest first
+    .filter(c => c !== box && c.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).map(c => c.dataset.thread).reverse();
   buttons.forEach(b => (b.disabled = true));
   box.querySelector(".act-error")?.remove();
   const spin = h("span", { class: "spin", role: "status", "aria-label": "Working…" });
@@ -1083,7 +1088,8 @@ async function mailAct(btn, action, body, said) {
   }
   if (r?.ok && out.ok !== false && out.state) {
     mailFlash = said(out.state, out);
-    redrawMail(out.state, body.thread);
+    if (mailFlash && !mailFlash.before) mailFlash = { ...mailFlash, before };
+    redrawMail(out.state, body.thread, top);
     return true;
   }
   spin.remove();
@@ -1092,13 +1098,18 @@ async function mailAct(btn, action, body, said) {
   return false;
 }
 
-function redrawMail(state, thread) {
+function redrawMail(state, thread, top) {
   if (current.id !== "emails") return mailBadge(state);
   lastLoad = { view: currentView, args: [state] };
+  const tall = $("view").offsetHeight;
   show(current, emails(state));
+  // the page keeps its height (until the next refresh or tab), or a card leaving near the bottom would pull it down
+  if (top != null) $("view").style.minHeight = tall + "px";
   const card = thread && $("view").querySelector(`.thread[data-thread="${CSS.escape(thread)}"]`);
   const flash = $("view").querySelector(".mail-flash");
-  (card ? card.querySelector(".undo") : flash?.querySelector("button") || flash)?.focus();  // keep the keyboard nearby
+  const here = card || flash;
+  if (here && top != null) window.scrollBy(0, here.getBoundingClientRect().top - top);  // no jumping: it's where you clicked
+  (card ? card.querySelector(".undo") : flash?.querySelector("button") || flash)?.focus({ preventScroll: true });  // keep the keyboard nearby
 }
 
 const subjectOf = t => `“${t.subject || "(no subject)"}”`;
@@ -1347,15 +1358,19 @@ function mailPane(d, sel) {
   const shown = new Set(cards.map(c => c.dataset.thread).filter(Boolean));
   const flash = mailFlash && !(mailFlash.thread && shown.has(mailFlash.thread)) && mailFlash;
   const flashed = flash && d.threads.find(t => t.id === flash.thread);
+  if (flash) {  // in the card's old place: after the nearest card that was before it, else first
+    const el = h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
+      flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
+        onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo"),
+      flash.reasonable && d.actions_enabled && reasonLine(flash.thread, flash.reason, reason => ({ ...flash, reason })));
+    const prev = (flash.before || []).find(id => shown.has(id));
+    cards.splice(prev ? cards.findIndex(c => c.dataset.thread === prev) + 1 : 0, 0, el);
+  }
   return [
     h("div", { class: "mail-head" }, h("h3", {}, title), h("p", { class: "detail" }, hint)),
     (needle || sel.id !== "agent-notes") && (d.actions_enabled
       ? h("div", { class: "mail-help" }, "Action/Respond: label, stays in inbox · Review: label + archive · Delete: mark, then Trash all · No action: read, stays in inbox, off this page · Later: left as is, unread · ✎ Draft a reply: Claude writes, you edit, Save puts it in Gmail Drafts (never sent)")
       : h("div", { class: "mail-only" }, "Suggestions only — nothing is changed in Gmail yet.")),
-    flash && h("div", { class: "mail-flash", role: "status", tabindex: "-1" }, h("span", {}, flash.text),
-      flash.undo && d.actions_enabled && h("button", { class: "copy undo", type: "button",
-        onclick: e => undo(e.currentTarget, flashed || { id: flash.thread, subject: flash.subject }) }, "Undo"),
-      flash.reasonable && d.actions_enabled && reasonLine(flash.thread, flash.reason, reason => ({ ...flash, reason }))),
     pending.length > 0 && h("div", { class: "card mail-accept" },
       h("span", {}, `${pending.length} suggestion${pending.length === 1 ? "" : "s"} not chosen yet`),
       h("button", { class: "copy accept", type: "button", disabled: !d.actions_enabled,
@@ -1366,7 +1381,8 @@ function mailPane(d, sel) {
       h("span", {}, `${marked.length} marked for Trash`),
       h("button", { class: "copy danger", type: "button", disabled: !d.actions_enabled,
                     onclick: e => trashAll(e.currentTarget, [...marked]) }, `Trash all ${marked.length} marked`)),
-    cards.length ? cards : h("div", { class: "card empty" }, none),
+    cards.some(c => c.classList.contains("thread") || c.classList.contains("note-card")) ? cards
+      : [...cards, h("div", { class: "card empty" }, none)],
   ];
 }
 
@@ -1530,6 +1546,7 @@ async function getJSON(url) {
 }
 
 function show(tab, out) {
+  $("view").style.minHeight = "";
   $("view").replaceChildren(...[tab.sub ? [h("h2", {}, tab.title), subtabs(), out] : out].flat(Infinity).filter(Boolean));
 }
 
