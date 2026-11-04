@@ -1,8 +1,11 @@
 """Renders the real page in Chromium via Playwright."""
 
+import re
+
 import pytest
 
 from mail_fixture import fresh
+from pi_status import collect
 
 TABS = ["overview", "agents", "lab", "websites", "network", "system/services", "system/processes", "system/ports", "system/docker",
         "emails", "emails/action", "emails/agent-notes", "rei"]
@@ -967,7 +970,7 @@ def test_overview_attention_lists_what_needs_you(make_page, base_url, change, ex
 
 
 @pytest.mark.parametrize("mail, expected", [
-    ({"stale": True, "age_s": 7200}, "Email sorter: hasn't sorted mail for 2h 0m"),
+    ({"stale": True, "age_s": 7200}, "Email sorter: hasn't checked Gmail for 2h 0m"),
     ({"sync": {"ok": False, "error": "AUTH EXPIRED: run gws-login"}}, "Email sorter: last run failed: AUTH EXPIRED"),
 ])
 def test_overview_attention_lists_a_broken_email_sorter(make_page, base_url, mail, expected):
@@ -1256,7 +1259,7 @@ def test_no_page_scroll_on_a_narrow_phone(make_page, base_url, tab):
 
 def mail_api(**change):
     """What /api/emails returns for the fake fixture, freshly sorted; `change` replaces top-level keys."""
-    return {**fresh(), "connected": True, "stale": False, "age_s": 240, "needs_you": 3, **change}
+    return {**fresh(), "connected": True, "stale": False, "age_s": 240, "every_s": 3600, "needs_you": 3, **change}
 
 
 NOT_CONNECTED = {"connected": False, "setup": "systemctl --user enable --now mail-sync.timer"}
@@ -1315,7 +1318,9 @@ def test_emails_unreadable_state_file_shows_the_error(make_page, base_url):
 def test_emails_queue_counts_and_dots(make_page, base_url):
     page = make_page()
     open_emails(page, base_url)
-    assert page.locator("#view .mail-fresh").inner_text() == "sorted 4m ago"
+    fresh_line = page.locator("#view .page-head .mail-fresh")                   # grey, beside the "Emails" title
+    assert re.fullmatch(r"Gmail checked 4m ago · next ~\d{1,2}:\d\d( [AP]M)? · Sync now", fresh_line.inner_text()), fresh_line.inner_text()
+    assert fresh_line.get_attribute("title").startswith("Last Gmail check: ")
     assert page.locator("#view .mail-warn").count() == 0
     inbox = queue_row(page, "inbox")
     assert inbox.locator(".count.inbox").inner_text() == "1" and inbox.locator(".q-dot").count() == 0   # highlighted pill
@@ -1489,7 +1494,7 @@ def test_emails_queue_click_switches_without_fetching(make_page, base_url):
 
 
 @pytest.mark.parametrize("change, kind, text", [
-    ({"stale": True, "age_s": 3 * 3600}, "warn", "hasn't sorted mail for 3h 0m"),
+    ({"stale": True, "age_s": 3 * 3600}, "warn", "hasn't checked Gmail for 3h 0m"),
     ({"sync": {"ok": False, "error": "AUTH EXPIRED: run gws-login", "last_success": None}}, "bad",
      "last run failed: AUTH EXPIRED: run gws-login"),
 ])
@@ -2039,3 +2044,42 @@ def test_emails_draft_failure_shows_the_error_and_keeps_the_note(make_page, base
     sam.locator(".act-error").wait_for()
     assert sam.locator(".act-error").inner_text() == "Claude couldn't write a draft: timed out"
     assert sam.locator(".draft-ask input").input_value() == "decline" and not sam.locator(".draft-ask .wait").is_visible()
+
+
+def test_emails_sync_now_shows_checking_then_redraws_when_done(make_page, base_url, fake_mail, monkeypatch):
+    running = {"now": False, "started": 0}
+
+    def start():
+        running["now"] = True
+        running["started"] += 1
+    monkeypatch.setattr(collect, "mail_syncing", lambda: running["now"])
+    monkeypatch.setattr(collect, "mail_sync_start", start)
+    page = make_page()
+    open_live_emails(page, base_url, "emails/review")
+    fresh_line = page.locator("#view .page-head .mail-fresh")
+    fresh_line.get_by_role("button", name="Sync now").click()
+    page.wait_for_function("document.querySelector('#view .mail-fresh').textContent.includes('Checking Gmail…')")
+    assert running["started"] == 1 and fresh_line.locator(".spin").count() == 1
+    running["now"] = False                                     # the run finishes; the page notices within seconds
+    page.wait_for_function("document.querySelector('#view .mail-fresh').textContent.startsWith('Gmail checked')",
+                           timeout=10_000)
+    assert page.locator("#view .page-head .mail-fresh button").inner_text() == "Sync now"
+    assert page.errors == []
+
+
+def test_emails_sync_now_failure_is_shown(make_page, base_url, fake_mail, monkeypatch):
+    monkeypatch.setattr(collect, "mail_syncing", lambda: False)
+    monkeypatch.setattr(collect, "mail_sync_start", lambda: "Unit mail-sync.service not found.")
+    page = make_page()
+    open_live_emails(page, base_url, "emails/review")
+    page.locator("#view .mail-fresh").get_by_role("button", name="Sync now").click()
+    err = page.locator("#view .page-head .act-error")
+    err.wait_for()
+    assert err.inner_text() == "couldn't start the mail sorter: Unit mail-sync.service not found."
+    assert page.locator("#view .mail-fresh button").is_enabled()
+
+
+def test_emails_no_sync_now_when_not_connected(make_page, base_url):
+    page = make_page()
+    open_emails(page, base_url, data=NOT_CONNECTED)
+    assert page.locator("#view .mail-fresh button").count() == 0
