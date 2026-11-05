@@ -231,6 +231,13 @@ _upd_pi_status() {
   uv sync --quiet --project $HOME/dev/pi-status --no-dev --inexact && systemctl --user restart pi-status.service && echo "restarted" || _upd_note "pi-status update failed"
 }
 
+# The email sorter (~/dev/mail, private) runs from its own venv each time mail-sync.timer fires, so after a pull it
+# only needs its dependencies synced; no service to restart.
+_upd_mail() {
+  [[ -d $HOME/dev/mail ]] || { echo "~/dev/mail not cloned, skipped"; return 0 }
+  uv sync --quiet --project $HOME/dev/mail --no-dev --inexact && echo "synced" || _upd_note "mail sorter update failed"
+}
+
 # Restart each running agent service whose code changed after it started (an update above, or a launcher's
 # self-update), so it never keeps running the old version. Compares ctime: brew and npm keep packaged mtimes.
 _upd_restart_agents() {
@@ -403,6 +410,7 @@ upd() {
   if (( _upd_due )); then
     _upd_step "git repos in ~/dev (every 5th run)"; _upd_repos
     _upd_step "pi-status web page (restart to load pulled code)"; _upd_pi_status
+    _upd_step "mail sorter (sync its dependencies)"; _upd_mail
   else
     _upd_step "git repos in ~/dev"; echo "skipped, next update in $_upd_left run(s)"
   fi
