@@ -425,3 +425,9 @@ upd() {
   _upd_summary
   rm -f $_upd_log
 }
+
+# SSH logins land in a shared tmux session "main", so work (e.g. Claude Code) survives a dropped connection.
+# Not exec'd: detaching (Ctrl+b d) leaves you in this plain shell. Skips non-SSH terminals, nested tmux, scp/rsync.
+if [[ -n $SSH_TTY && -z $TMUX && $- == *i* ]] && command -v tmux >/dev/null; then
+  tmux new -A -s main
+fi
