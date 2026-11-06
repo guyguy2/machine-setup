@@ -2,7 +2,7 @@
 # First command on a fresh Raspberry Pi OS image (over SSH, as the normal user):
 #   curl -fsSL https://raw.githubusercontent.com/guyguy2/machine-setup/main/raspberry-pi/bootstrap.sh | bash
 # Installs git, clones this public repo to ~/dev/machine-setup and runs restore.sh (extra arguments are passed on,
-# e.g. `| bash -s -- --dry-run`). See README.md next to this file.
+# e.g. `| bash -s -- --dry-run`; on a worker Pi `| bash -s -- --role worker`). See README.md next to this file.
 set -euo pipefail
 
 repo=https://github.com/guyguy2/machine-setup.git

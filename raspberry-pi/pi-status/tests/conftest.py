@@ -14,13 +14,17 @@ from pi_status import Handler, collect
 
 @pytest.fixture(scope="session", autouse=True)
 def fake_mail_state(tmp_path_factory):
-    """Point /api/emails at the FAKE fixture for the whole run, so no test ever reads real mail, and the choice
+    """Point /api/emails at the FAKE fixture for the whole run, so no test ever reads real mail (nor /api/backup at the
+    real backup status), and the choice
     buttons at a `mail` command that doesn't exist, so none can touch it (tests that click use `fake_mail`), and Sync now
     at a systemd unit that doesn't exist, so no test starts the real sorter."""
     folder = tmp_path_factory.mktemp("mail")
     path = write_fresh(folder / "state.json")
     env = {collect.MAIL_STATE_ENV: str(path), collect.MAIL_BIN_ENV: str(folder / "no-mail-command-here"),
-           collect.MAIL_UNIT_ENV: "pi-status-test-no-such-unit.service"}
+           collect.MAIL_UNIT_ENV: "pi-status-test-no-such-unit.service",
+           # backup: status files that don't exist, and fixed timer states, so no test reads the real ones
+           **{collect.BACKUP_SIDES[side][2]: str(folder / f"no-backup-{side}.json") for side in collect.BACKUP_SIDES},
+           collect.BACKUP_TIMER_ENV: "not set up"}
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     yield path

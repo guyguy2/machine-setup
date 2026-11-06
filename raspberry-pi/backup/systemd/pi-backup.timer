@@ -1,0 +1,11 @@
+# Enabled by `pi-backup init`. Persistent: a night missed while the Pi was off runs at the next boot.
+[Unit]
+Description=pi-backup nightly at ~03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

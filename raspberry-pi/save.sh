@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Snapshot this Pi's settings into ./snapshot (dotfiles, package lists, units, ~/dev repo list).
-# Usage: save.sh [--push]   --push: commit the snapshot and push it to origin.
+# Usage: save.sh [--push | --to DIR]   --push: commit the snapshot and push it to origin.
+# snapshot/ is the main Pi's: --push is refused (exit 2) unless this Pi's role (~/.config/pi-role, default main) is main.
 # bash, not zsh: restore.sh runs on a fresh image before zsh is installed.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
 
-# Paths under $HOME to back up. Secrets, agent state and caches are deliberately absent:
-# ~/.ssh (Raspberry Pi Imager installs the authorized key), ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.config/gws, history files, ~/.cache.
-# (~/.hermes holds Hermes's data and its installer checkout: restore.sh reinstalls Hermes with the official installer instead.)
+# Paths under $HOME to snapshot. The snapshot is public (it's in git), so it still holds no secrets or agent state:
+# ~/.ssh, ~/.claude.json, ~/.hermes, ~/.openclaw, ~/.config/gws, history files and caches stay out of this list.
+# Secrets, sign-ins, agent state and data go in the encrypted restic backup instead (raspberry-pi/backup/, includes.txt).
+# (restore.sh reinstalls Hermes with the official installer; pi-restore-state brings back ~/.hermes's data.)
 dotfiles=(
-  .zshrc .zprofile .gitconfig
+  .zshrc .zprofile .gitconfig .tmux.conf
   .config/zellij .config/lxterminal .config/kanshi .config/wf-panel-pi
   .config/mimeapps.list
   .config/systemd/user/pi-status.service
@@ -33,6 +35,13 @@ case "${1:-}" in
   "") ;;
   *) echo "usage: ${0##*/} [--push | --to DIR]" >&2; exit 2 ;;
 esac
+
+role=$(tr -d '[:space:]' 2>/dev/null < "$HOME/.config/pi-role" || true)
+if (( push )) && [[ ${role:-main} != main ]]; then
+  echo "save.sh: this Pi's role is '$role' (~/.config/pi-role), and snapshot/ is the main Pi's: not pushing." >&2
+  echo "  Use ${0##*/} --to DIR to write a snapshot elsewhere and compare." >&2
+  exit 2
+fi
 
 # Start clean so files deleted on this machine disappear from the snapshot.
 rm -rf "$snap"

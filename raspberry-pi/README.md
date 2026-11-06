@@ -3,8 +3,12 @@
 Rebuild this Raspberry Pi 5 from a blank SD card: packages, shell, settings, the pi-status website, Pi-hole, and
 the AI agents (Hermes, OpenClaw). Everything comes from public GitHub, so no login is needed to start.
 
-**No secrets and no agent state are backed up, on purpose.** Logins, the Pi-hole password and agent onboarding are
-done by hand at the end (section 4). It takes about 15 minutes and gives clean agents.
+**No secrets in git: this repo is public.** Everything else (agent state in `~/.hermes`, sign-ins and secrets, the
+`me` store, app data) goes in a nightly encrypted restic backup on Google Drive, two repos per Pi (user and root-only
+system), and comes back with `pi-restore-state` (dry run first, `--yes` to write). Tailscale state,
+`/etc/machine-id` and caches are never backed up. How it works and how to set it up: [Nightly backup](#nightly-backup-restic)
+below. Without a backup (a first-ever setup), logins, the Pi-hole password and agent onboarding
+are done by hand at the end (section 4).
 
 What comes back automatically:
 
@@ -72,10 +76,10 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
 | `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node}` → folders in this repo | |
 | `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
-| `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data is not restored, by design | `~/.zshrc` |
+| `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data comes back with `pi-restore-state` (section 4), not this step | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `rei` | the REI dashboard: clones the private repo to `~/dev/rei` (needs the `github` step), `uv sync`, its `deploy/pi/install.sh` (links and enables `rei.service` and `rei-proxy.service`; `rei-vault-sync.timer` only once the rclone remote `gdrive:` exists), then `tailscale serve --https=8446` (tailnet only). Prints its manual follow-ups (section 4) | `~/dev/rei` |
-| `mail` | the email sorter behind Home Base's Emails tab: clones the private repo to `~/dev/mail` (needs the `github` step), `uv sync`, links and enables `mail-sync.timer` (every hour). Needs the gws Gmail sign-in and Claude Code signed in; its data (`~/.local/share/mail`) isn't backed up, `uv run mail bootstrap` relearns the last two weeks | `~/dev/mail` |
+| `mail` | the email sorter behind Home Base's Emails tab: clones the private repo to `~/dev/mail` (needs the `github` step), `uv sync`, links and enables `mail-sync.timer` (every hour). Needs the gws Gmail sign-in and Claude Code signed in; its data (`~/.local/share/mail`) comes back with `pi-restore-state`; without a backup, `uv run mail bootstrap` relearns the last two weeks | `~/dev/mail` |
 | `shell` | login shell → zsh | |
 | `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |
 
@@ -86,6 +90,10 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    [admin console](https://login.tailscale.com/admin/machines) remove the old machine, then name the new one
    `raspberrypi` so the `https://raspberrypi.<tailnet>.ts.net` URLs stay the same. Then
    `~/dev/machine-setup/raspberry-pi/restore.sh --only pi-status` to publish the HTTPS addresses.
+   **Restore state**: `pi-restore-state` (dry run), then `pi-restore-state --yes`. It brings back `~/.hermes`,
+   sign-ins and data, so the sign-ins and onboarding in steps 3 to 6 are only for a first-ever setup or what it
+   reports as missing; still start the agent you use (step 5) and re-run `restore.sh --only rei` (step 6). Needs the
+   restic passphrases (password manager) and the `gdrive-backup:` rclone remote; see [Nightly backup](#nightly-backup-restic).
 3. **Claude Code**: run `claude` and log in. The agents use this login too.
 4. **Google**: `gcloud auth login --no-launch-browser`. For gws, download the OAuth client from Google Cloud console
    → APIs & Services → Credentials to `~/.config/gws/client_secret.json`, then `gws auth login`.
@@ -93,16 +101,16 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    API keys). They're installed but not enabled, on purpose: 8 GB of RAM means one at a time. Start one from the
    pi-status Agents tab, with `~/dev/agent-lab/bin/lab use <agent>`, or with `systemctl --user start hermes-dashboard`
    (or `openclaw-gateway`).
-6. **REI dashboard** (if you use it): copy `~/dev/rei/inputs/` from a backup or the Mac (not backed up, by design).
+6. **REI dashboard** (if you use it): `~/dev/rei/inputs/` comes back with `pi-restore-state`; otherwise copy it from the Mac.
    For the vault sync, run `rclone authorize "drive"` on a machine with a browser (the Mac), then on the Pi
    `rclone config create gdrive drive scope=drive.readonly token='<the JSON it printed>'` and
    `~/dev/machine-setup/raspberry-pi/restore.sh --only rei` again to enable the sync timer. Start it with
    `systemctl --user start rei.service`; the pi-status REI tab shows whether it's up.
 7. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
    DNS depend on it.
-8. **SSH keys**: SSH access comes only from the key given to Imager in step 1 (`authorized_keys` isn't backed up, on
-   purpose). To allow another machine, append its public key to `~/.ssh/authorized_keys`. The Pi needs no private
-   keys: `gh` handles git over HTTPS.
+8. **SSH keys**: `~/.ssh/` (keys, `authorized_keys`, `config`) comes back with `pi-restore-state`; without it, SSH
+   access comes only from the key given to Imager in step 1. To allow another machine, append its public key to
+   `~/.ssh/authorized_keys`. `gh` handles git over HTTPS.
 
 ## 5. Check it worked
 
@@ -115,25 +123,81 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `curl -s 127.0.0.1:8080/api/rei` | `"unit_state": "active"` and `"health": {"reachable": true, ...}` once `inputs/` is in place and it's started |
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |
+| `pi-backup status` | last good backup under 36 h old (after `pi-backup init`, the next night) |
 | `upd` | runs to "All done." |
 
 ---
 
-## Keeping the backup current
+## Keeping the snapshot current
 
-`upd` runs `save.sh --push` every 5th run. To save now: `~/dev/machine-setup/raspberry-pi/save.sh --push`.
+`upd` runs `save.sh --push` every 5th run (on the main Pi; a worker saves locally only). To save now: `~/dev/machine-setup/raspberry-pi/save.sh --push`.
 
 - It rewrites `snapshot/`, then commits and pushes **only `snapshot/`**. It refuses if a file is over 100 KB or
   looks like a credential.
 - It then lists any `~/dev` repo with uncommitted or unpushed work. Code (pi-status, scripts, agent-lab) is never
   committed automatically; commit it yourself, or a restore won't have it.
 
+## Nightly backup (restic)
+
+Everything git can't hold (secrets and sign-ins, `~/.hermes`, the `me` store, app data) goes, encrypted, to Google
+Drive every night with [restic](https://restic.net). The code is `backup/`; the design, file paths, `last.json`
+schema and exit codes are in `MULTI-PI.md` ("Interfaces").
+
+| Repo | What | Runs as | When |
+|---|---|---|---|
+| `gdrive-backup:pi-backups/<host>/user` | `backup/includes.txt` + staged copies: Hermes (`hermes backup`), SQLite databases, Pi-hole Teleporter export, the lab Chromium profile (only when Chromium isn't running), gitignored `.env` files in `~/dev` | `guy`: `pi-backup`, user timer | ~03:00 |
+| `gdrive-backup:pi-backups/<host>/system` | `backup/system-includes.txt`: labvault, `credential.secret`, `/etc/agent-lab`, SSH host keys, agent-lab sudoers | root: `/usr/local/lib/pi-backup/pi-backup-system`, system timer | ~03:30 |
+
+Keeps 7 daily, 4 weekly, 6 monthly; `restic check` runs weekly. Never backed up: Tailscale state, `/etc/machine-id`,
+caches, DreamBase `photos/` (re-fetched from the album), the Pi-hole query log.
+
+**Security**: root never runs anything `guy` can write. `sudo backup/setup` installs root-owned copies of the root
+side (and of Homebrew's static `rclone`) into `/usr/local/lib/pi-backup/`, after showing what changed and asking
+for `yes`; `pi-backup-system` refuses to run if those files aren't root-owned. Re-run `setup` after changing
+`pi-backup-system`, `system-includes.txt` or its units, or after Homebrew upgrades rclone (`setup --check`,
+`pi-checkup backup` and `upd` say when). `guy`'s Drive token can still delete either repo: Drive's trash (30 days)
+is the undo.
+
+**Passphrases**: one per repo, master copies in the password manager. Each Pi keeps them in
+`~/.config/pi-backup/restic-password` and `/root/.config/pi-backup/restic-password` (0600). Without them nobody can
+open the backup.
+
+### Set it up (once per Pi; the user runs these, one at a time)
+
+1. Google OAuth client for rclone (Desktop app) in Google Cloud console, if there isn't one yet. Use the same client
+   on every Pi: the `drive.file` scope only sees files made by that client.
+2. `rclone authorize "drive" <client_id> <client_secret>` on the Mac, then on the Pi
+   `rclone config create gdrive-backup drive scope=drive.file client_id=… client_secret=… token='<JSON>'`.
+3. `sudo apt install restic`.
+4. Write both password files (the commands `setup` prints read the passphrase without echoing it).
+5. `sudo ~/dev/machine-setup/raspberry-pi/backup/setup`, then `sudo /usr/local/lib/pi-backup/pi-backup-system init`.
+6. `pi-backup init` (creates the repo, enables the timer), then a first `pi-backup run --dry-run` and `pi-backup run`.
+
+### Every day
+
+- `pi-backup status` (exit 0 = last good backup under 36 h old and the last check didn't fail);
+  `/usr/local/lib/pi-backup/pi-backup-system status` for root's. The pi-status Overview has a Backup strip and
+  lists problems under "Needs attention"; `pi-checkup backup` warns too; `upd` runs both checks.
+- Logs: `journalctl --user -u pi-backup`, `journalctl -u pi-backup-system` (no file lists are logged).
+- By hand: `pi-backup run [--dry-run]`, `pi-backup check`, `pi-backup list` (what's included).
+
+### Restore
+
+`pi-restore-state` is a dry run; it lists what each group would restore and what it would replace. Add `--yes` to
+write. `--only hermes,signins,data,system`, `--snapshot ID`, `--host <other Pi>` (whose repo). Replaced files go to
+`~/.pi-restore-backup-<timestamp>/`. Hermes comes back through `hermes import`. Telegram is kept only when this is the main
+Pi restoring its own backup; otherwise `TELEGRAM_*` is removed and the gateway stays off, so two Pis never poll
+one bot. `~/.ssh/authorized_keys` is merged, not replaced. The Pi-hole export is never imported automatically (it
+prints the command). Drill without touching anything live: `pi-restore-state --target-home <empty dir> --yes`.
+
 ## Layout
 
 ```
 raspberry-pi/
   bootstrap.sh            curl | bash entry point for a fresh image
-  restore.sh              rebuild (steps in section 3)
+  restore.sh              rebuild (steps in section 3); --role main|worker (remembered in ~/.config/pi-role)
+  MULTI-PI.md             plan for the backup and more Pis: decisions, security model, interfaces, build order
+  backup/                 nightly restic backup and pi-restore-state (section "Nightly backup")
   save.sh                 refresh snapshot/ (upd runs it)
   IDEAS.md                backlog of things this Pi could do next (not set up)
   checkup/                pi-checkup command + /pi-checkup skill (own README)
@@ -169,7 +233,9 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 - Edit in this repo; the `~/dev` symlinks point here. Never keep a second copy.
 - Never commit secrets or identifying details here: the repo is public. Write `<tailnet>` instead of the real
   Tailscale name (`save.sh` refuses a snapshot containing it). Passwords and tokens stay on the Pi (gitignored `.env` files, tool
-  config dirs) and get re-entered after a rebuild.
+  config dirs) and in the encrypted backup.
+- Secrets stay out of git. To keep a new secret or data file, add it to `backup/includes.txt` (gitignored `.env`
+  files in `~/dev` repos are found automatically).
 - New setting file to keep → add it to `dotfiles` in `save.sh`. New tool → install it the usual way (see
   `~/.claude/CLAUDE.md`); the next save picks it up in the Brewfile or apt list. New repo in `~/dev` → picked up by
   `repos.txt` automatically.

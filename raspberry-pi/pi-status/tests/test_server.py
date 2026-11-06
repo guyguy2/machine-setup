@@ -332,3 +332,9 @@ def test_mail_sync_now_start_failure_is_500(base_url, monkeypatch):
 def test_mail_tests_never_point_at_the_real_sorter_unit():
     assert pi_status.collect.mail_unit() == "pi-status-test-no-such-unit.service"
     assert pi_status.collect.mail_syncing() is False
+
+
+def test_backup_endpoint_reads_the_fake_paths_not_the_real_status(base_url):
+    with urllib.request.urlopen(base_url + "/api/backup") as r:
+        data = json.loads(r.read())
+    assert [s["state"] for s in data["sides"]] == ["not set up", "not set up"]

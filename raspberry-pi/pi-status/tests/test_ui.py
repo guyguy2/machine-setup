@@ -935,9 +935,22 @@ NO_SERVICES = {"user": [], "system": []}
 FAILED_UNIT = {"unit": "backup.service", "active": "failed", "sub": "failed", "description": "Nightly backup"}
 
 
+def backup_side(side="user", state="ok", problems=(), **kw):
+    label = {"user": "Your data", "system": "System (root)"}[side]
+    return {"side": side, "label": label, "timer": "on", "state": state, "problems": list(problems),
+            "last_ok_age_s": 3 * 3600, "last_run": {"ok": True, "exit": 0, "age_s": 3 * 3600},
+            "bytes_total": 3 * 2**30, "bytes_added": 12 * 2**20, "check_ok": True, "check_age_s": 2 * 86400,
+            "repo_bytes": 2 * 2**30, "chromium_age_s": None, "chromium": None, **kw}
+
+
+BACKUP_OK = {"sides": [backup_side("user"), backup_side("system")], "setup": "README", "stale_after_s": 129600}
+
+
 def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIGNED_IN, services=NO_SERVICES,
-                  version=VERSION, dash=DASHBOARDS, mail=None):
+                  version=VERSION, dash=DASHBOARDS, mail=None, backup=BACKUP_OK):
     page.route("**/api/emails", lambda r: r.fulfill(json=mail or mail_api()))
+    if backup is not None:  # None: the test routes /api/backup itself
+        page.route("**/api/backup", lambda r: r.fulfill(json=backup))
     page.route("**/api/status", lambda r: r.fulfill(json=status))
     page.route("**/api/agents", lambda r: r.fulfill(json=agents))
     page.route("**/api/auth", lambda r: r.fulfill(json=auth))
@@ -987,6 +1000,37 @@ def test_overview_attention_lists_a_broken_email_sorter(make_page, base_url, mai
     assert page.locator("#view .attention a[href='#emails']").count() == 1
 
 
+@pytest.mark.parametrize("side, expected", [
+    (backup_side("user", "bad", ["last good backup 40 h ago"]), "Backup (your data): last good backup 40 h ago"),
+    (backup_side("system", "warn", ["timer off"]), "Backup (system (root)): timer off"),
+    (backup_side("user", "not set up", ["not set up"], last_ok_age_s=None), "Backup (your data): not set up"),
+])
+def test_overview_attention_lists_backup_problems(make_page, base_url, side, expected):
+    page = make_page()
+    other = backup_side("system" if side["side"] == "user" else "user")
+    open_overview(page, base_url, backup={**BACKUP_OK, "sides": [side, other]})
+    page.wait_for_selector("#view .attention li")
+    assert any(expected in line for line in attention(page)), attention(page)
+    assert page.errors == []
+
+
+def test_overview_backup_strip_shows_age_size_and_state(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url)
+    rows = page.locator("#view .backup .strip-row").all_inner_texts()
+    assert len(rows) == 2, rows
+    assert "Your data" in rows[0] and "last good 3h 0m ago" in rows[0] and "3.0 GB" in rows[0] and "ok" in rows[0]
+    assert "System (root)" in rows[1]
+    assert page.errors == []
+
+
+def test_overview_survives_backup_endpoint_failing(make_page, base_url):
+    page = make_page()
+    page.route("**/api/backup", lambda r: r.fulfill(status=500, body="boom"))
+    open_overview(page, base_url, backup=None)
+    assert "Backup status unavailable." in page.locator("#view").inner_text()
+
+
 def test_overview_attention_ignores_emails_not_set_up(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, mail=NOT_CONNECTED)
@@ -1017,12 +1061,13 @@ def test_attention_links_to_where_it_is_fixed(make_page, base_url):
 def test_overview_strip_shows_each_agent_with_its_status(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, agents=AGENTS)
-    rows = page.locator("#view .strip .strip-row")
+    strip = "#view .strip:not(.backup)"  # the Backup card below is a strip too
+    rows = page.locator(f"{strip} .strip-row")
     assert rows.count() == 3
-    text = page.locator("#view .strip").inner_text()
+    text = page.locator(strip).inner_text()
     for word in ["Claude Code", "running · 2", "Hermes", "starting", "OpenClaw", "running"]:
         assert word in text
-    assert page.locator("#view .strip a[href='#agents']").count() == 3   # each name opens the Agents tab
+    assert page.locator(f"{strip} a[href='#agents']").count() == 3   # each name opens the Agents tab
 
 
 def test_overview_strip_start_posts_to_the_unit(make_page, base_url):

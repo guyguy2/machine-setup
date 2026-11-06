@@ -1,36 +1,78 @@
 #!/usr/bin/env bash
-# Rebuild this Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot. README.md explains every step.
-# No secrets are backed up: logins and API keys are set up by hand afterwards (listed at the end).
-# Usage: restore.sh [--dry-run] [--only step,step,...]
+# Rebuild a Pi's setup on a fresh Raspberry Pi OS / Debian image from ./snapshot. README.md explains every step.
+# No secrets are in git (this repo is public): sign-ins, agent state and data come back from the encrypted restic
+# backup (raspberry-pi/backup/) with pi-restore-state. What's left by hand is listed at the end.
+# Usage: restore.sh [--role main|worker] [--dry-run] [--only step,step,...]
 # Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
 #                            pihole agents pi-status rei mail shell systemd
+# --role: main (the default: every step) or worker (skips the main-only steps rei and mail, and DreamBase in the
+#   systemd step; see MULTI-PI.md). The flag beats ~/.config/pi-role, which beats the default; a real run writes
+#   the role to ~/.config/pi-role so save.sh and upd know it. snapshot/ is the main Pi's: a worker restores from it.
 # Safe to re-run. Existing files are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
 all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail shell systemd)
+# The only per-role filter: what a worker skips. Step names, plus "dreambase" (~/dev/websites/install.sh, run in the
+# systemd step). Everything else runs on both, including pihole (the worker runs a second Pi-hole) and pi-status.
+main_only=(rei mail dreambase)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
+role_file=$HOME/.config/pi-role
+
+usage() { echo "usage: ${0##*/} [--role main|worker] [--dry-run] [--only step,step,...]" >&2; exit 2; }
 
 dry=0
+role=
 only=("${all_steps[@]}")
 while (( $# )); do
   case $1 in
     --dry-run) dry=1 ;;
     --only) shift; IFS=, read -ra only <<< "${1:?--only needs a list}" ;;
-    *) echo "usage: ${0##*/} [--dry-run] [--only step,step,...]" >&2; exit 2 ;;
+    --role) (( $# > 1 )) || usage; shift; role=$1; role_src=--role ;;
+    *) usage ;;
   esac
   shift
 done
+if [[ -z $role ]]; then
+  role=$(tr -d '[:space:]' 2>/dev/null < "$role_file" || true); role_src=$role_file
+  [[ -n $role ]] || { role=main; role_src=default; }
+fi
+case $role in
+  main|worker) ;;
+  *) echo "${0##*/}: invalid role '$role' (from $role_src): must be main or worker" >&2; usage ;;
+esac
 
 say() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 run() { if (( dry )); then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
-want() { local s; for s in "${only[@]}"; do [[ $s == "$1" ]] && return 0; done; return 1; }
+# role_skips <step or part>: true when this Pi's role doesn't run it (see main_only).
+role_skips() {
+  local s
+  [[ $role == main ]] && return 1
+  for s in "${main_only[@]}"; do [[ $s == "$1" ]] && return 0; done
+  return 1
+}
+# want <step>: asked for (all steps, or --only), and run by this role.
+want() {
+  local s
+  for s in "${only[@]}"; do
+    [[ $s == "$1" ]] || continue
+    if role_skips "$1"; then say "$1: skipped (main only)"; return 1; fi
+    return 0
+  done
+  return 1
+}
 need() { [[ -e $snap/$1 ]] || { echo "  missing snapshot/$1, skipping"; return 1; }; }
 
 [[ -d $snap ]] || { echo "no snapshot/ next to restore.sh" >&2; exit 1; }
+echo "Role: $role ($role_src)"
 (( dry )) || sudo true
+if [[ $(tr -d '[:space:]' 2>/dev/null < "$role_file" || true) != "$role" ]]; then
+  if (( dry )); then echo "  [dry-run] write '$role' to ~/.config/pi-role"
+  else mkdir -p "${role_file%/*}" && printf '%s\n' "$role" > "$role_file" && echo "  wrote '$role' to ~/.config/pi-role"
+  fi
+fi
 
 restore_apt_sources() {
   need apt-sources || return 0
@@ -224,7 +266,7 @@ link_dir() {
 }
 
 if want links; then
-  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill"
+  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill, pi-backup, pi-restore-state"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
@@ -232,6 +274,9 @@ if want links; then
   link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
   link_dir "$here/checkup/pi-checkup" "$HOME/.local/bin/pi-checkup"
   link_dir "$here/checkup/skill" "$HOME/.claude/skills/pi-checkup"
+  # The encrypted restic backup's user-side commands (backup/README.md); link_dir links files too.
+  link_dir "$here/backup/pi-backup" "$HOME/.local/bin/pi-backup"
+  link_dir "$here/backup/pi-restore-state" "$HOME/.local/bin/pi-restore-state"
 fi
 
 if want pihole; then
@@ -264,7 +309,8 @@ if want agents; then
   fi
   # Hermes: the Homebrew formula (0.22.4) lacked the anthropic library and crashed at startup, so it comes from the
   # official installer (git checkout in ~/.hermes/hermes-agent, command in ~/.local/bin). Non-interactive.
-  # ~/.hermes (config, API keys, sessions) is not backed up, by design: set Hermes up again by hand afterwards.
+  # ~/.hermes (config, API keys, sessions) is never in git: it comes back from the encrypted restic backup with
+  # pi-restore-state (dry run first, then --yes; it runs hermes import). A worker sets up its own instead.
   if (( dry )); then :
   elif [[ -x $HOME/.local/bin/hermes ]]; then echo "  Hermes already installed ($HOME/.local/bin/hermes)"
   else curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use \
@@ -318,10 +364,11 @@ if want rei; then
     fi
   fi
   cat <<'MSG'
-  By hand (not backed up, by design):
-    - inputs/: copy ~/dev/rei/inputs/ from a backup or the Mac (e.g. rsync -a <mac>:<path>/inputs/ ~/dev/rei/inputs/)
-    - Vault sync: the rclone remote gdrive: needs a browser login. On a machine with a browser (the Mac) run
-      rclone authorize "drive", then on the Pi:
+  By hand:
+    - inputs/ and the rclone remote gdrive: come back from the encrypted backup: pi-restore-state (a dry run),
+      then pi-restore-state --yes; then re-run ./restore.sh --only rei to enable rei-vault-sync.timer.
+    - First setup only (nothing to restore): copy ~/dev/rei/inputs/ from the Mac, and for the vault sync run
+      rclone authorize "drive" on a machine with a browser (the Mac), then on the Pi:
       rclone config create gdrive drive scope=drive.readonly token='<the JSON it printed>'
       and re-run ./restore.sh --only rei to enable rei-vault-sync.timer. Details: ~/dev/rei/deploy/pi/README.md
     - Start it: systemctl --user start rei.service (rei-proxy.service comes with it); the pi-status REI tab shows it
@@ -346,9 +393,10 @@ if want mail; then
     run systemctl --user enable --now mail-sync.timer
   fi
   cat <<'MSG'
-  By hand: it needs the gws Gmail sign-in (~/dev/agent-lab/bin/gws-login) and Claude Code signed in (claude).
-  Its data (~/.local/share/mail) isn't backed up, by design: run `uv run mail bootstrap` in ~/dev/mail to relearn
-  the last two weeks. Logs: journalctl --user -u mail-sync
+  It needs the gws Gmail sign-in and Claude Code signed in; those and its data (~/.local/share/mail) come back
+  from the encrypted backup: pi-restore-state (a dry run), then pi-restore-state --yes. First setup only (nothing
+  to restore): ~/dev/agent-lab/bin/gws-login, claude, then `uv run mail bootstrap` in ~/dev/mail to learn the last
+  two weeks. Logs: journalctl --user -u mail-sync
 MSG
 fi
 
@@ -364,7 +412,8 @@ fi
 if want systemd; then
   say "systemd"
   # Units that live in their own (private) repo, cloned by the repos step: ~/dev/websites (DreamBase)
-  if [[ -x $HOME/dev/websites/install.sh ]]; then
+  if role_skips dreambase; then echo "  DreamBase (~/dev/websites/install.sh): skipped (main only)"
+  elif [[ -x $HOME/dev/websites/install.sh ]]; then
     if (( dry )); then "$HOME/dev/websites/install.sh" --dry-run; else "$HOME/dev/websites/install.sh"; fi
   else echo "  ~/dev/websites not cloned (private; run the github and repos steps): DreamBase not set up"; fi
   if need systemd-user-enabled.txt; then
@@ -383,20 +432,47 @@ if want systemd; then
 fi
 
 say "Restore finished. Manual follow-ups"
+if [[ $role == main ]]; then
 cat <<'MSG'
   - Open a new terminal (or log out/in) so zsh and ~/.zshrc take effect.
   - sudo tailscale up    (open the link it prints), then ./restore.sh --only pi-status to publish the
                          status page over HTTPS. A brand-new tailnet must first enable HTTPS certificates
                          (https://login.tailscale.com/admin/dns) and approve Serve (the link `tailscale serve` prints).
-  - claude               (log in; installed via the Brewfile cask)
-  - gcloud auth login --no-launch-browser
-  - gws: put the OAuth client file at ~/.config/gws/client_secret.json (Google Cloud console > APIs & Services >
-    Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
-  - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
-  - REI dashboard: copy ~/dev/rei/inputs/ from a backup or the Mac, set up the rclone remote gdrive: (printed by
-    the rei step), then systemctl --user start rei.service.
+  - Restore state: no secrets are in git; ~/.hermes, the sign-ins (claude, gcloud, gws, gh, rclone, ...) and data
+    (~/.local/share/mail, ~/dev/rei/inputs/, the services' .env files, ...) come back from the encrypted restic
+    backup: pi-restore-state (a dry run: shows what it would restore), then pi-restore-state --yes. Needs the
+    restic passphrases (password manager) and the gdrive-backup: rclone remote (README.md).
+    Then ./restore.sh --only rei to enable the REI vault sync, and systemctl --user start rei.service.
+  - Only if not restoring state (a first-ever setup), or for what pi-restore-state reports missing:
+    - claude             (log in; installed via the Brewfile cask)
+    - gcloud auth login --no-launch-browser
+    - gws: put the OAuth client file at ~/.config/gws/client_secret.json (Google Cloud console > APIs & Services >
+      Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
+    - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
+    - REI dashboard: copy ~/dev/rei/inputs/ from the Mac, set up the rclone remote gdrive: (printed by the rei step).
   - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
+  - Nightly backup (README.md): sudo ~/dev/machine-setup/raspberry-pi/backup/setup, then pi-backup init and
+    sudo /usr/local/lib/pi-backup/pi-backup-system init.
   - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
     ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
     (or openclaw-gateway).
 MSG
+else
+cat <<'MSG'
+  - Open a new terminal (or log out/in) so zsh and ~/.zshrc take effect.
+  - sudo tailscale up --ssh   (open the link it prints); name this machine (pi2, pi3) in the admin console, then
+                              ./restore.sh --only pi-status to publish its own status page over HTTPS.
+  - Router: give this Pi a fixed IP (DHCP reservation for its MAC), and hand out both Pis' LAN IPs as DNS (this
+    Pi runs a second Pi-hole).
+  - claude               (log in, if you'll use Claude Code here)
+  - Hermes (a worker: no Telegram; only the main Pi has the bot, and two gateways can't share one bot token):
+    - A new Anthropic API key for this Pi (same account; per-Pi usage, revoke one Pi alone).
+    - In ~/.hermes/.env: API_SERVER_ENABLED=true, API_SERVER_KEY=<random>, API_SERVER_HOST=<this Pi's tailnet IP>
+      (tailscale ip -4; not 0.0.0.0, which would open it to the LAN). Port 8642.
+    - On the main Pi: hermes peer add <this Pi> --url http://<tailnet IP>:8642 --key <API_SERVER_KEY>
+  - This Pi's own nightly backup (README.md): sudo ~/dev/machine-setup/raspberry-pi/backup/setup, then
+    pi-backup init and sudo /usr/local/lib/pi-backup/pi-backup-system init.
+  - Agents are installed but not started. Start one with ~/dev/agent-lab/bin/lab, the pi-status Agents tab,
+    or: systemctl --user start hermes-dashboard
+MSG
+fi

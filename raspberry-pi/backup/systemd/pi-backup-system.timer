@@ -1,0 +1,11 @@
+# Nightly at 03:30 (the user backup runs at 03:00). Enabled by `sudo /usr/local/lib/pi-backup/pi-backup-system init`.
+[Unit]
+Description=pi-backup: nightly restic backup of root-only files
+
+[Timer]
+OnCalendar=*-*-* 03:30
+RandomizedDelaySec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
