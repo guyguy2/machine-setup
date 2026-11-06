@@ -1,0 +1,829 @@
+#!/usr/bin/env bash
+# pi-backup: nightly encrypted backup of this Pi's user-side state (Hermes, sign-ins, personal and app data) with
+# restic, to rclone:gdrive-backup:pi-backups/<host>/user. The root-only files have their own repo (pi-backup-system).
+# The contract (paths, env overrides, list formats, staging layout, last.json, exit codes) is "Interfaces" in
+# ../MULTI-PI.md; change it there first.
+#
+# Usage: pi-backup init [--dry-run] | run [--dry-run] | status [--json] | check | list | --help
+# Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
+#
+# bash (not zsh) and /usr/bin/python3 -I for JSON and SQLite: the systemd user unit has no Homebrew on PATH.
+set -euo pipefail
+umask 077
+
+here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+includes=$here/includes.txt
+excludes=$here/excludes.txt
+units=$here/systemd
+
+host=${PI_BACKUP_HOST:-$(hostname -s)}
+repo=${PI_BACKUP_REPO:-rclone:gdrive-backup:pi-backups/$host/user}
+pwfile=${PI_BACKUP_PASSWORD_FILE:-$HOME/.config/pi-backup/restic-password}
+restic_bin=${PI_BACKUP_RESTIC:-/usr/bin/restic}
+rclone_bin=${PI_BACKUP_RCLONE:-/home/linuxbrew/.linuxbrew/bin/rclone}
+state=${PI_BACKUP_STATE_DIR:-$HOME/.local/state/pi-backup}
+stage=$state/staging
+last=$state/last.json
+py=/usr/bin/python3
+# The lab Chromium profile: never backed up live (excludes.txt); copied into staging only while Chromium is closed.
+chromium_profile=$HOME/.local/share/agent-lab/chromium
+
+usage() {
+  cat <<'EOF'
+usage: pi-backup <command> [options]
+
+  init [--dry-run]   create the restic repo if it doesn't exist, link the systemd user units, enable the timer
+  run [--dry-run]    stage consistent copies, back up, apply retention, write last.json (weekly: prune + check)
+                     --dry-run: stage, show what would be backed up and how much, write nothing
+  status [--json]    show last.json; exit 0 if the last good backup is under 36 h old and the last check
+                     didn't fail, else 1 (no network)
+  check              forget --prune, then restic check; updates last_check in last.json
+  list               print "<group><TAB><path>" for every resolved include (no staging, no network)
+
+Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
+Env overrides (drills and tests): PI_BACKUP_REPO PI_BACKUP_PASSWORD_FILE PI_BACKUP_RESTIC PI_BACKUP_RCLONE
+                                  PI_BACKUP_STATE_DIR PI_BACKUP_HOST
+EOF
+}
+
+say() { printf '==> %s\n' "$*"; }
+note() { printf '  %s\n' "$*"; }
+warn() { printf 'pi-backup: %s\n' "$*" >&2; }
+die() { local code=$1; shift; warn "$*"; exit "$code"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Python helpers (JSON, SQLite backup API, size estimate). Run isolated (-I) so nothing on disk can shadow stdlib.
+read -r -d '' PYCODE <<'PYEOF' || true
+import datetime, fnmatch, json, os, sqlite3, sys, urllib.parse
+
+def now():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+def parse_t(s):
+    try:
+        return datetime.datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+
+def age_h(s):
+    t = parse_t(s)
+    if t is None:
+        return None
+    return (datetime.datetime.now().astimezone() - t).total_seconds() / 3600
+
+def load(path):
+    with open(path) as f:
+        d = json.load(f)
+    if not isinstance(d, dict):
+        raise ValueError("not an object")
+    return d
+
+def load_or_empty(path):
+    try:
+        return load(path)
+    except (OSError, ValueError):
+        return {}
+
+def save(path, d):
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+
+def kv(args):
+    out = {}
+    for a in args:
+        k, _, v = a.partition("=")
+        out[k] = v
+    return out
+
+def num(v):
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+def summary(path):
+    """The last 'summary' message of restic --json output (status lines carry file names: never printed)."""
+    s = {}
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(m, dict) and m.get("message_type") == "summary":
+                    s = m
+    except OSError:
+        pass
+    return s
+
+def human(n):
+    if n is None:
+        return "?"
+    n = float(n)
+    for u in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1000 or u == "TB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1000
+
+def skeleton(host):
+    return {"schema": 1, "side": "user", "host": host, "updated": None, "last_run": None, "last_ok": None,
+            "last_check": None, "items": None, "chromium_last_ok": None}
+
+def ordered(d, host):
+    out = skeleton(host)
+    for k in out:
+        if k in d:
+            out[k] = d[k]
+    return out
+
+def cmd_write_last(a):
+    a = kv(a)
+    path, host = a["file"], a["host"]
+    prev = load_or_empty(path)
+    s = summary(a["out"]) if a.get("out") else {}
+    finished = now()
+    started = a.get("started") or finished
+    code = int(a["exit"])
+    ok = code == 0
+    snap = s.get("snapshot_id")
+    short = snap[:8] if isinstance(snap, str) and snap else None
+    t0, t1 = parse_t(started), parse_t(finished)
+    items = {k[5:]: v for k, v in a.items() if k.startswith("item.")} or None
+    run = {"started": started, "finished": finished, "ok": ok, "exit": code, "snapshot": short,
+           "bytes_added": num(s.get("data_added")), "bytes_total": num(s.get("total_bytes_processed")),
+           "files_new": num(s.get("files_new")), "files_changed": num(s.get("files_changed")),
+           "duration_s": int((t1 - t0).total_seconds()) if t0 and t1 else None}
+    d = ordered(prev, host)
+    d.update({"schema": 1, "side": "user", "host": host, "updated": finished, "last_run": run, "items": items})
+    if ok and short:
+        d["last_ok"] = {"finished": finished, "snapshot": short, "bytes_total": run["bytes_total"]}
+    # The profile copy only counts once it is inside a snapshot.
+    if items and items.get("chromium") == "ok" and short:
+        d["chromium_last_ok"] = finished
+    save(path, d)
+    if code in (0, 4) and short:
+        print(f"snapshot {short}: +{human(run['bytes_added'])} added, {human(run['bytes_total'])} total, "
+              f"{run['files_new']} new / {run['files_changed']} changed files, {run['duration_s']} s")
+
+def cmd_write_check(a):
+    a = kv(a)
+    path, host = a["file"], a["host"]
+    d = ordered(load_or_empty(path), host)
+    fin = now()
+    rb = a.get("repo_bytes", "")
+    d["updated"] = fin
+    d["last_check"] = {"finished": fin, "ok": a["exit"] == "0", "exit": int(a["exit"]),
+                       "repo_bytes": int(rb) if rb.isdigit() else None}
+    save(path, d)
+
+def cmd_check_due(a):
+    """exit 0 when the weekly prune + check is due: last_check missing, failed (retry nightly until it passes)
+    or older than 6.5 days."""
+    d = load_or_empty(a[0])
+    lc = d.get("last_check")
+    if not isinstance(lc, dict) or lc.get("ok") is not True:
+        sys.exit(0)
+    h = age_h(lc.get("finished"))
+    sys.exit(0 if h is None or h > 6.5 * 24 else 1)
+
+def cmd_repo_bytes(a):
+    try:
+        with open(a[0]) as f:
+            v = json.load(f).get("total_size")
+        if isinstance(v, int):
+            print(v)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+def cmd_summary(a):
+    """Dry run: print what restic would add, from its --json summary. exit 1 if there is no summary."""
+    s = summary(a[0])
+    if not s:
+        sys.exit(1)
+    print(f"  restic --dry-run: {s.get('files_new')} new / {s.get('files_changed')} changed / "
+          f"{s.get('files_unmodified')} unchanged files; would add {human(num(s.get('data_added')))} "
+          f"of {human(num(s.get('total_bytes_processed')))} processed")
+
+def cmd_manifest(a):
+    a = kv(a)
+    items = {k[5:]: v for k, v in a.items() if k.startswith("item.")}
+    save(a["file"], {"schema": 1, "host": a["host"], "home": a["home"], "created": now(), "items": items})
+
+def cmd_sqlite(a):
+    """Consistent copies of SQLite files (paths on stdin, NUL-separated) into <stage_home>/<path relative to home>.
+    Prints '<ok|failed|notsqlite|outside>\\t<path>' per file."""
+    stage_home, home = a[0], a[1]
+    for path in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\0"):
+        if not path:
+            continue
+        try:
+            with open(path, "rb") as f:
+                if f.read(16) != b"SQLite format 3\0":
+                    print(f"notsqlite\t{path}")
+                    continue
+        except OSError as e:
+            print(f"failed\t{path}")
+            print(f"pi-backup: sqlite: {e}", file=sys.stderr)
+            continue
+        rel = os.path.relpath(path, home)
+        if rel.startswith(".."):
+            print(f"outside\t{path}")
+            continue
+        dest = os.path.join(stage_home, rel)
+        try:
+            os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
+            if os.path.exists(dest):
+                os.remove(dest)
+            src = sqlite3.connect("file:" + urllib.parse.quote(path) + "?mode=ro", uri=True, timeout=60)
+            try:
+                dst = sqlite3.connect(dest)
+                try:
+                    src.backup(dst)
+                    res = dst.execute("PRAGMA quick_check").fetchone()
+                    if not res or res[0] != "ok":
+                        raise sqlite3.DatabaseError("quick_check on the copy failed")
+                finally:
+                    dst.close()
+            finally:
+                src.close()
+            os.chmod(dest, 0o600)
+            print(f"ok\t{path}")
+        except (OSError, sqlite3.Error) as e:
+            try:
+                os.remove(dest)  # no half-written copy in the snapshot
+            except OSError:
+                pass
+            print(f"failed\t{path}")
+            print(f"pi-backup: sqlite: {path}: {e}", file=sys.stderr)
+
+def _parts(p):
+    return [x for x in p.strip("/").split("/") if x]
+
+def _m(pp, sp):
+    if not pp:
+        return True  # pattern used up: the rest of the path is inside a matched directory
+    if pp[0] == "**":
+        return any(_m(pp[1:], sp[k:]) for k in range(len(sp) + 1))
+    return bool(sp) and fnmatch.fnmatchcase(sp[0], pp[0]) and _m(pp[1:], sp[1:])
+
+def cmd_estimate(a):
+    """Fallback size estimate when restic can't reach the repo: walk the files-from list applying restic-style
+    excludes (absolute patterns match from /, others at any depth). Upper bound: no dedup or compression."""
+    with open(a[1]) as f:
+        pats = [(l.startswith("/"), _parts(l)) for l in (x.rstrip("\n") for x in f)
+                if l.strip() and not l.lstrip().startswith("#")]
+
+    def excluded(path):
+        sp = _parts(path)
+        for absolute, pp in pats:
+            if absolute:
+                if _m(pp, sp):
+                    return True
+            elif any(_m(pp, sp[i:]) for i in range(len(sp))):
+                return True
+        return False
+
+    files = size = 0
+    with open(a[0]) as f:
+        roots = [l.rstrip("\n") for l in f if l.strip()]
+    for root in roots:
+        if excluded(root):
+            continue
+        if not os.path.isdir(root) or os.path.islink(root):
+            try:
+                size += os.lstat(root).st_size
+                files += 1
+            except OSError:
+                pass
+            continue
+        for dp, dns, fns in os.walk(root):
+            dns[:] = [d for d in dns if not excluded(os.path.join(dp, d))]
+            for fn in fns:
+                p = os.path.join(dp, fn)
+                if excluded(p):
+                    continue
+                try:
+                    size += os.lstat(p).st_size
+                    files += 1
+                except OSError:
+                    pass
+    print(f"  estimate (repo not reachable; excludes applied, before dedup/compression): {files} files, {human(size)}")
+
+def cmd_status(a):
+    path, as_json = a[0], len(a) > 1 and a[1] == "--json"
+    try:
+        d = load(path)
+    except FileNotFoundError:
+        print("pi-backup: no last.json yet (no backup has run)", file=sys.stderr)
+        sys.exit(1)
+    except (OSError, ValueError) as e:
+        print(f"pi-backup: last.json unreadable: {e}", file=sys.stderr)
+        sys.exit(1)
+    lo = d.get("last_ok") if isinstance(d.get("last_ok"), dict) else {}
+    lc = d.get("last_check") if isinstance(d.get("last_check"), dict) else {}
+    lr = d.get("last_run") if isinstance(d.get("last_run"), dict) else {}
+    ok_age = age_h(lo.get("finished"))
+    fresh = ok_age is not None and ok_age < 36
+    check_ok = lc.get("ok") is not False
+    good = fresh and check_ok
+    if as_json:
+        print(json.dumps(d, indent=2))
+        sys.exit(0 if good else 1)
+
+    def when(s):
+        h = age_h(s)
+        if h is None:
+            return "never"
+        t = parse_t(s).strftime("%Y-%m-%d %H:%M")
+        return f"{t} ({h:.1f} h ago)" if h < 48 else f"{t} ({h / 24:.1f} d ago)"
+
+    print(f"pi-backup ({d.get('side', 'user')}) on {d.get('host')}")
+    if lr:
+        res = "ok" if lr.get("ok") else f"FAILED (exit {lr.get('exit')})"
+        if lr.get("exit") == 4:
+            res = "INCOMPLETE (exit 4)"
+        print(f"  last run:   {when(lr.get('finished'))}: {res}"
+              + (f", snapshot {lr['snapshot']}" if lr.get("snapshot") else "")
+              + (f", +{human(lr.get('bytes_added'))} of {human(lr.get('bytes_total'))}"
+                 if lr.get("bytes_total") is not None else "")
+              + (f", {lr.get('duration_s')} s" if lr.get("duration_s") is not None else ""))
+    else:
+        print("  last run:   never")
+    print(f"  last good:  {when(lo.get('finished'))}"
+          + (f", snapshot {lo.get('snapshot')}, {human(lo.get('bytes_total'))}" if lo else ""))
+    if lc:
+        print(f"  last check: {when(lc.get('finished'))}: {'ok' if lc.get('ok') else 'FAILED (exit %s)' % lc.get('exit')}"
+              + (f", repo {human(lc.get('repo_bytes'))}" if lc.get("repo_bytes") is not None else ""))
+    else:
+        print("  last check: never")
+    items = d.get("items")
+    if isinstance(items, dict):
+        print("  items:      " + ", ".join(f"{k} {v}" for k, v in items.items()))
+    if d.get("side", "user") == "user":
+        print(f"  chromium profile last copied: {when(d.get('chromium_last_ok'))}")
+    problems = []
+    if not fresh:
+        problems.append("no good backup in the last 36 h")
+    if not check_ok:
+        problems.append("the last restic check failed")
+    print("  verdict:    " + ("OK" if good else "ATTENTION: " + "; ".join(problems)))
+    sys.exit(0 if good else 1)
+
+cmds = {"write-last": cmd_write_last, "write-check": cmd_write_check, "check-due": cmd_check_due,
+        "repo-bytes": cmd_repo_bytes, "summary": cmd_summary, "manifest": cmd_manifest, "sqlite": cmd_sqlite,
+        "estimate": cmd_estimate, "status": cmd_status}
+cmds[sys.argv[1]](sys.argv[2:])
+PYEOF
+pyh() { "$py" -I -c "$PYCODE" "$@"; }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Lists
+
+inc_group=() inc_path=()
+# resolve_includes [quiet]: includes.txt + gitignored .env files under ~/dev/* -> inc_group/inc_path (real paths).
+resolve_includes() {
+  local quiet=${1:-} group path line n=0 m real
+  local -A seen=()
+  [[ -r $includes ]] || die 2 "missing $includes"
+  while IFS= read -r line || [[ -n $line ]]; do
+    n=$((n + 1))
+    line=${line%%$'\r'}
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    read -r group path <<<"$line"
+    case $group in signins|data) ;; *) die 2 "includes.txt:$n: unknown group '$group' (signins, data)" ;; esac
+    case $path in \~/*) path=$HOME/${path#\~/} ;; /*) ;; *) die 2 "includes.txt:$n: path must start with ~/ or /" ;; esac
+    local -a matches=()
+    # compgen -G: glob expansion without word splitting; nothing when nothing matches (or a literal path is missing).
+    shopt -s globstar
+    mapfile -t matches < <(compgen -G "$path" || true)
+    shopt -u globstar
+    if (( ${#matches[@]} == 0 )); then
+      [[ -n $quiet ]] || note "skip (missing): ${path/#"$HOME"/\~}"
+      continue
+    fi
+    for m in "${matches[@]}"; do
+      real=$(readlink -f -- "$m" 2>/dev/null) || real=
+      if [[ -z $real || ! -e $real ]]; then
+        [[ -n $quiet ]] || note "skip (missing): ${m/#"$HOME"/\~}"
+        continue
+      fi
+      [[ -n ${seen[$real]:-} ]] && continue
+      seen[$real]=1
+      inc_group+=("$group") inc_path+=("$real")
+    done
+  done <"$includes"
+
+  # Services' secrets: every gitignored .env / .env.* (not .env.example) in each ~/dev/* repo, backed up live.
+  local d top f name
+  local -A tops=()
+  for d in "$HOME"/dev/*/; do
+    real=$(readlink -f -- "$d") || continue
+    top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || continue
+    [[ -n ${tops[$top]:-} ]] && continue
+    tops[$top]=1
+    while IFS= read -r -d '' f; do
+      [[ /$f/ == */node_modules/* ]] && continue
+      name=${f##*/}
+      [[ $name == .env || ( $name == .env.* && $name != .env.example ) ]] || continue
+      [[ -f $top/$f ]] || continue
+      real=$(readlink -f -- "$top/$f") || continue
+      [[ -n ${seen[$real]:-} ]] && continue
+      seen[$real]=1
+      inc_group+=(data) inc_path+=("$real")
+    done < <(git -C "$top" ls-files -z --others --ignored --exclude-standard -- ':(glob)**/.env' ':(glob)**/.env.*' 2>/dev/null)
+  done
+}
+
+# Escape restic/filepath.Match metacharacters so a real path is matched literally.
+glob_escape() { printf '%s\n' "$1" | sed 's/[][*?\\]/\\&/g'; }
+
+# write_excludes <file>: excludes.txt with ~/ expanded, plus the live SQLite files staged this run.
+write_excludes() {
+  local out=$1 line db
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    case $line in \~/*) line=$HOME/${line#\~/} ;; esac
+    printf '%s\n' "$line"
+  done <"$excludes" >"$out"
+  for db in "${sqlite_live[@]}"; do
+    db=$(glob_escape "$db")
+    printf '%s\n' "$db" "$db-wal" "$db-shm" "$db-journal" >>"$out"
+  done
+}
+
+# Lines of excludes.txt under agent-lab/chromium/, as rsync patterns anchored at the profile root: the caches left
+# out of the staged copy are the same ones restic would skip.
+chromium_rsync_excludes() {
+  sed -n 's#^agent-lab/chromium/#/#p' "$excludes"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Staging (consistent copies of live data). Each step sets items[<name>]; nothing here aborts the run.
+
+declare -A items=()
+sqlite_live=()
+
+stage_hermes() {
+  local log
+  if ! have hermes; then warn "hermes: command not found"; items[hermes]=failed; return 0; fi
+  # -k 0: never prune other zips. Output names files and paths: kept out of the journal unless it fails.
+  if ! log=$(hermes backup -o "$stage/hermes.zip" -k 0 2>&1) || [[ ! -s $stage/hermes.zip ]]; then
+    warn "hermes backup failed:"; printf '%s\n' "$log" | tail -n 5 >&2
+    rm -f "$stage/hermes.zip"; items[hermes]=failed; return 0
+  fi
+  # Info-ZIP keeps the stored modes; unzipped so restic dedupes file by file night to night.
+  mkdir -m 700 "$stage/hermes"
+  if ! unzip -q "$stage/hermes.zip" -d "$stage/hermes" >/dev/null; then
+    warn "unzip of the Hermes backup failed"; items[hermes]=failed
+  else
+    items[hermes]=ok
+  fi
+  rm -f "$stage/hermes.zip"
+}
+
+stage_sqlite() {
+  local i p status path failed=0
+  local -a dbs=()
+  for i in "${!inc_path[@]}"; do
+    p=${inc_path[$i]}
+    if [[ -f $p ]]; then
+      [[ $p == *.db ]] && dbs+=("$p")
+    elif [[ -d $p ]]; then
+      while IFS= read -r -d '' path; do dbs+=("$path"); done < <(
+        find "$p" \( -path "$chromium_real" -o -name node_modules -o -name .venv -o -name __pycache__ \) -prune \
+          -o -type f -name '*.db' -print0 2>/dev/null)
+    fi
+  done
+  if (( ${#dbs[@]} == 0 )); then items[sqlite]=ok; return 0; fi
+  while IFS=$'\t' read -r status path; do
+    case $status in
+      ok) sqlite_live+=("$path") ;;
+      # Excluded live as well: a raw copy of a live database can be torn; the run reports incomplete instead.
+      failed) sqlite_live+=("$path"); failed=1 ;;
+      outside) note "sqlite outside \$HOME, backed up live: $path" ;;
+      notsqlite) ;;  # some other *.db format: backed up live as an ordinary file
+    esac
+  done < <(printf '%s\0' "${dbs[@]}" | pyh sqlite "$stage/home" "$HOME")
+  items[sqlite]=$([[ $failed == 0 ]] && echo ok || echo failed)
+}
+
+chromium_running() {
+  local prof=$1 lock pid lhost
+  pgrep -u "$(id -u)" -f -- "--user-data-dir=$prof( |\$)" >/dev/null 2>&1 && return 0
+  # Chromium's own lock: a symlink to "<host>-<pid>"; stale when that process is gone.
+  if lock=$(readlink "$prof/SingletonLock" 2>/dev/null); then
+    pid=${lock##*-} lhost=${lock%-*}
+    [[ $lhost == "$(hostname)" && $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+stage_chromium() {
+  local dest
+  if [[ ! -d $chromium_real ]]; then items[chromium]=skipped; return 0; fi
+  if chromium_running "$chromium_real"; then items[chromium]=skipped-running; return 0; fi
+  dest=$stage/home/${chromium_real#"$HOME"/}
+  mkdir -p "$dest"
+  if ! rsync -a --exclude-from=<(chromium_rsync_excludes) "$chromium_real/" "$dest/"; then
+    warn "copying the Chromium profile failed"; rm -rf "$dest"; items[chromium]=failed; return 0
+  fi
+  # Started while we copied: the copy may be torn, so drop it.
+  if chromium_running "$chromium_real"; then rm -rf "$dest"; items[chromium]=skipped-running; return 0; fi
+  items[chromium]=ok
+}
+
+stage_pihole() {
+  local out name
+  if ! have docker || [[ $(docker inspect -f '{{.State.Running}}' pihole 2>/dev/null) != true ]]; then
+    items[pihole]=skipped; return 0
+  fi
+  # --teleporter writes the archive into the working directory and prints its name last.
+  if ! out=$(docker exec -w /tmp pihole pihole-FTL --teleporter 2>&1); then
+    warn "pihole teleporter failed:"; printf '%s\n' "$out" | tail -n 3 >&2; items[pihole]=failed; return 0
+  fi
+  name=$(printf '%s\n' "$out" | tail -n 1)
+  if [[ ! $name =~ ^[A-Za-z0-9._-]+\.zip$ ]]; then
+    warn "pihole teleporter: unexpected output"; items[pihole]=failed; return 0
+  fi
+  mkdir -p "$stage/pihole"
+  if docker cp -q "pihole:/tmp/$name" "$stage/pihole/teleporter.zip" >/dev/null && [[ -s $stage/pihole/teleporter.zip ]]; then
+    items[pihole]=ok
+  else
+    warn "pihole: docker cp of the teleporter archive failed"; items[pihole]=failed
+  fi
+  docker exec pihole rm -f "/tmp/$name" >/dev/null 2>&1 || warn "pihole: couldn't remove /tmp/$name in the container"
+}
+
+stage_all() {
+  rm -rf "$stage"
+  mkdir -m 700 "$stage" "$stage/home"
+  chromium_real=$(readlink -f -- "$chromium_profile" 2>/dev/null || printf '%s' "$chromium_profile")
+  stage_hermes
+  stage_sqlite
+  stage_chromium
+  stage_pihole
+  pyh manifest file="$stage/manifest.json" host="$host" home="$HOME" \
+    item.hermes="${items[hermes]}" item.pihole="${items[pihole]}" item.chromium="${items[chromium]}" item.sqlite="${items[sqlite]}"
+  # Staged files are owner-only (Hermes's zip and docker cp keep looser modes); owner x bits stay.
+  chmod -R go-rwx "$stage"
+}
+
+item_args() { local k; for k in hermes pihole chromium sqlite; do printf 'item.%s=%s\n' "$k" "${items[$k]:-failed}"; done; }
+any_item_failed() { local k; for k in "${!items[@]}"; do [[ ${items[$k]} == failed ]] && return 0; done; return 1; }
+
+# ---------------------------------------------------------------------------------------------------------------
+# restic
+
+# Per-run scratch files (restic output, generated lists) live in one 0700 dir under the state dir, removed on exit.
+tmpd=
+tmp() { printf '%s/%s' "$tmpd" "$1"; }
+start_tmp() { tmpd=$(mktemp -d -p "$state" .run.XXXXXX); }
+cleanup_tmp() { [[ -z $tmpd ]] || rm -rf "$tmpd"; return 0; }
+# Only for commands holding the lock (run): staging belongs to whoever holds it.
+cleanup() { rm -rf "$stage"; cleanup_tmp; }
+
+# Dependencies and setup. Exit 2 with the next step when something is missing.
+check_setup() {
+  [[ -x $restic_bin ]] || die 2 "restic not found at $restic_bin (sudo apt install restic)"
+  [[ -r $pwfile ]] || die 2 "no password file $pwfile (write the passphrase from the password manager:
+  install -d -m 700 ${pwfile%/*} && (umask 077; cat > $pwfile))"
+  [[ -x $rclone_bin ]] || die 2 "rclone not found at $rclone_bin"
+  if [[ $repo == rclone:* ]]; then
+    local remote=${repo#rclone:}; remote=${remote%%:*}
+    "$rclone_bin" listremotes 2>/dev/null | grep -qxF "$remote:" ||
+      die 2 "no rclone remote '$remote:' (see 'User steps' in MULTI-PI.md: rclone config create $remote drive scope=drive.file ...)"
+  fi
+  return 0
+}
+
+errf=
+# restic_run <stdout file> <args...>: the common flags every call gets; stderr kept in $errf for classify.
+restic_run() {
+  local out=$1; shift
+  "$restic_bin" -r "$repo" --password-file "$pwfile" -o "rclone.program=$rclone_bin" "$@" >"$out" 2>"$errf"
+}
+
+# classify <restic exit>: map to this script's exit codes, explaining on stderr.
+classify() {
+  case $1 in
+    0) echo 0 ;;
+    3) echo 4 ;;
+    10) warn "the repository doesn't exist yet: run pi-backup init"; echo 2 ;;
+    11) warn "the repository is locked by another restic process"; echo 1 ;;
+    12) warn "wrong restic password in $pwfile"; echo 2 ;;
+    1) if grep -qiE 'error talking HTTP to rclone|rclone: .*(ERROR|CRITICAL|Failed to)|dial tcp|no such host|connection (refused|reset)|i/o timeout|timed out|TLS handshake|googleapi: Error|unexpected EOF|network is unreachable|Error 50[0-4]|HTTP 50[0-4]' "$errf" 2>/dev/null
+       then warn "repository unreachable (rclone/Drive)"; echo 3; else echo 1; fi ;;
+    *) echo 1 ;;
+  esac
+}
+
+# Restic's errors go to the journal; its stdout (file lists, progress) never does.
+show_err() { [[ -s $errf ]] && tail -n 20 "$errf" | sed 's/^/  restic: /' >&2; return 0; }
+
+retention=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+# Group by host+tags, not the default host+paths: an include appearing or vanishing changes the path set, which
+# would start a new group (full re-read, and old groups that forget never thins out).
+grouping=(--host "$host" --tag pi-backup --group-by "host,tags")
+
+# do_check: forget --prune, check, record last_check. Sets check_code (this script's exit codes).
+check_code=
+do_check() {
+  local rc=0 stats bytes=
+  restic_run /dev/null forget --quiet "${grouping[@]}" "${retention[@]}" --prune || rc=$?
+  if (( rc == 0 )); then
+    restic_run /dev/null check || rc=$?
+  fi
+  (( rc == 0 )) || show_err
+  check_code=$(classify "$rc")
+  if (( rc == 0 )); then
+    # Repo size for pi-status; a failure here doesn't fail the check.
+    stats=$(tmp stats.json)
+    if restic_run "$stats" stats --json --mode raw-data; then bytes=$(pyh repo-bytes "$stats"); fi
+  fi
+  # Unreachable says nothing about the repo's integrity: keep the previous last_check (it's retried when due).
+  if (( check_code == 3 )); then return 0; fi
+  pyh write-check file="$last" host="$host" exit="$check_code" repo_bytes="$bytes"
+}
+
+lock() {
+  mkdir -p "$state" && chmod 700 "$state"
+  exec 9>"$state/lock"
+  flock -n 9 || die 1 "already running"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+# Commands
+
+cmd_list() {
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  resolve_includes quiet
+  local i
+  for i in "${!inc_path[@]}"; do printf '%s\t%s\n' "${inc_group[$i]}" "${inc_path[$i]}"; done
+}
+
+cmd_status() {
+  local -a json=()
+  case ${1:-} in --json) json=(--json) ;; "") ;; *) usage >&2; exit 2 ;; esac
+  (( $# <= 1 )) || { usage >&2; exit 2; }
+  pyh status "$last" "${json[@]}"
+}
+
+cmd_check() {
+  (( $# == 0 )) || { usage >&2; exit 2; }
+  lock
+  trap cleanup_tmp EXIT
+  trap 'exit 130' INT TERM HUP
+  check_setup
+  start_tmp; errf=$(tmp restic.err)
+  say "restic forget --prune + check ($repo)"
+  do_check
+  if (( check_code == 0 )); then note "check ok"; else warn "check failed (exit $check_code)"; fi
+  exit "$check_code"
+}
+
+cmd_init() {
+  local dry=0
+  case ${1:-} in --dry-run) dry=1 ;; "") ;; *) usage >&2; exit 2 ;; esac
+  (( $# <= 1 )) || { usage >&2; exit 2; }
+  local udir=$HOME/.config/systemd/user u rc=0
+  if (( dry )); then
+    say "init (dry run): repo $repo"
+    if [[ -x $restic_bin && -r $pwfile ]]; then
+      mkdir -p "$state" && chmod 700 "$state"
+      trap cleanup_tmp EXIT; start_tmp; errf=$(tmp restic.err)
+      restic_run /dev/null cat config || rc=$?
+      case $rc in 0) note "repo exists: nothing to create" ;; 10) note "[dry-run] restic init" ;;
+                  *) note "can't tell whether the repo exists (restic exit $rc)"; show_err ;; esac
+    else
+      note "[dry-run] restic cat config, then restic init if it doesn't exist (restic or password file missing now)"
+    fi
+    for u in pi-backup.service pi-backup.timer; do note "[dry-run] ln -sfn $units/$u $udir/$u"; done
+    note "[dry-run] systemctl --user daemon-reload && systemctl --user enable --now pi-backup.timer"
+    return 0
+  fi
+  check_setup
+  mkdir -p "$state" && chmod 700 "$state"
+  trap cleanup_tmp EXIT; start_tmp; errf=$(tmp restic.err)
+  say "repo $repo"
+  restic_run /dev/null cat config || rc=$?
+  if (( rc == 0 )); then
+    note "exists"
+  elif (( rc == 10 )); then
+    rc=0; restic_run /dev/null init || rc=$?
+    if (( rc != 0 )); then show_err; die "$(classify "$rc")" "restic init failed"; fi
+    note "created"
+  else
+    show_err; local code; code=$(classify "$rc"); die "$code" "couldn't open the repo (restic exit $rc)"
+  fi
+  say "systemd user timer"
+  mkdir -p "$udir"
+  for u in pi-backup.service pi-backup.timer; do ln -sfn "$units/$u" "$udir/$u"; done
+  systemctl --user daemon-reload
+  systemctl --user enable --now pi-backup.timer
+  note "enabled: $(systemctl --user show -p NextElapseUSecRealtime --value pi-backup.timer 2>/dev/null || true)"
+}
+
+cmd_run() {
+  local dry=0
+  case ${1:-} in --dry-run) dry=1 ;; "") ;; *) usage >&2; exit 2 ;; esac
+  (( $# <= 1 )) || { usage >&2; exit 2; }
+  lock
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM HUP
+  local started rc=0 code out ff xf
+  started=$(date -Iseconds)
+  start_tmp; errf=$(tmp restic.err)
+
+  # A real run records even a setup failure in last.json, so pi-status shows why the night failed.
+  if (( !dry )); then
+    local setup_rc=0
+    (check_setup) || setup_rc=$?
+    if (( setup_rc )); then
+      pyh write-last file="$last" host="$host" started="$started" exit="$setup_rc" >/dev/null
+      exit "$setup_rc"
+    fi
+    # Removes only stale locks (a run killed mid-way); a live lock makes backup fail with 11 below.
+    restic_run /dev/null unlock || rc=$?
+    if (( rc != 0 )); then
+      show_err; code=$(classify "$rc")
+      pyh write-last file="$last" host="$host" started="$started" exit="$code" >/dev/null
+      exit "$code"
+    fi
+  fi
+
+  say "staging"
+  resolve_includes
+  stage_all
+  note "hermes ${items[hermes]}, sqlite ${items[sqlite]} (${#sqlite_live[@]} files), chromium ${items[chromium]}, pihole ${items[pihole]}"
+
+  ff=$(tmp files-from); xf=$(tmp excludes); out=$(tmp restic.out)
+  printf '%s\n' "${inc_path[@]}" "$stage" >"$ff"
+  write_excludes "$xf"
+  local backup_args=(backup --json --ignore-inode --ignore-ctime "${grouping[@]}" --files-from-verbatim "$ff" --exclude-file "$xf")
+
+  if (( dry )); then
+    local i
+    say "would back up (${#inc_path[@]} paths + staging)"
+    for i in "${!inc_path[@]}"; do note "${inc_group[$i]}"$'\t'"${inc_path[$i]/#"$HOME"/\~}"; done
+    note "staging: hermes/ home/ pihole/ manifest.json ($(du -sh "$stage" | cut -f1))"
+    if [[ -x $restic_bin && -r $pwfile ]] && restic_run "$out" "${backup_args[@]:0:1}" --dry-run "${backup_args[@]:1}" &&
+       pyh summary "$out"; then
+      :
+    else
+      [[ -x $restic_bin && -r $pwfile ]] || note "(restic or its password file is missing: estimating instead)"
+      show_err
+      pyh estimate "$ff" "$xf"
+    fi
+    any_item_failed && { warn "a staging item failed"; exit 4; }
+    exit 0
+  fi
+
+  say "restic backup"
+  restic_run "$out" "${backup_args[@]}" || rc=$?
+  code=$(classify "$rc")
+  (( rc == 0 )) || show_err
+  if (( code == 0 )) && any_item_failed; then code=4; fi
+
+  # A snapshot exists (exit 0 or 3): apply retention. No prune here; that's the weekly check's job.
+  if (( rc == 0 || rc == 3 )); then
+    local frc=0
+    restic_run /dev/null forget --quiet "${grouping[@]}" "${retention[@]}" || frc=$?
+    if (( frc != 0 )); then
+      show_err; warn "restic forget failed"
+      local fcode; fcode=$(classify "$frc")
+      (( fcode == 3 )) && code=3 || code=1
+    fi
+  fi
+
+  local -a iargs
+  mapfile -t iargs < <(item_args)
+  pyh write-last file="$last" host="$host" started="$started" exit="$code" out="$out" "${iargs[@]}" | sed 's/^/  /'
+
+  local final=$code
+  # Exit 4 still made a snapshot: an item failing every night mustn't stop prune and check from ever running.
+  if (( code == 0 || code == 4 )) && pyh check-due "$last"; then
+    say "weekly: restic forget --prune + check"
+    do_check
+    if (( check_code == 0 )); then note "check ok"; else warn "check failed (exit $check_code)"; final=$check_code; fi
+  fi
+  if (( final == 0 )); then note "done"; else warn "finished with exit $final"; fi
+  exit "$final"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
+
+case ${1:-} in
+  init)   shift; cmd_init "$@" ;;
+  run)    shift; cmd_run "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  check)  shift; cmd_check "$@" ;;
+  list)   shift; cmd_list "$@" ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

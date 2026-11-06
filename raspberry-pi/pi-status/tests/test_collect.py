@@ -858,3 +858,106 @@ def test_mail_args(action, body, args):
 ])
 def test_mail_output(stdout, expected):
     assert collect.mail_output(stdout) == expected
+
+
+# ---------- backup (pi-backup's last.json, schema in machine-setup/raspberry-pi/MULTI-PI.md "Interfaces") ----------
+
+from datetime import datetime, timezone  # noqa: E402
+
+NOW = 1_800_000_000.0
+
+
+def iso(hours_ago: float) -> str:
+    return datetime.fromtimestamp(NOW - hours_ago * 3600, timezone.utc).isoformat()
+
+
+def last_json(ok_hours: float | None = 3.0, run_ok=True, run_exit=0, check_ok=True, check_hours: float | None = 48.0,
+              chromium="ok", chromium_hours: float | None = 3.0) -> dict:
+    return {
+        "schema": 1, "side": "user", "host": "pi", "updated": iso(1),
+        "last_run": {"started": iso(1.1), "finished": iso(ok_hours if run_ok and ok_hours is not None else 1), "ok": run_ok,
+                     "exit": run_exit, "snapshot": "1a2b3c4d" if run_ok else None, "bytes_added": 1000,
+                     "bytes_total": 5000, "files_new": 1, "files_changed": 2, "duration_s": 60},
+        "last_ok": {"finished": iso(ok_hours), "snapshot": "1a2b3c4d", "bytes_total": 5000} if ok_hours is not None else None,
+        "last_check": {"finished": iso(check_hours), "ok": check_ok, "exit": 0 if check_ok else 1, "repo_bytes": 9000}
+        if check_hours is not None else None,
+        "items": {"hermes": "ok", "pihole": "ok", "chromium": chromium, "sqlite": "ok"},
+        "chromium_last_ok": iso(chromium_hours) if chromium_hours is not None else None,
+    }
+
+
+@pytest.fixture
+def backup_file(tmp_path, monkeypatch):
+    path = tmp_path / "last.json"
+    monkeypatch.setenv(collect.BACKUP_SIDES["user"][2], str(path))
+    monkeypatch.setenv(collect.BACKUP_TIMER_ENV, "on")
+    return path
+
+
+def side(path, data) -> dict:
+    if data is not None:
+        path.write_text(json.dumps(data) if isinstance(data, dict) else data)
+    return collect.backup_side("user", NOW)
+
+
+def test_backup_fresh_is_ok_with_sizes(backup_file):
+    b = side(backup_file, last_json())
+    assert b["state"] == "ok" and b["problems"] == []
+    assert b["last_ok_age_s"] == pytest.approx(3 * 3600) and b["bytes_total"] == 5000 and b["bytes_added"] == 1000
+    assert b["check_ok"] is True and b["repo_bytes"] == 9000 and b["timer"] == "on"
+
+
+def test_backup_missing_file_with_timer_on_never_ran(backup_file):
+    b = side(backup_file, None)
+    assert b["state"] == "not set up" and b["problems"] == ["never ran"]
+
+
+def test_backup_missing_file_without_timer_is_not_set_up(backup_file, monkeypatch):
+    monkeypatch.setenv(collect.BACKUP_TIMER_ENV, "not set up")
+    assert side(backup_file, None)["problems"] == ["not set up"]
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1, 2]"])
+def test_backup_unreadable_file_is_bad_not_a_crash(backup_file, text):
+    b = side(backup_file, text)
+    assert b["state"] == "bad" and b["problems"] == ["status file unreadable"]
+
+
+def test_backup_stale_after_36_hours(backup_file):
+    assert side(backup_file, last_json(ok_hours=35))["state"] == "ok"
+    b = side(backup_file, last_json(ok_hours=40))
+    assert b["state"] == "bad" and "last good backup 40 h ago" in b["problems"]
+
+
+@pytest.mark.parametrize("code, state, words", [
+    (1, "bad", "last run failed"), (3, "bad", "last run Drive unreachable"), (4, "warn", "last run incomplete")])
+def test_backup_failed_run_says_why(backup_file, code, state, words):
+    b = side(backup_file, last_json(run_ok=False, run_exit=code))
+    assert b["state"] == state and words in b["problems"]
+
+
+def test_backup_never_succeeded(backup_file):
+    b = side(backup_file, last_json(ok_hours=None, run_ok=False, run_exit=1, check_hours=None))
+    assert b["state"] == "bad" and "no good backup yet" in b["problems"]
+
+
+def test_backup_failed_check_is_bad_and_old_check_warns(backup_file):
+    assert "restic check failed" in side(backup_file, last_json(check_ok=False))["problems"]
+    b = side(backup_file, last_json(check_hours=9 * 24))
+    assert b["state"] == "warn" and b["problems"] == ["no restic check in over a week"]
+
+
+def test_backup_chromium_not_copied_for_two_weeks_warns(backup_file):
+    assert side(backup_file, last_json(chromium="skipped-running", chromium_hours=24))["state"] == "ok"
+    b = side(backup_file, last_json(chromium="skipped-running", chromium_hours=15 * 24))
+    assert b["state"] == "warn" and "lab browser profile" in b["problems"][0]
+    assert side(backup_file, last_json(chromium="skipped", chromium_hours=None))["state"] == "ok"  # a worker: no profile
+
+
+def test_backup_timer_off_warns(backup_file, monkeypatch):
+    monkeypatch.setenv(collect.BACKUP_TIMER_ENV, "off")
+    assert side(backup_file, last_json())["problems"] == ["timer off"]
+
+
+def test_backup_lists_both_sides():
+    assert [s["side"] for s in collect.backup()["sides"]] == ["user", "system"]

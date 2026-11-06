@@ -1,0 +1,15 @@
+# Nightly user-side backup (restic to Drive). Linked into ~/.config/systemd/user/ by `pi-backup init`; started by
+# pi-backup.timer. Runs from the repo checkout; see raspberry-pi/MULTI-PI.md ("Interfaces").
+[Unit]
+Description=pi-backup: nightly encrypted backup of this Pi's user-side state (restic to Google Drive)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/dev/machine-setup/raspberry-pi/backup/pi-backup run
+# User units don't get the login shell's PATH: ~/.local/bin is for hermes. restic and rclone use absolute paths.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Nice=10
+IOSchedulingClass=idle
+# A hung rclone/Drive call shouldn't block the next night's run forever.
+TimeoutStartSec=6h

@@ -1,0 +1,37 @@
+# pi-backup (user side): what goes in the user restic repo, one "<group> <path>" per line.
+# Groups: signins (logins, tokens, keys), data (personal and app data). pi-restore-state --only picks groups.
+# Paths start with ~/ and may use globs; symlinks are resolved to real paths; missing items are skipped with a note.
+# Not listed here, added by pi-backup itself:
+#   - Hermes (group hermes): `hermes backup`, unzipped into staging; live ~/.hermes is never read.
+#   - SQLite: every *.db under these paths is copied with SQLite's backup API into staging (the live file is excluded).
+#   - the lab Chromium profile (copied without caches while Chromium is closed) and Pi-hole's Teleporter export.
+#   - every gitignored .env / .env.* in the ~/dev/* repos (group data; e.g. ~/dev/pihole/.env).
+# Exclusions (logs, caches, DreamBase photos, ...) are in excludes.txt. No personal values here: public repo.
+
+# Sign-ins
+signins ~/.config/gws
+signins ~/.config/rclone/rclone.conf
+signins ~/.config/gh
+signins ~/.config/gcloud
+signins ~/.config/todoist-cli
+signins ~/.claude/.credentials.json
+# Claude Code's settings and MCP server tokens (plaintext).
+signins ~/.claude.json
+signins ~/.ssh/id_ed25519*
+signins ~/.ssh/known_hosts
+signins ~/.ssh/config
+signins ~/.ssh/authorized_keys
+# agent-browser: saved logins (auth/) and the key that decrypts them.
+signins ~/.agent-browser
+
+# Data
+# Claude Code memory and transcripts.
+data ~/.claude/projects
+# agent-lab: the `me` store (facts.db, pending.db), agent logs and state, the lab Chromium profile (staged).
+data ~/.local/share/agent-lab
+data ~/.local/share/mail
+data ~/dev/rei/inputs
+data ~/dev/websites/dreambase/dreambase_data.json
+data ~/.local/share/dreambase
+# OpenClaw is on hold, but its state (config, credentials, agents, workspace) is kept.
+data ~/.openclaw

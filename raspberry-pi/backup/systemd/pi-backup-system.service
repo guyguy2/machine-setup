@@ -1,0 +1,22 @@
+# Nightly restic backup of root-only files (raspberry-pi/backup/pi-backup-system). Installed to
+# /etc/systemd/system/ by `sudo raspberry-pi/backup/setup`; runs only the root-owned copy, never the repo.
+[Unit]
+Description=pi-backup: nightly restic backup of root-only files
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/pi-backup/pi-backup-system run
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# root never touches guy's files, and only these paths are writable
+InaccessiblePaths=/home
+ProtectSystem=strict
+# "-": a missing path doesn't stop the unit from starting (setup creates them; pi-backup-system then reports why)
+ReadWritePaths=-/var/lib/pi-backup -/root/.cache/restic -/root/.config/rclone
+PrivateTmp=yes
+NoNewPrivileges=yes
+Nice=10
+IOSchedulingClass=idle
+# A oneshot has no start timeout; a hung rclone/Drive call shouldn't block the next night's run forever.
+TimeoutStartSec=6h

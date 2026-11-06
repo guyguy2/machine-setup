@@ -1,6 +1,6 @@
 ---
 name: pi-checkup
-description: Scan this Raspberry Pi for anything that needs attention (CPU, memory, disk, temperature, failed or missing services, websites, Docker, git repos, pending updates, security exposure, the Hermes/OpenClaw agents and their logins, drift from the machine-setup snapshot) and report system stats, what's running and what to do. Runs the deterministic `pi-checkup` script, then sends one read-only agent per domain that has warnings. Use when the user asks to scan/check the Pi, for a status update or health check, "anything weird", "what's running", "any drift", "what needs updating", or runs /pi-checkup.
+description: Scan this Raspberry Pi for anything that needs attention (CPU, memory, disk, temperature, failed or missing services, websites, Docker, git repos, pending updates, security exposure, the Hermes/OpenClaw agents and their logins, the nightly backup, drift from the machine-setup snapshot) and report system stats, what's running and what to do. Runs the deterministic `pi-checkup` script, then sends one read-only agent per domain that has warnings. Use when the user asks to scan/check the Pi, for a status update or health check, "anything weird", "what's running", "any drift", "what needs updating", or runs /pi-checkup.
 ---
 
 # Pi checkup
@@ -18,7 +18,8 @@ pi-checkup > <scratchpad>/checkup.txt 2>&1; echo "exit $?"
 - Lines are `OK`, `INFO` or `WARN <message> [key]`. The last line is `ALL OK` (exit 0) or
   `WARNINGS health=1 repos=3 ...` (exit 1): those are the domains with warnings.
 - Domains: health, services (units, timers, tailnet routes, websites), docker, repos, updates, security, agents
-  (Hermes, OpenClaw, shared skills, gws/gh/Claude logins), drift (snapshot and backup coverage).
+  (Hermes, OpenClaw, shared skills, gws/gh/Claude logins), backup (nightly restic backup: age, check, timers,
+  root-side copies), drift (snapshot and backup coverage).
 
 ## 2. One agent per domain with warnings
 
@@ -40,7 +41,9 @@ Prompt for each (fill in the domain and paste its WARN lines verbatim):
 
 Domain hints to add to the prompt: **agents**: load the `openclaw` and `hermes` skills first. Agents run one at a
 time (started from pi-status), so a stopped agent is normal. **docker**: load the `pihole` skill. **security**: the
-LAN ports meant to be open are listed at the top of the script. **drift/repos**: `save.sh` and `restore.sh` are in
+LAN ports meant to be open are listed at the top of the script. **backup**: read
+`~/dev/machine-setup/raspberry-pi/MULTI-PI.md` (Interfaces) and `journalctl --user -u pi-backup -n 80`; never run
+`pi-backup run`/`check` or `setup` (they write), only `status`. **drift/repos**: `save.sh` and `restore.sh` are in
 `~/dev/machine-setup/raspberry-pi`. Uncommitted work there may belong to another session, so don't suggest
 discarding it.
 

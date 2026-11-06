@@ -1,0 +1,557 @@
+#!/usr/bin/env bash
+# pi-backup-system: nightly restic backup of this Pi's root-only files (system-includes.txt: labvault, the systemd
+# credential key, /etc/agent-lab, SSH host keys, agent-lab sudoers) to rclone:gdrive-backup:pi-backups/<host>/system.
+# The timer runs the root-owned copy in /usr/local/lib/pi-backup/ that `sudo raspberry-pi/backup/setup` installs;
+# a run as root from the repo refuses, because guy (and so every agent) can edit the repo.
+# guy is in adm and can read the system journal, so nothing here prints file names: no --verbose, restic's JSON
+# output is parsed rather than echoed, and paths in error text are blanked.
+# Contract (paths, env overrides, last.json, exit codes): raspberry-pi/MULTI-PI.md, "Interfaces".
+set -euo pipefail
+umask 077
+self=$(readlink -f -- "${BASH_SOURCE[0]}")  # before the cd: $0 may be relative
+cd /
+# The unit's PATH, also for manual runs: no Homebrew or ~/.local tools as root.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+usage() {
+  cat <<'EOF'
+usage: pi-backup-system <command> [options]     (as root: sudo /usr/local/lib/pi-backup/pi-backup-system ...)
+  init [--dry-run]    create the system restic repo if missing, enable pi-backup-system.timer
+  run [--dry-run]     back up system-includes.txt, apply retention (7 daily, 4 weekly, 6 monthly), write
+                      /var/lib/pi-backup/last.json; prune + check when the last check is over 6.5 days old.
+                      --dry-run: what and how much, writes nothing (runs as any user; problems are warnings)
+  status [--json]     show last.json; exit 0 if the last good backup is under 36 h old and the last check passed
+  check               forget --prune, then restic check; updates last_check
+exit: 0 ok, 1 failed, 2 usage/setup/unsafe files, 3 repo unreachable, 4 finished but incomplete
+overrides (drills and tests; the unit sets none): PI_BACKUP_REPO PI_BACKUP_PASSWORD_FILE PI_BACKUP_RESTIC
+  PI_BACKUP_RCLONE PI_BACKUP_STATE_DIR PI_BACKUP_HOST
+EOF
+}
+
+say() { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die() { local code=$1; shift; printf 'pi-backup-system: %s\n' "$*" >&2; exit "$code"; }
+
+here=${self%/*}
+includes=$here/system-includes.txt
+py=/usr/bin/python3
+unit_timer=/etc/systemd/system/pi-backup-system.timer
+host=${PI_BACKUP_HOST:-$(hostname -s)}
+repo=${PI_BACKUP_REPO:-rclone:gdrive-backup:pi-backups/$host/system}
+pwfile=${PI_BACKUP_PASSWORD_FILE:-/root/.config/pi-backup/restic-password}
+restic=${PI_BACKUP_RESTIC:-/usr/bin/restic}
+rclone=${PI_BACKUP_RCLONE:-/usr/local/lib/pi-backup/rclone}
+state=${PI_BACKUP_STATE_DIR:-/var/lib/pi-backup}
+last=$state/last.json
+rclone_conf=/root/.config/rclone/rclone.conf
+keep=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+# One retention group per host: grouping by paths (restic's default) would start a new group, never thinned,
+# whenever a glob in system-includes.txt matches one more or one fewer file.
+scope=(--host "$host" --tag pi-backup --group-by "host,tags")
+
+# restic and rclone read their settings from the environment too; only the flags below may steer them.
+for v in "${!RESTIC_@}" "${!RCLONE_@}"; do unset "$v"; done
+if (( EUID == 0 )); then
+  # sudo may keep the caller's HOME; root's cache and rclone.conf must come from /root, never /home.
+  export HOME=/root
+  unset XDG_CACHE_HOME XDG_CONFIG_HOME
+fi
+
+# Shared Python (always /usr/bin/python3 -I: no user site-packages, no PYTHON* variables, no cwd on sys.path).
+read -r -d '' PY <<'PYEOF' || true
+import datetime, json, os, re, sys, tempfile
+
+def now():
+    return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+
+def parse_time(s):
+    try:
+        t = datetime.datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else None
+
+def load(path):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+PATH_RE = re.compile(r'(?<![\w.~-])/[^\s"\':,()\[\]]*')
+QUOTED_RE = re.compile(r'"[^"]*"')
+
+def scrub(s):
+    # error text goes to the journal, which guy can read: blank paths and quoted names
+    return QUOTED_RE.sub('"..."', PATH_RE.sub("<path>", s))
+
+def summary():
+    # stdin: `restic backup --json` stdout. Status lines name files: read, never printed.
+    s = None
+    for line in sys.stdin:
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(m, dict) and m.get("message_type") == "summary":
+            s = m
+    if s is None:
+        return 0
+    def n(k):
+        v = s.get(k)
+        return str(v) if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else "-"
+    snap = s.get("snapshot_id")
+    snap = snap[:8] if isinstance(snap, str) and re.fullmatch(r"[0-9a-f]{8,64}", snap) else "-"
+    print(snap, n("files_new"), n("files_changed"), n("data_added"), n("total_bytes_processed"),
+          n("total_files_processed"))
+    return 0
+
+def errors():
+    # stdin: restic stderr. Prints each error once, paths blanked, at most 20 lines.
+    out = []
+    for line in sys.stdin:
+        line = line.rstrip("\n")
+        if not line.strip():
+            continue
+        try:
+            m = json.loads(line)
+        except ValueError:
+            m = None
+        if isinstance(m, dict):
+            t = m.get("message_type")
+            if t == "error":
+                e = m.get("error")
+                msg = e.get("message", "") if isinstance(e, dict) else str(e)
+                out.append("restic error during %s: %s" % (m.get("during", "?"), scrub(str(msg))))
+            elif t == "exit_error":
+                out.append("restic: %s" % scrub(str(m.get("message", ""))))
+            continue
+        out.append("restic: " + scrub(line))
+    seen, uniq = set(), []
+    for l in out:
+        if l not in seen:
+            seen.add(l)
+            uniq.append(l)
+    for l in uniq[:20]:
+        print(l)
+    if len(uniq) > 20:
+        print("restic: ... and %d more error lines" % (len(uniq) - 20))
+    return 0
+
+def stats():
+    # stdin: `restic stats --json --mode raw-data`
+    try:
+        v = json.load(sys.stdin).get("total_size")
+    except (ValueError, AttributeError):
+        v = None
+    print(v if isinstance(v, int) and v >= 0 else "-")
+    return 0
+
+def write():
+    # argv: path side host key=value...; keeps last_ok/last_check from the previous file unless replaced
+    path, side, host = sys.argv[2:5]
+    kv = dict(a.split("=", 1) for a in sys.argv[5:])
+    num = lambda k: int(kv[k]) if kv.get(k, "").isdigit() else None
+    txt = lambda k: kv.get(k) or None
+    prev = load(path)
+    doc = {"schema": 1, "side": side, "host": host, "updated": now(),
+           "last_run": prev.get("last_run"), "last_ok": prev.get("last_ok"), "last_check": prev.get("last_check")}
+    if "run_started" in kv:
+        ok = kv.get("run_ok") == "1"
+        doc["last_run"] = {"started": txt("run_started"), "finished": txt("run_finished"), "ok": ok,
+                           "exit": num("run_exit"), "snapshot": txt("snapshot"), "bytes_added": num("bytes_added"),
+                           "bytes_total": num("bytes_total"), "files_new": num("files_new"),
+                           "files_changed": num("files_changed"), "duration_s": num("duration_s")}
+        if ok:
+            doc["last_ok"] = {"finished": txt("run_finished"), "snapshot": txt("snapshot"),
+                              "bytes_total": num("bytes_total")}
+    if "check_finished" in kv:
+        doc["last_check"] = {"finished": txt("check_finished"), "ok": kv.get("check_ok") == "1",
+                             "exit": num("check_exit"), "repo_bytes": num("repo_bytes")}
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".last.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(doc, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fchmod(f.fileno(), 0o644)
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return 0
+
+def check_due():
+    # exit 0 when the weekly prune + check is due: last_check missing, failed, or older than 6.5 days
+    lc = load(sys.argv[2]).get("last_check")
+    t = parse_time(lc.get("finished")) if isinstance(lc, dict) else None
+    if t is None or lc.get("ok") is False:
+        return 0
+    return 0 if datetime.datetime.now(datetime.timezone.utc) - t > datetime.timedelta(days=6.5) else 1
+
+def size(n):
+    if not isinstance(n, int):
+        return "?"
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if n < 1024 or unit == "GiB":
+            return ("%d %s" if unit == "B" else "%.1f %s") % (n, unit)
+        n /= 1024
+
+def ago(t):
+    if t is None:
+        return "never"
+    s = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds()
+    if s < 3600:
+        return "%d min ago" % (s // 60)
+    if s < 72 * 3600:
+        return "%.1f h ago" % (s / 3600)
+    return "%d d ago" % (s // 86400)
+
+def status():
+    path, as_json = sys.argv[2], sys.argv[3] == "1"
+    if not os.path.exists(path):
+        print("no system backup recorded yet (%s)" % path, file=sys.stderr)
+        return 1
+    d = load(path)
+    if not d:
+        print("unreadable status file %s" % path, file=sys.stderr)
+        return 1
+    lo = d.get("last_ok") if isinstance(d.get("last_ok"), dict) else {}
+    lc = d.get("last_check") if isinstance(d.get("last_check"), dict) else {}
+    lr = d.get("last_run") if isinstance(d.get("last_run"), dict) else {}
+    t_ok = parse_time(lo.get("finished"))
+    fresh = t_ok is not None and datetime.datetime.now(datetime.timezone.utc) - t_ok < datetime.timedelta(hours=36)
+    check_ok = lc.get("ok") is not False
+    rc = 0 if fresh and check_ok else 1
+    if as_json:
+        json.dump(d, sys.stdout, indent=2)
+        print()
+        return rc
+    print("%s backup of %s (updated %s)" % (d.get("side", "?"), d.get("host", "?"), d.get("updated")))
+    if lr:
+        line = "  last run:   %s (%s) %s (exit %s), %s s" % (
+            lr.get("finished"), ago(parse_time(lr.get("finished"))), "ok" if lr.get("ok") else "FAILED",
+            lr.get("exit"), lr.get("duration_s"))
+        if lr.get("snapshot"):
+            line += ", snapshot %s, +%s, total %s, %s new / %s changed files" % (
+                lr.get("snapshot"), size(lr.get("bytes_added")), size(lr.get("bytes_total")), lr.get("files_new"),
+                lr.get("files_changed"))
+        print(line)
+    else:
+        print("  last run:   never")
+    if lo:
+        print("  last ok:    %s (%s), snapshot %s, %s" % (lo.get("finished"), ago(t_ok), lo.get("snapshot"),
+                                                         size(lo.get("bytes_total"))))
+    else:
+        print("  last ok:    never")
+    if lc:
+        print("  last check: %s (%s) %s, repo %s" % (lc.get("finished"), ago(parse_time(lc.get("finished"))),
+                                                   "ok" if lc.get("ok") else "FAILED", size(lc.get("repo_bytes"))))
+    else:
+        print("  last check: never")
+    print("status: " + ("OK" if rc == 0 else "STALE (no good backup in 36 h)" if check_ok else "CHECK FAILED"))
+    return rc
+
+sys.exit({"summary": summary, "errors": errors, "stats": stats, "write": write, "check-due": check_due,
+          "status": status}[sys.argv[1]]())
+PYEOF
+pyrun() { "$py" -I -c "$PY" "$@"; }
+
+# ---- the ownership self-check: nothing root runs may be changeable by guy ----
+
+problems=()
+# vet <strict> <path>: path, its symlink target and every directory above both must be root-owned, not group/other
+# writable and not under /home; strict=1 also forbids any group/other access to the file itself (secrets).
+vet() {
+  local strict=$1 p=$2 q uid mode bad top
+  [[ $p == /* ]] || { problems+=("$p: not an absolute path"); return; }
+  for q in "$p" "$(readlink -f -- "$p" 2>/dev/null || printf '%s' "$p")"; do
+    case $q in /home|/home/*) problems+=("$q: under /home"); continue ;; esac
+    top=1
+    while :; do
+      if [[ ! -e $q && ! -L $q ]]; then problems+=("$q: missing (or not visible to $(id -un))"); break; fi
+      read -r uid mode < <(stat -c '%u %a' -- "$q")
+      (( uid == 0 )) || problems+=("$q: owned by uid $uid, not root")
+      bad=$(( top && strict ? 8#077 : 8#022 ))
+      if [[ ! -L $q ]] && (( 8#$mode & bad )); then problems+=("$q: mode $mode"); fi
+      [[ $q == / ]] && break
+      q=$(dirname -- "$q"); top=0
+    done
+  done
+}
+
+# self_check <fatal>: exit 2 (fatal=1) or warn (fatal=0) if any file root would use is unsafe.
+self_check() {
+  problems=()
+  vet 0 "$self"; vet 0 "$includes"; vet 0 "$restic"; vet 0 "$rclone"; vet 0 "$py"
+  vet 0 "$(readlink -f /proc/$$/exe)"  # the bash running this (the shebang goes through env)
+  if [[ -e $state ]]; then vet 0 "$state"; else vet 0 "$(dirname -- "$state")"; fi
+  vet 1 "$pwfile"
+  # rclone.conf can name programs for rclone to run (e.g. an sftp remote's ssh command)
+  [[ $repo == rclone:* ]] && vet 1 "$rclone_conf"
+  case $repo in /home|/home/*) problems+=("$repo: repository under /home") ;; esac
+  (( ${#problems[@]} )) || return 0
+  printf '%s\n' "${problems[@]}" | sort -u | sed 's/^/  unsafe: /' >&2
+  if (( $1 )); then
+    die 2 "refusing to run: the files above must be root-only (install with: sudo raspberry-pi/backup/setup)"
+  fi
+  warn "a real run would refuse (exit 2) because of the files above"
+}
+
+need_root() { (( EUID == 0 )) || die 2 "must run as root: sudo $self $*"; }
+
+# need_deps <fatal>: restic, rclone and the password file must be usable.
+need_deps() {
+  local miss=()
+  [[ -x $restic ]] || miss+=("no restic at $restic (sudo apt install restic)")
+  [[ $repo != rclone:* || -x $rclone ]] || miss+=("no rclone at $rclone (re-run: sudo raspberry-pi/backup/setup)")
+  [[ -r $pwfile ]] || miss+=("no readable password file $pwfile (see: sudo raspberry-pi/backup/setup)")
+  (( ${#miss[@]} )) || return 0
+  if (( $1 )); then printf '  %s\n' "${miss[@]}" >&2; die 2 "missing setup"; fi
+  printf 'warning: a real run would stop (exit 2): %s\n' "${miss[@]}" >&2
+  return 1
+}
+
+# load_includes: expand system-includes.txt into paths[]; patterns that match nothing are noted (patterns come
+# from the public list, so naming them is fine; matched file names are never printed).
+paths=()
+counts=()
+load_includes() {
+  local line m
+  [[ -r $includes ]] || die 2 "can't read $includes"
+  paths=(); counts=()
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^[[:space:]]*(#|$) ]] && continue
+    line=${line#"${line%%[![:space:]]*}"}; line=${line%"${line##*[![:space:]]}"}
+    [[ $line == /* ]] || die 2 "system-includes.txt: not an absolute path: $line"
+    case $line in /home|/home/*) die 2 "system-includes.txt: root never reads /home: $line" ;; esac
+    mapfile -t m < <(compgen -G "$line" || true)
+    if (( ${#m[@]} == 0 )) && [[ -e $line || -L $line ]]; then m=("$line"); fi
+    counts+=("${#m[@]}	$line")
+    (( ${#m[@]} )) && paths+=("${m[@]}")
+  done < "$includes"
+  return 0
+}
+
+# r <restic args>: restic with the contract's fixed options.
+r() { "$restic" -r "$repo" --password-file "$pwfile" -o "rclone.program=$rclone" "$@"; }
+
+tmp=
+cleanup() { [[ -z $tmp ]] || rm -rf -- "$tmp"; }
+trap cleanup EXIT
+mk_tmp() { tmp=$(mktemp -d); }
+
+# open_repo: 0 if the repo opens, else prints why and returns the exit code to use (2 or 3).
+open_repo() {
+  local rc=0
+  r cat config >/dev/null 2>"$tmp/err" || rc=$?
+  case $rc in
+    0) return 0 ;;
+    10) say "no repository at $repo yet: run sudo /usr/local/lib/pi-backup/pi-backup-system init" >&2; return 2 ;;
+    12) say "wrong password for $repo (check $pwfile)" >&2; return 2 ;;
+    *) pyrun errors <"$tmp/err" >&2; say "repository unreachable: $repo (restic exit $rc)" >&2; return 3 ;;
+  esac
+}
+
+# net_error <restic stderr file>: restic exits 1 for everything; rclone/Drive trouble means "unreachable" (exit 3).
+# Same pattern as the user side (pi-backup), so both report a Drive outage the same way.
+net_error() {
+  grep -qiE 'error talking HTTP to rclone|rclone: .*(ERROR|CRITICAL|Failed to)|dial tcp|no such host|connection (refused|reset)|i/o timeout|timed out|TLS handshake|googleapi: Error|unexpected EOF|network is unreachable|Error 50[0-4]|HTTP 50[0-4]' "$1" 2>/dev/null
+}
+
+lock() {
+  install -d -m 0755 "$state"
+  exec 9>"$state/lock"
+  flock -n 9 || die 1 "already running"
+}
+
+# prune_and_check: forget --prune, restic check, repo size; sets check_* for last.json. Returns 0 ok, 1 failed,
+# 3 unreachable (then last_check must stay as it was: Drive being down says nothing about the repo).
+check_ok=0; check_finished=; repo_bytes=
+prune_and_check() {
+  local rc=0 prc=0
+  say "prune + check"
+  r forget "${scope[@]}" "${keep[@]}" --prune >/dev/null 2>"$tmp/err.prune" || prc=$?
+  pyrun errors <"$tmp/err.prune" >&2
+  (( prc == 0 )) || say "forget --prune failed (restic exit $prc)" >&2
+  r check >/dev/null 2>"$tmp/err.check" || rc=$?
+  pyrun errors <"$tmp/err.check" >&2
+  if { (( prc == 1 )) && net_error "$tmp/err.prune"; } || { (( rc == 1 )) && net_error "$tmp/err.check"; }; then
+    say "repository unreachable during prune/check; last_check left as it was" >&2
+    return 3
+  fi
+  repo_bytes=$(r stats --json --mode raw-data 2>/dev/null | pyrun stats || true)
+  [[ $repo_bytes == - ]] && repo_bytes=
+  check_finished=$(date -Iseconds)
+  if (( rc == 0 && prc == 0 )); then check_ok=1; say "check: no errors"; return 0; fi
+  check_ok=0; (( rc == 0 )) || say "check FAILED (restic exit $rc)" >&2
+  return 1
+}
+
+cmd_run_dry() {
+  local line n rc=0 snap fnew fchg badd btot ftot bytes
+  say "dry run: system backup of $host to $repo (nothing is written)"
+  while IFS=$'\t' read -r n line; do
+    if (( n )); then say "  $line: $n item(s)"
+    else say "  $line: nothing there, skipped$( (( EUID == 0 )) || printf ' (or not visible to %s)' "$(id -un)")"; fi
+  done < <(printf '%s\n' "${counts[@]}")
+  (( ${#paths[@]} )) || { say "nothing to back up"; return 0; }
+  mk_tmp
+  if need_deps 0; then
+    set +e
+    r backup --dry-run --json "${scope[@]:0:4}" --ignore-inode --ignore-ctime \
+      --files-from-verbatim <(printf '%s\n' "${paths[@]}") 2>"$tmp/err" | pyrun summary >"$tmp/sum"
+    rc=${PIPESTATUS[0]}
+    set -e
+    if (( rc == 0 || rc == 3 )) && [[ -s $tmp/sum ]]; then
+      read -r snap fnew fchg badd btot ftot <"$tmp/sum"
+      (( rc == 0 )) || pyrun errors <"$tmp/err" >&2
+      say "restic dry run: $ftot files, $btot bytes in all; $fnew new and $fchg changed, $badd bytes to upload"
+      return 0
+    fi
+    pyrun errors <"$tmp/err" >&2
+    say "restic dry run failed (exit $rc); estimating with du instead"
+  fi
+  bytes=$(du -scb -- "${paths[@]}" 2>/dev/null | tail -n1 | cut -f1 || true)
+  say "du estimate: ${bytes:-?} bytes$( (( EUID == 0 )) || printf ' (as %s: files only root can read are not counted)' "$(id -un)")"
+  return 0
+}
+
+cmd_run() {
+  local dry=0
+  while (( $# )); do
+    case $1 in --dry-run) dry=1 ;; *) die 2 "run: unknown option $1" ;; esac
+    shift
+  done
+  self_check $(( !dry ))
+  load_includes
+  if (( dry )); then cmd_run_dry; return 0; fi
+  need_root run
+  need_deps 1
+  (( ${#paths[@]} )) || die 2 "system-includes.txt matches nothing"
+  lock
+  mk_tmp
+  local started finished t0 rc=0 code=0 snap='' fnew='' fchg='' badd='' btot='' ftot='' line n
+  started=$(date -Iseconds); t0=$SECONDS
+  while IFS=$'\t' read -r n line; do
+    (( n )) || say "skipped, nothing there: $line"
+  done < <(printf '%s\n' "${counts[@]}")
+
+  open_repo || code=$?
+  if (( code == 0 )); then
+    r unlock >/dev/null 2>"$tmp/err" || pyrun errors <"$tmp/err" >&2
+    set +e
+    r backup --json "${scope[@]:0:4}" --ignore-inode --ignore-ctime \
+      --files-from-verbatim <(printf '%s\n' "${paths[@]}") 2>"$tmp/err" | pyrun summary >"$tmp/sum"
+    rc=${PIPESTATUS[0]}
+    set -e
+    pyrun errors <"$tmp/err" >&2
+    [[ -s $tmp/sum ]] && read -r snap fnew fchg badd btot ftot <"$tmp/sum"
+    case $rc in
+      0) code=0 ;;
+      3) code=4; say "backup incomplete: some files could not be read (restic exit 3)" >&2 ;;
+      10|12) code=2; say "restic can't open the repository (exit $rc)" >&2 ;;
+      *) if (( rc == 1 )) && net_error "$tmp/err"; then code=3; say "repository unreachable during backup (restic exit 1)" >&2
+         else code=1; say "backup failed (restic exit $rc)" >&2; fi ;;
+    esac
+    if (( rc == 0 || rc == 3 )); then
+      local frc=0
+      r forget "${scope[@]}" "${keep[@]}" >/dev/null 2>"$tmp/err" || frc=$?
+      pyrun errors <"$tmp/err" >&2
+      if (( frc )); then say "forget failed (restic exit $frc)" >&2; (( code )) || code=1; fi
+    fi
+  fi
+  finished=$(date -Iseconds)
+  [[ $snap == - ]] && snap=
+  [[ $fnew == - ]] && fnew=; [[ $fchg == - ]] && fchg=; [[ $badd == - ]] && badd=; [[ $btot == - ]] && btot=
+  pyrun write "$last" system "$host" run_started="$started" run_finished="$finished" run_ok=$(( code == 0 )) \
+    run_exit="$code" snapshot="$snap" bytes_added="$badd" bytes_total="$btot" files_new="$fnew" \
+    files_changed="$fchg" duration_s=$(( SECONDS - t0 ))
+  (( code == 0 )) && say "backup ok: snapshot $snap, ${ftot:-?} files, $btot bytes; $fnew new, $fchg changed, $badd bytes added"
+  # exit 4 still saved a snapshot, so the due prune + check runs then too
+  if (( code == 0 || code == 4 )) && pyrun check-due "$last"; then
+    local pcr=0
+    prune_and_check || pcr=$?
+    if (( pcr == 3 )); then
+      (( code )) || code=3
+    else
+      pyrun write "$last" system "$host" check_finished="$check_finished" check_ok="$check_ok" \
+        check_exit="$pcr" repo_bytes="$repo_bytes"
+      (( pcr == 0 )) || code=1
+    fi
+  fi
+  exit "$code"
+}
+
+cmd_check() {
+  (( $# == 0 )) || die 2 "check takes no options"
+  self_check 1
+  need_root check
+  need_deps 1
+  lock
+  mk_tmp
+  local code=0
+  open_repo || code=$?
+  (( code == 0 )) || exit "$code"
+  prune_and_check || code=$?
+  (( code == 3 )) || pyrun write "$last" system "$host" check_finished="$check_finished" check_ok="$check_ok" \
+    check_exit="$code" repo_bytes="$repo_bytes"
+  exit "$code"
+}
+
+cmd_init() {
+  local dry=0 rc=0
+  while (( $# )); do
+    case $1 in --dry-run) dry=1 ;; *) die 2 "init: unknown option $1" ;; esac
+    shift
+  done
+  self_check $(( !dry ))
+  if (( dry )); then
+    say "dry run: init would create $state, create the restic repo $repo if it doesn't exist,"
+    say "  then: systemctl enable --now pi-backup-system.timer"
+    [[ -f $unit_timer ]] || warn "$unit_timer isn't installed: run sudo raspberry-pi/backup/setup first"
+    if need_deps 0; then
+      mk_tmp
+      r cat config >/dev/null 2>"$tmp/err" || rc=$?
+      case $rc in 0) say "  repo exists" ;; 10) say "  repo doesn't exist yet: would run restic init" ;;
+        *) pyrun errors <"$tmp/err" >&2; say "  can't tell whether the repo exists (restic exit $rc)" ;; esac
+    fi
+    return 0
+  fi
+  need_root init
+  need_deps 1
+  [[ -f $unit_timer ]] || die 2 "$unit_timer isn't installed: run sudo raspberry-pi/backup/setup first"
+  lock
+  mk_tmp
+  r cat config >/dev/null 2>"$tmp/err" || rc=$?
+  case $rc in
+    0) say "repo exists: $repo" ;;
+    10) r init >/dev/null 2>"$tmp/err" || { rc=$?; pyrun errors <"$tmp/err" >&2; die 3 "restic init failed (exit $rc)"; }
+        say "created repo $repo" ;;
+    12) die 2 "wrong password for the existing repo $repo (check $pwfile)" ;;
+    *) pyrun errors <"$tmp/err" >&2; die 3 "repository unreachable: $repo (restic exit $rc)" ;;
+  esac
+  systemctl enable --now pi-backup-system.timer
+  say "timer enabled: $(systemctl show -P NextElapseUSecRealtime pi-backup-system.timer 2>/dev/null || true)"
+}
+
+cmd_status() {
+  local json=0
+  while (( $# )); do
+    case $1 in --json) json=1 ;; *) die 2 "status: unknown option $1" ;; esac
+    shift
+  done
+  pyrun status "$last" "$json"
+}
+
+case ${1:-} in
+  init|run|status|check) cmd=$1; shift; "cmd_$cmd" "$@" ;;
+  -h|--help|help) usage ;;
+  '') usage >&2; exit 2 ;;
+  *) printf 'pi-backup-system: unknown command %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac

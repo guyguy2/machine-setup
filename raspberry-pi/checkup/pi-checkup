@@ -10,7 +10,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 pi=${here%/checkup}  # machine-setup/raspberry-pi
 
-DOMAINS=(health services docker repos updates security agents drift)
+DOMAINS=(health services docker repos updates security agents backup drift)
 
 # ---------- what this Pi is supposed to look like ----------
 SYSTEM_UNITS=(ssh.service docker.service tailscaled.service)
@@ -24,7 +24,8 @@ LAN_PORTS=(22 53 8090 8091)
 WEBSITES=("DreamBase|https://{ts}:8091/ellie/")
 # Files holding credentials: must not be readable by group or others.
 SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev/pihole/.env ~/.config/gh/hosts.yml
-  ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc)
+  ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc
+  ~/.config/pi-backup/restic-password)
 # Warnings the user has looked at and accepted, by key (shown as INFO "accepted"). Add keys here, not in your head.
 ACCEPTED=()
 
@@ -420,6 +421,41 @@ check_agents() {
     out=$(timeout 20 claude auth status 2>/dev/null | jq -r '.loggedIn // empty' 2>/dev/null)
     [[ $out == false ]] && warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
   fi
+}
+
+# ---------- backup: the nightly restic backup (raspberry-pi/backup; rules live in pi-backup status, not here) ----------
+check_backup() {
+  local bk=$pi/backup out rc f age
+  # User repo: `pi-backup status` exits 1 when the last good backup is over 36 h old or the last restic check failed.
+  out=$("$bk/pi-backup" status 2>&1); rc=$?
+  if (( rc == 0 )); then ok "user backup: $(head -1 <<<"$out")"
+  else warn backup.user "user backup: $(grep -m1 . <<<"$out" | cut -c1-160) (details: pi-backup status)"; fi
+  systemctl --user is-enabled -q pi-backup.timer 2>/dev/null || warn backup.timer "pi-backup.timer isn't enabled (pi-backup init)"
+
+  # Chromium's profile is only copied while it isn't running; warn when the last copy is over 14 days old.
+  f=$HOME/.local/state/pi-backup/last.json
+  if [[ -r $f ]] && [[ $(jq -r '.items.chromium // "skipped"' "$f" 2>/dev/null) != skipped ]]; then
+    age=$(jq -r '.chromium_last_ok // empty' "$f" 2>/dev/null)
+    if [[ -z $age ]]; then warn backup.chromium "the lab Chromium profile has never been backed up (it's skipped while Chromium runs)"
+    elif (( $(days_since "$(date -d "$age" +%s)") > 14 )); then warn backup.chromium "the lab Chromium profile was last backed up $(days_since "$(date -d "$age" +%s)") days ago (skipped while Chromium runs)"
+    fi
+  fi
+
+  # System repo (root): its status file is world-readable, so the installed copy reads it without sudo.
+  local sys=/usr/local/lib/pi-backup/pi-backup-system
+  [[ -x $sys ]] || sys=$bk/pi-backup-system
+  out=$("$sys" status 2>&1); rc=$?
+  if (( rc == 0 )); then ok "system backup: $(head -1 <<<"$out")"
+  else warn backup.system "system backup: $(grep -m1 . <<<"$out" | cut -c1-160)"; fi
+  systemctl is-enabled -q pi-backup-system.timer 2>/dev/null || warn backup.timer "pi-backup-system.timer isn't enabled (sudo /usr/local/lib/pi-backup/pi-backup-system init)"
+
+  # Root runs installed copies; they must match the repo and Homebrew's rclone (re-run setup after changes).
+  out=$("$bk/setup" --check 2>&1); rc=$?
+  case $rc in
+    0) ok "root-side copies match the repo and Homebrew's rclone" ;;
+    1) warn backup.setup "root-side copies differ from the repo or rclone is newer: review, then sudo $bk/setup ($(grep -m1 . <<<"$out" | cut -c1-100))" ;;
+    *) warn backup.setup "root side not installed: sudo $bk/setup" ;;
+  esac
 }
 
 # ---------- drift: live machine vs the machine-setup snapshot and backups ----------

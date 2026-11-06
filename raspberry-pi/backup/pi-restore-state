@@ -1,0 +1,830 @@
+#!/usr/bin/env bash
+# Restore this Pi's state (Hermes, sign-ins, personal/app data, root-only files) from the restic backups that
+# pi-backup (user repo) and pi-backup-system (system repo) make. Contract and plan: raspberry-pi/MULTI-PI.md
+# ("Interfaces" and "pi-restore-state details").
+#
+# Dry run by default: prints, per group, what it would restore and which existing files it would replace.
+# --yes writes. Replaced files are moved to ~/.pi-restore-backup-<timestamp>/ (root files: /root/...).
+# Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
+set -euo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+all_groups=(hermes signins data system)
+# User units that write the data/signins files: the active ones are stopped while those groups are put in place
+# (--yes, not in a drill), then started again. Stopped in this order, started in reverse.
+writer_units=(mail-sync.timer mail-sync.service rei.service rei-vault-sync.timer dreambase.service dreambase-photos.timer)
+
+usage() {
+  cat <<EOF
+usage: ${0##*/} [--yes] [--snapshot ID] [--host HOST] [--only hermes,signins,data,system]
+                        [--target-home DIR] [--verbose]
+
+Restores Pi state from the restic backups. Dry run unless --yes.
+
+  --yes              write (default: only print what would be restored and replaced)
+  --snapshot ID      user-repo snapshot to restore (default: latest). The system group uses the latest system
+                     snapshot, or ID when --only system is given alone.
+  --host HOST        whose backups to restore (default: this Pi, hostname -s); sets PI_BACKUP_HOST
+  --only LIST        groups, comma-separated (default: all; hermes,signins,data with --target-home)
+                       hermes   ~/.hermes via 'hermes import' (Telegram kept only on the main Pi's own repo)
+                       signins  sign-ins and keys listed in includes.txt
+                       data     personal and app data (includes.txt, consistent SQLite copies, services' .env);
+                                Pi-hole's Teleporter export is saved for a manual import, never imported
+                       system   root-only files (labvault, credential.secret, /etc/...); uses sudo for this part
+  --target-home DIR  drill: restore into DIR as HOME and DIR/.hermes as HERMES_HOME. Telegram is always
+                     stripped, the gateway is never touched, the system group is not allowed.
+  --verbose          list every file that would be replaced (default: the first 40 per group)
+  -h, --help         this help
+
+Environment (drills and tests; see MULTI-PI.md): PI_BACKUP_REPO, PI_BACKUP_PASSWORD_FILE, PI_BACKUP_RESTIC,
+PI_BACKUP_RCLONE, PI_BACKUP_STATE_DIR, PI_BACKUP_HOST apply to the user repo. The system group uses
+PI_BACKUP_SYSTEM_REPO, PI_BACKUP_SYSTEM_PASSWORD_FILE, PI_BACKUP_SYSTEM_RCLONE (defaults: the system repo,
+/root/.config/pi-backup/restic-password, /usr/local/lib/pi-backup/rclone). Test hooks: PI_BACKUP_SUDO (command
+used instead of sudo), PI_RESTORE_SYSTEM_ROOT (prefix for every root-side write; skips creating labvault).
+
+Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
+EOF
+}
+
+die() { local code=$1; shift; printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit "$code"; }
+usage_err() { printf '%s\n' "$*" >&2; usage >&2; exit 2; }
+say() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
+note() { printf '  %s\n' "$*"; }
+warn() { printf '  \033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
+
+yes=0 verbose=0 want_snap=latest target_home='' only_set=0
+opt_host=${PI_BACKUP_HOST:-}
+groups=()
+while (( $# )); do
+  case $1 in
+    --yes) yes=1 ;;
+    --verbose|-v) verbose=1 ;;
+    --snapshot) shift; want_snap=${1:-}; [[ -n $want_snap ]] || usage_err "--snapshot needs an ID" ;;
+    --host) shift; opt_host=${1:-}; [[ -n $opt_host ]] || usage_err "--host needs a name" ;;
+    --only) shift; [[ -n ${1:-} ]] || usage_err "--only needs a list"; IFS=, read -ra groups <<< "$1"; only_set=1 ;;
+    --target-home) shift; target_home=${1:-}; [[ -n $target_home ]] || usage_err "--target-home needs a directory" ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage_err "unknown option: $1" ;;
+  esac
+  shift
+done
+
+if (( only_set )); then
+  for g in "${groups[@]}"; do
+    case $g in hermes|signins|data|system) ;; *) usage_err "unknown group: $g (groups: ${all_groups[*]})" ;; esac
+  done
+elif [[ -n $target_home ]]; then groups=(hermes signins data)
+else groups=("${all_groups[@]}")
+fi
+want() { local g; for g in "${groups[@]}"; do [[ $g == "$1" ]] && return 0; done; return 1; }
+
+# --- settings (contract: MULTI-PI.md "Files and paths" and "Environment overrides") ---
+own_host=$(hostname -s)
+host=${opt_host:-$own_host}
+export PI_BACKUP_HOST=$host
+restic=${PI_BACKUP_RESTIC:-/usr/bin/restic}
+rclone=${PI_BACKUP_RCLONE:-/home/linuxbrew/.linuxbrew/bin/rclone}
+repo=${PI_BACKUP_REPO:-rclone:gdrive-backup:pi-backups/$host/user}
+pwfile=${PI_BACKUP_PASSWORD_FILE:-$HOME/.config/pi-backup/restic-password}
+state=${PI_BACKUP_STATE_DIR:-$HOME/.local/state/pi-backup}
+sys_repo=${PI_BACKUP_SYSTEM_REPO:-rclone:gdrive-backup:pi-backups/$host/system}
+sys_pwfile=${PI_BACKUP_SYSTEM_PASSWORD_FILE:-/root/.config/pi-backup/restic-password}
+sys_rclone=${PI_BACKUP_SYSTEM_RCLONE:-/usr/local/lib/pi-backup/rclone}
+sys_rclone_conf=/root/.config/rclone/rclone.conf
+sys_root=${PI_RESTORE_SYSTEM_ROOT:-}
+sys_root=${sys_root%/}
+read -ra sudo_cmd <<< "${PI_BACKUP_SUDO:-sudo}"
+includes=$here/includes.txt
+sys_includes=$here/system-includes.txt
+ts=$(date +%Y%m%d-%H%M%S)
+role=$(head -n1 "$HOME/.config/pi-role" 2>/dev/null | tr -d '[:space:]' || true)
+role_src=$HOME/.config/pi-role
+[[ -n $role ]] || { role=main; role_src="no ~/.config/pi-role, so the default"; }   # same default as restore.sh/save.sh
+
+drill=0
+if [[ -n $target_home ]]; then
+  drill=1
+  [[ $target_home == /* ]] || usage_err "--target-home needs an absolute path"
+  want system && usage_err "--target-home: the system group is not allowed in a drill"
+  th_real=$(realpath -m "$target_home")
+  [[ $th_real != / && $th_real != "$(realpath -m "$HOME")" ]] || usage_err "--target-home must not be / or your real home"
+  thome=$th_real
+  hermes_home=$thome/.hermes
+else
+  thome=$HOME
+  hermes_home=${HERMES_HOME:-$HOME/.hermes}
+fi
+bak=$thome/.pi-restore-backup-$ts
+
+# Telegram stays only on a replacement of the main Pi itself (contract); everything else strips it.
+keep_tg=0
+if (( drill )); then tg_why="drill (--target-home)"
+elif [[ $role != main ]]; then tg_why="role is '$role' ($role_src), not main"
+elif [[ $host != "$own_host" ]]; then tg_why="--host $host is not this Pi ($own_host)"
+else keep_tg=1; tg_why="role main ($role_src) and this Pi's own backup"
+fi
+tg_re='^[[:space:]]*(export[[:space:]]+)?TELEGRAM_'
+
+user_groups=0
+for g in hermes signins data; do want "$g" && user_groups=1; done
+
+# --- Python helper: JSON parsing (restic output, manifest) and the restore plan. /usr/bin/python3 -I only. ---
+read -r -d '' PY <<'PYEOF' || true
+import sys, os, json, re, fnmatch, stat
+from datetime import datetime
+
+def nodes(path):
+    with open(path, encoding="utf-8", errors="surrogateescape") as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if (o.get("message_type") or o.get("struct_type")) == "node" and "path" in o:
+                yield o
+
+def secs(ts):
+    m = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?(Z|[+-]\d\d:?\d\d)?$", ts or "")
+    if not m:
+        return None
+    tz = m.group(2) or ""
+    tz = "+00:00" if tz == "Z" else tz
+    try:
+        return int(datetime.fromisoformat(m.group(1) + tz).timestamp())
+    except ValueError:
+        return None
+
+def human(n):
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+
+def status(kind, dest, n):
+    try:
+        st = os.lstat(dest)
+    except FileNotFoundError:
+        return "new"
+    except OSError:
+        return "unknown"
+    if stat.S_ISDIR(st.st_mode):
+        return "conflict"
+    if kind == "symlink":
+        try:
+            same = stat.S_ISLNK(st.st_mode) and os.readlink(dest) == n.get("linktarget")
+        except OSError:
+            same = False
+        return "same" if same else "replace"
+    if stat.S_ISREG(st.st_mode) and st.st_size == n.get("size", -1) and int(st.st_mtime) == secs(n.get("mtime")):
+        return "same"
+    if dest.endswith("/.ssh/authorized_keys") and stat.S_ISREG(st.st_mode):
+        return "merge"
+    return "replace"
+
+def read_includes(path, home):
+    out = []
+    if not path or not os.path.isfile(path):
+        return out
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(None, 1)
+            if len(parts) == 1:          # system-includes.txt: one absolute path per line
+                grp, pat = "system", parts[0]
+            else:
+                grp, pat = parts[0], parts[1].strip()
+            if pat.startswith("~/"):
+                pat = home + pat[1:]
+            pat = pat.rstrip("/") or "/"
+            out.append((grp, pat))
+            if home and home == os.path.expanduser("~") and os.path.lexists(pat):
+                real = os.path.realpath(pat)  # backups store resolved symlinks; same home: match those too
+                if real != pat:
+                    out.append((grp, real))
+    return out
+
+def match(p, incs):
+    """(group, matched ancestor-or-self of p) for the most specific include, or None."""
+    anc, a = [], p
+    while True:
+        anc.append(a)
+        if a in ("/", ""):
+            break
+        a = os.path.dirname(a)
+    best = None
+    for grp, pat in incs:
+        for a in anc:
+            if a == pat or fnmatch.fnmatchcase(a, pat):
+                if best is None or len(pat) > best[0]:
+                    best = (len(pat), grp, a)
+                break
+    return (best[1], best[2]) if best else None
+
+def cmd_pick(want):
+    snaps = json.load(sys.stdin) or []
+    if want == "latest":
+        hit = sorted(snaps, key=lambda s: secs(s.get("time")) or 0)[-1:]
+    else:
+        hit = [s for s in snaps if s.get("id", "").startswith(want) or s.get("short_id") == want]
+    if len(hit) != 1:
+        print(f"{len(hit)} snapshots match '{want}' ({len(snaps)} in the repo for this host)", file=sys.stderr)
+        sys.exit(1)
+    s = hit[0]
+    print(s["id"], s.get("short_id") or s["id"][:8], (s.get("time") or "?")[:16].replace("T", "_"))
+
+def cmd_find_manifest(ls):
+    c = [n["path"] for n in nodes(ls) if n.get("type") == "file" and n["path"].endswith("/staging/manifest.json")]
+    c = [p for p in c if p.endswith("/pi-backup/staging/manifest.json")] or c
+    if len(c) != 1:
+        sys.exit(1)
+    print(c[0])
+
+def cmd_manifest(path, key):
+    with open(path, encoding="utf-8") as f:
+        v = json.load(f)
+    for k in key.split("."):
+        v = v.get(k) if isinstance(v, dict) else None
+    print("" if v is None else v)
+
+def cmd_plan(a):
+    groups = [g for g in a["groups"].split(",") if g]
+    dry, verbose = a["dry"] == "1", a["verbose"] == "1"
+    rows, extra, notes, roots = [], [], [], set()
+    hermes_files = hermes_bytes = 0
+    out = sys.stderr
+    if a["mode"] == "system":
+        root = a["sysroot"]
+        incs = read_includes(a.get("includes"), "")
+        disp = lambda d: d
+        for n in nodes(a["ls"]):
+            p, t = n["path"], n.get("type")
+            if t == "dir" and p == "/var/lib/labvault":
+                extra.append(f"labvault\t{n.get('uid')}\t{n.get('gid')}")
+            if t not in ("file", "symlink"):
+                continue
+            m = match(p, incs)
+            dest = root + p
+            rows.append(("system", t, p, dest, status(t, dest, n), "/", root or "/", m[1] if m else os.path.dirname(p), n.get("size", 0)))
+    else:
+        home, stage, thome = a["src_home"], a["stage"], a["thome"]
+        incs = read_includes(a["includes"], home)
+        tilde = a["tilde"] == "1"
+        disp = lambda d: "~/" + d[len(thome) + 1:] if tilde and d.startswith(thome + "/") else d
+        tdisp = lambda p: "~/" + p[len(home) + 1:] if p.startswith(home + "/") else p
+        live, staged = {}, {}
+        for n in nodes(a["ls"]):
+            p, t = n["path"], n.get("type")
+            if t not in ("file", "symlink"):
+                continue
+            size = n.get("size", 0) or 0
+            if p.startswith(stage + "/hermes/"):
+                hermes_files += 1
+                hermes_bytes += size
+            elif p == stage + "/manifest.json":
+                pass
+            elif p == stage + "/pihole/teleporter.zip":
+                extra.append(f"data\tteleporter\t{p}\t-\t-\t-\t-")
+                if "data" in groups:
+                    roots.add(p)
+            elif p.startswith(stage + "/home/"):
+                rel = p[len(stage) + 6:]
+                dest = thome + "/" + rel
+                m = match(home + "/" + rel, incs)   # group of the live path it was copied from
+                staged[dest] = (m[0] if m else "data", t, p, dest, status(t, dest, n), stage + "/home", thome,
+                                tdisp(m[1] if m else home + "/" + rel) + " (consistent copy)", size)
+            elif p.startswith(stage + "/"):
+                notes.append(f"unknown staging item, skipped: {p}")
+            elif p.startswith(home + "/"):
+                rel = p[len(home) + 1:]
+                dest = thome + "/" + rel
+                m = match(p, incs)
+                grp, root = (m[0], m[1]) if m else ("data", p)
+                live[dest] = (grp, t, p, dest, status(t, dest, n), home, thome, tdisp(root), size)
+                if grp in groups:
+                    roots.add(root)
+            else:
+                notes.append(f"outside {home}, skipped: {p}")
+        live.update(staged)          # a consistent copy beats a live file for the same destination
+        rows = list(live.values())
+        if any(r[0] in groups for r in staged.values()):
+            roots.add(stage + "/home")
+        if hermes_files and "hermes" in groups:
+            roots.add(stage + "/hermes")
+            extra.append(f"hermes\thermes\t{stage}/hermes\t-\t{hermes_files} files ({human(hermes_bytes)})\t-\t-")
+    rows = [r for r in rows if r[0] in groups]
+
+    verb = "would restore" if dry else "restoring"
+    for g in groups:
+        if g == "hermes":   # printed by the caller, with the Telegram/gateway decision
+            continue
+        rs = [r for r in rows if r[0] == g]
+        cnt = {k: sum(1 for r in rs if r[4] == k) for k in ("new", "replace", "same", "unknown", "conflict", "merge")}
+        print(f"\n== {g}: {verb} {len(rs)} files: {cnt['new']} new, {cnt['replace'] + cnt['unknown']} replace, "
+              f"{cnt['same']} unchanged" + (f", {cnt['merge']} merged" if cnt["merge"] else "")
+              + (f", {cnt['conflict']} blocked by a directory" if cnt["conflict"] else ""), file=out)
+        by_root = {}
+        for r in rs:
+            by_root.setdefault(r[7], [0, 0])
+            by_root[r[7]][0] += 1
+            by_root[r[7]][1] += r[8] or 0
+        for root in sorted(by_root):
+            c, b = by_root[root]
+            print(f"  {root}  ({c} file{'s' if c != 1 else ''}, {human(b)})", file=out)
+        rep = sorted(r for r in rs if r[4] in ("replace", "unknown", "conflict", "merge"))
+        if rep:
+            print(f"  {'would replace' if dry else 'replacing'} (the old copies move to the restore backup dir):", file=out)
+            for r in rep[: None if verbose else 40]:
+                tag = {"unknown": "  (can't compare)", "conflict": "  (a directory is in the way: skipped)",
+                       "merge": "  (merged: missing keys appended, existing keys kept)"}.get(r[4], "")
+                print(f"    {disp(r[3])}{tag}", file=out)
+            if not verbose and len(rep) > 40:
+                print(f"    ... and {len(rep) - 40} more (--verbose lists all)", file=out)
+        if g == "data" and any(e.startswith("data\tteleporter") for e in extra):
+            print("  Pi-hole Teleporter export: saved for a manual import (never imported automatically)", file=out)
+    if notes:
+        print(f"\n  {len(notes)} item(s) not restored:", file=out)
+        for nt in notes[: None if verbose else 10]:
+            print(f"    {nt}", file=out)
+        if not verbose and len(notes) > 10:
+            print(f"    ... and {len(notes) - 10} more (--verbose lists all)", file=out)
+
+    for r in sorted(rows, key=lambda r: r[2]):
+        print("\t".join(str(x) for x in r[:7]))
+    for e in extra:
+        if e.split("\t")[0] in groups or e.startswith("labvault"):
+            print(e)
+    for root in sorted(roots):
+        print(f"include\t{root}")
+
+cmd, args = sys.argv[1], sys.argv[2:]
+if cmd == "pick":
+    cmd_pick(args[0])
+elif cmd == "find-manifest":
+    cmd_find_manifest(args[0])
+elif cmd == "manifest":
+    cmd_manifest(args[0], args[1])
+elif cmd == "plan":
+    cmd_plan(dict(x.split("=", 1) for x in args))
+else:
+    sys.exit(f"unknown helper command {cmd}")
+PYEOF
+py() { /usr/bin/python3 -I -c "$PY" "$@"; }
+
+# --- Puts restored files in place. Run as the user for the user groups and through sudo for the system group.
+# stdin: plan rows "group kind snap dest status relbase destbase" (no empty fields: IFS=tab collapses them);
+# args: staging dir, backup dir for replaced files.
+# Prints replaced/failed files and a count line; exits 4 if any file failed.
+read -r -d '' PLACE <<'SHEOF' || true
+set -uo pipefail
+staging=$1 bak=$2
+asroot=0; [[ $(id -u) == 0 ]] && asroot=1
+n_new=0 n_rep=0 n_same=0 n_fail=0
+fail() { printf '    failed: %s\n' "$*" >&2; n_fail=$((n_fail + 1)); }
+# aside <path> <rel>: move an existing file into the backup dir (same relative path).
+aside() {
+  [[ -d $bak ]] || install -d -m 0700 "$bak" || return 1
+  mkdir -p "$bak/$(dirname "$2")" && mv "$1" "$bak/$2"
+}
+# mkparents <dest base> <staged base> <relative dir>: create missing directories with the staged copy's mode
+# (and owner, as root), else 0700.
+mkparents() {
+  local d=${1%/} s=${2%/} c mode uid gid
+  local -a parts
+  [[ -z $d || -d $d ]] || install -d -m 0700 "$d" || return 1
+  IFS=/ read -ra parts <<< "$3"
+  for c in "${parts[@]}"; do
+    [[ -n $c && $c != . ]] || continue
+    d=$d/$c; s=$s/$c
+    [[ -d $d ]] && continue
+    [[ -e $d || -L $d ]] && { echo "    $d exists and is not a directory" >&2; return 1; }
+    if [[ -d $s ]]; then read -r mode uid gid < <(stat -c '%a %u %g' "$s"); else mode=700 uid= gid=; fi
+    if (( asroot )) && [[ -n $uid ]]; then install -d -m "$mode" -o "$uid" -g "$gid" "$d" || return 1
+    else install -d -m "$mode" "$d" || return 1; fi
+  done
+}
+while IFS=$'\t' read -r _grp _kind snap dest _status relbase destbase; do
+  src=$staging$snap
+  rel=${snap#"$relbase"}; rel=${rel#/}
+  if [[ ! -e $src && ! -L $src ]]; then fail "$dest (not in the restored files)"; continue; fi
+  # Never replace authorized_keys (the key the new card was imaged with would be lost): append missing lines.
+  if [[ $dest == */.ssh/authorized_keys && -f $dest && ! -L $dest && -f $src ]]; then
+    added=0
+    while IFS= read -r line || [[ -n $line ]]; do
+      [[ -n ${line//[[:space:]]/} && $line != \#* ]] || continue
+      grep -qxF -- "$line" "$dest" && continue
+      if (( added == 0 )); then
+        { [[ -d $bak ]] || install -d -m 0700 "$bak"; } && mkdir -p "$bak/$(dirname "$rel")" \
+          && cp -a "$dest" "$bak/$rel" || { fail "$dest (can't back it up)"; continue 2; }
+        [[ -s $dest && -n $(tail -c1 "$dest") ]] && echo >> "$dest"
+      fi
+      printf '%s\n' "$line" >> "$dest" || { fail "$dest (append)"; continue 2; }
+      added=$((added + 1))
+    done < "$src"
+    printf '    merged %s: %d key line(s) added, existing ones kept\n' "$dest" "$added"
+    if (( added )); then n_rep=$((n_rep + 1)); else n_same=$((n_same + 1)); fi
+    continue
+  fi
+  if [[ -e $dest || -L $dest ]]; then
+    if [[ -L $src && -L $dest ]]; then
+      [[ $(readlink "$src") == "$(readlink "$dest")" ]] && { n_same=$((n_same + 1)); continue; }
+    elif [[ ! -L $src && ! -L $dest && -f $dest ]] && cmp -s "$src" "$dest"; then
+      n_same=$((n_same + 1)); continue
+    fi
+    if [[ -d $dest && ! -L $dest ]]; then fail "$dest (a directory is in the way)"; continue; fi
+    if [[ $dest == */etc/sudoers.d/* ]] && ! /usr/sbin/visudo -cqf "$src"; then fail "$dest (visudo rejects it)"; continue; fi
+    aside "$dest" "$rel" || { fail "$dest (can't move it aside)"; continue; }
+    printf '    replaced %s\n' "$dest"
+    n_rep=$((n_rep + 1))
+  else
+    if [[ $dest == */etc/sudoers.d/* ]] && ! /usr/sbin/visudo -cqf "$src"; then fail "$dest (visudo rejects it)"; continue; fi
+    n_new=$((n_new + 1))
+  fi
+  # A leftover SQLite WAL/SHM/journal beside the old file would be replayed over the restored one: move it aside.
+  for sfx in -wal -shm -journal; do
+    if [[ -e $dest$sfx || -L $dest$sfx ]]; then
+      if aside "$dest$sfx" "$rel$sfx"; then printf '    moved aside %s\n' "$dest$sfx"
+      else fail "$dest$sfx (can't move it aside)"; continue 2; fi
+    fi
+  done
+  mkparents "$destbase" "$staging$relbase" "$(dirname "$rel")" || { fail "$dest (parent directory)"; continue; }
+  cp -a "$src" "$dest" || fail "$dest (copy)"
+done
+printf '  %d new, %d replaced, %d unchanged, %d failed\n' "$n_new" "$n_rep" "$n_same" "$n_fail"
+(( n_fail == 0 )) || exit 4
+SHEOF
+
+# --- preflight ---
+failed=0 incomplete=0
+teleporter_saved='' hostkeys=0 gw_action=''
+S() { "${sudo_cmd[@]}" "$@"; }
+
+[[ -x $restic ]] || die 2 "restic not found at $restic (sudo apt install restic)"
+# need_remote <repo> <rclone> [sudo]: a rclone: repo needs the binary and the remote configured (no network).
+need_remote() {
+  local r=$1 rc=$2 remote
+  [[ $r == rclone:* ]] || return 0
+  remote=${r#rclone:}; remote=${remote%%:*}
+  if [[ ${3:-} == sudo ]]; then
+    S test -x "$rc" || die 2 "rclone copy $rc missing: run sudo $here/setup"
+    S env RCLONE_CONFIG="$sys_rclone_conf" "$rc" listremotes 2>/dev/null | grep -qx "$remote:" \
+      || die 2 "root's rclone has no remote '$remote' ($sys_rclone_conf): run sudo $here/setup"
+  else
+    [[ -x $rc ]] || die 2 "rclone not found at $rc (brew install rclone)"
+    "$rc" listremotes 2>/dev/null | grep -qx "$remote:" \
+      || die 2 "rclone has no remote '$remote': set it up first (MULTI-PI.md, 'User steps' 3)"
+  fi
+}
+hermes_bin=
+if (( user_groups )); then
+  [[ -f $pwfile ]] || die 2 "no restic password file $pwfile (copy the passphrase from the password manager; mode 0600)"
+  need_remote "$repo" "$rclone"
+  if want signins || want data; then [[ -f $includes ]] || die 2 "missing $includes"; fi
+  if want hermes; then
+    hermes_bin=$(command -v hermes || true)
+    [[ -n $hermes_bin ]] || { [[ -x $HOME/.local/bin/hermes ]] && hermes_bin=$HOME/.local/bin/hermes; }
+    if [[ -z $hermes_bin ]]; then
+      (( yes )) && die 2 "hermes not installed: run restore.sh --only agents first"
+      warn "hermes not installed: --yes will refuse until restore.sh --only agents has run"
+    fi
+    if ! command -v zip >/dev/null; then
+      (( yes )) && die 2 "zip not installed (sudo apt install zip)"
+      warn "zip not installed: --yes needs it (sudo apt install zip)"
+    fi
+  fi
+fi
+if want system; then
+  S test -x "$restic" || die 2 "root can't run $restic"
+  S test -f "$sys_pwfile" || die 2 "no system restic password file $sys_pwfile (as root, from the password manager; 0600)"
+  need_remote "$sys_repo" "$sys_rclone" sudo
+fi
+
+install -d -m 0700 "$state"
+if (( yes )); then
+  exec 9>"$state/lock"
+  flock -n 9 || die 1 "pi-backup is running (lock $state/lock); try again when it's done"
+fi
+staging=$(mktemp -d "$state/restore.XXXXXX")   # 0700, not under ~/.cache; removed at exit
+sstage=
+stopped_units=()
+# start_units: start again the writer units this run stopped (also on an early exit).
+start_units() {
+  local i
+  (( ${#stopped_units[@]} )) || return 0
+  for (( i = ${#stopped_units[@]} - 1; i >= 0; i-- )); do
+    if systemctl --user start "${stopped_units[i]}"; then note "started ${stopped_units[i]} again"
+    else warn "could not start ${stopped_units[i]}: systemctl --user start ${stopped_units[i]}"; fi
+  done
+  stopped_units=()
+}
+stop_units() {
+  local u
+  for u in "${writer_units[@]}"; do
+    systemctl --user is-active --quiet "$u" 2>/dev/null || continue
+    if systemctl --user stop "$u"; then stopped_units+=("$u"); note "stopped $u while its files are restored"
+    else warn "could not stop $u"; fi
+  done
+}
+cleanup() {
+  start_units
+  chmod -R u+rwX "$staging" 2>/dev/null || true
+  rm -rf "$staging"
+  if [[ -n $sstage ]]; then S rm -rf "$sstage" || true; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+# check_repo <restic wrapper> <label>: `restic cat config`; 12 = wrong password (2), anything else = unreachable (3).
+check_repo() {
+  local rc=0
+  "$1" cat config >/dev/null 2>"$staging/err" || rc=$?
+  (( rc == 0 )) && return 0
+  sed 's/^/  /' "$staging/err" >&2
+  (( rc == 12 )) && die 2 "$2: wrong password"
+  (( rc == 10 )) && die 3 "$2: repository does not exist (has pi-backup run for host $host?)"
+  die 3 "$2: repository unreachable (restic exit $rc)"
+}
+
+(( yes )) || say "Dry run: nothing is written. Add --yes to restore."
+(( drill )) && note "drill: HOME=$thome, HERMES_HOME=$hermes_home"
+
+# --- user repo: hermes, signins, data ---
+R() { "$restic" -r "$repo" --password-file "$pwfile" -o "rclone.program=$rclone" "$@"; }
+plan=$staging/plan.tsv
+snap_short='' stage='' src_home=''
+if (( user_groups )); then
+  say "user repo $repo (host $host)"
+  check_repo R "user repo"
+  R snapshots --json --host "$host" --tag pi-backup > "$staging/snaps.json" || die 1 "restic snapshots failed"
+  read -r snap_id snap_short snap_time < <(py pick "$want_snap" < "$staging/snaps.json") \
+    || die 1 "no snapshot '$want_snap' for host $host"
+  note "snapshot $snap_short ($snap_time)"
+  R ls --json --host "$host" --tag pi-backup "$snap_id" > "$staging/ls.json" || die 1 "restic ls failed"
+  mpath=$(py find-manifest "$staging/ls.json") || die 1 "snapshot $snap_short has no staging manifest.json"
+  R restore "$snap_id" --host "$host" --tag pi-backup --target "$staging/r" --include "$mpath" >/dev/null \
+    || die 1 "restic restore of manifest.json failed"
+  stage=${mpath%/manifest.json}
+  src_home=$(py manifest "$staging/r$mpath" home)
+  [[ $src_home == /* ]] || die 1 "manifest.json has no home"
+  item() { py manifest "$staging/r$mpath" "items.$1"; }
+  note "backed up from $(py manifest "$staging/r$mpath" host):$src_home on $(py manifest "$staging/r$mpath" created)"
+  if want hermes && [[ $(item hermes) != ok ]]; then
+    warn "Hermes backup in this snapshot: $(item hermes); hermes can't be restored from it"; incomplete=1
+  fi
+  if want data; then
+    [[ $(item sqlite) == ok ]] || { warn "SQLite copies in this snapshot: $(item sqlite)"; incomplete=1; }
+    case $(item pihole) in
+      ok) ;; skipped) note "Pi-hole Teleporter export: skipped in this snapshot" ;;
+      *) warn "Pi-hole Teleporter export in this snapshot: $(item pihole)"; incomplete=1 ;;
+    esac
+    case $(item chromium) in
+      ok|skipped) ;;
+      skipped-running) note "lab Chromium profile: not in this snapshot (Chromium was running); use an older snapshot (--snapshot) for it" ;;
+      *) warn "lab Chromium profile in this snapshot: $(item chromium)"; incomplete=1 ;;
+    esac
+  fi
+  ugroups=$(IFS=,; for g in "${groups[@]}"; do [[ $g == system ]] || printf '%s,' "$g"; done)
+  py plan mode=user ls="$staging/ls.json" groups="$ugroups" dry=$(( !yes )) verbose=$verbose src_home="$src_home" \
+    stage="$stage" thome="$thome" includes="$includes" tilde=$(( !drill )) > "$plan" 2> "$staging/summary" \
+    || { cat "$staging/summary" >&2; die 1 "planning failed"; }
+
+  if want hermes; then
+    hsize=$(awk -F'\t' '$1 == "hermes" {print $5}' "$plan")
+    if [[ -z $hsize ]]; then printf '\n== hermes: not in this snapshot\n'
+    else
+      printf "\n== hermes: %s %s with 'hermes import --force'\n" "$( (( yes )) && echo restoring || echo would restore)" "$hsize"
+      if [[ -e $hermes_home/config.yaml || -e $hermes_home/.env ]]; then
+        note "$hermes_home already has a Hermes setup: import overwrites it (hermes import --force)"
+      else note "into $hermes_home"; fi
+      if (( keep_tg )); then note "Telegram: kept ($tg_why); hermes import restarts the gateway"
+      else
+        note "Telegram: TELEGRAM_* lines removed from the restored .env files ($tg_why)"
+        if (( drill )); then note "gateway: not touched; systemctl is blocked while hermes import runs"
+        else note "gateway: hermes-gateway.service stopped and disabled before the import, which can't restart it"; fi
+      fi
+    fi
+  fi
+  cat "$staging/summary"
+
+  if (( yes )); then
+    incl=()
+    while IFS= read -r p; do incl+=(--include "$p"); done < <(awk -F'\t' '$1 == "include" {print $2}' "$plan")
+    if (( ${#incl[@]} )); then
+      say "restic restore $snap_short to the staging dir"
+      R restore "$snap_id" --host "$host" --tag pi-backup --target "$staging/r" "${incl[@]}" \
+        || die 1 "restic restore failed; nothing was put in place"
+    fi
+  fi
+fi
+
+restore_hermes() {
+  local hdir=$staging/r$stage/hermes zip=$staging/r$stage/hermes.zip f n rc=0 left
+  say "hermes -> $hermes_home"
+  [[ -d $hdir ]] || { warn "hermes/ missing from the restored files"; incomplete=1; return; }
+  if (( ! keep_tg )); then
+    while IFS= read -r -d '' f; do
+      n=$(grep -cE "$tg_re" "$f" || true)
+      (( n )) || continue
+      sed -i -E "/$tg_re/d" "$f"
+      grep -qE "$tg_re" "$f" && { warn "could not strip TELEGRAM_* from ${f#"$hdir"/}"; failed=1; return; }
+      note "removed $n TELEGRAM_* line(s) from ${f#"$hdir"/}"
+    done < <(find "$hdir" -type f -name .env -print0)
+  fi
+  # From inside the dir: the importer only strips a .hermes/ or hermes/ prefix (backup_restore.py). Keeps _external/.
+  (umask 077 && cd "$hdir" && zip -qr ../hermes.zip .) || { warn "zip failed"; failed=1; return; }
+
+  local -a envs=(env)
+  if (( ! keep_tg )); then
+    if (( ! drill )); then
+      if systemctl --user cat hermes-gateway.service >/dev/null 2>&1; then
+        systemctl --user stop hermes-gateway.service || true
+        systemctl --user disable hermes-gateway.service || true
+        if systemctl --user is-active --quiet hermes-gateway.service; then
+          warn "hermes-gateway.service is still running; not importing (two gateways would poll one bot)"
+          failed=1; return
+        fi
+        note "stopped and disabled hermes-gateway.service"; gw_action="stopped and disabled"
+      else note "hermes-gateway.service not installed: nothing to stop"; gw_action="was not installed"; fi
+    fi
+    # hermes import restarts an installed gateway after a default-home import (backup.py, _revive_gateway_after_import).
+    # Block that: a systemctl that refuses everything first on PATH, and no way to reach the user manager.
+    install -d -m 0700 "$staging/guard" "$staging/run"
+    printf '#!/bin/sh\necho "pi-restore-state: blocked during hermes import: systemctl $*" >&2\nexit 1\n' \
+      > "$staging/guard/systemctl"
+    chmod 0700 "$staging/guard/systemctl"
+    envs+=(-u DBUS_SESSION_BUS_ADDRESS PATH="$staging/guard:$PATH" XDG_RUNTIME_DIR="$staging/run")
+  else gw_action=revived
+  fi
+  (( drill )) && install -d -m 0700 "$thome"
+  "${envs[@]}" HOME="$thome" HERMES_HOME="$hermes_home" "$hermes_bin" import --force "$zip" </dev/null || rc=$?
+  if [[ -d $hermes_home ]]; then chmod -R go-rwx "$hermes_home"; fi   # import tightens only a few files itself
+  if (( ! keep_tg )); then
+    left=$(grep -lsE "$tg_re" "$hermes_home/.env" "$hermes_home"/profiles/*/.env || true)
+    [[ -z $left ]] || { warn "TELEGRAM_* still set in: $left (remove it before starting a gateway)"; failed=1; }
+  fi
+  case $rc in
+    0) note "hermes import ok" ;;
+    1) warn "hermes import incomplete (see its warnings above)"; incomplete=1 ;;
+    *) warn "hermes import failed (exit $rc)"; failed=1 ;;
+  esac
+}
+
+rows() { awk -F'\t' -v g="$1" '$1 == g && ($2 == "file" || $2 == "symlink")' "$2"; }   # rows <group> <plan>
+place_group() {   # place_group <group>
+  local rc=0
+  say "$1 -> $thome"
+  rows "$1" "$plan" | bash -c "$PLACE" place "$staging/r" "$bak" || rc=$?
+  case $rc in 0) ;; 4) incomplete=1 ;; *) failed=1 ;; esac
+}
+
+if (( user_groups && yes )); then
+  want hermes && grep -q '^hermes' "$plan" && restore_hermes
+  if (( ! drill )) && { want signins || want data; }; then stop_units; fi
+  want signins && place_group signins
+  if want data; then
+    place_group data
+    tp=$(awk -F'\t' '$1=="data" && $2=="teleporter" {print $3}' "$plan")
+    if [[ -n $tp && -f $staging/r$tp ]]; then
+      [[ -d $bak ]] || install -d -m 0700 "$bak"
+      install -m 0600 "$staging/r$tp" "$bak/pihole-teleporter.zip" && teleporter_saved=$bak/pihole-teleporter.zip
+      note "Pi-hole Teleporter export saved to $teleporter_saved (import it by hand; see the end)"
+    fi
+  fi
+  start_units
+fi
+
+# --- system repo (root; sudo only here) ---
+if want system; then
+  RS() { S env HOME=/root RCLONE_CONFIG="$sys_rclone_conf" "$restic" -r "$sys_repo" --password-file "$sys_pwfile" \
+           -o "rclone.program=$sys_rclone" "$@"; }
+  say "system repo $sys_repo (host $host, via ${sudo_cmd[*]})"
+  [[ $host == "$own_host" ]] || warn "restoring $host's SSH host keys and credential.secret makes this Pi take over $host's identity"
+  check_repo RS "system repo"
+  sys_want=latest
+  [[ ${#groups[@]} == 1 ]] && sys_want=$want_snap
+  RS snapshots --json --host "$host" --tag pi-backup > "$staging/ssnaps.json" || die 1 "restic snapshots (system) failed"
+  read -r ssnap_id ssnap_short ssnap_time < <(py pick "$sys_want" < "$staging/ssnaps.json") \
+    || die 1 "no system snapshot '$sys_want' for host $host"
+  note "snapshot $ssnap_short ($ssnap_time)"
+  RS ls --json --host "$host" --tag pi-backup "$ssnap_id" > "$staging/sls.json" || die 1 "restic ls (system) failed"
+  S /usr/bin/python3 -I -c "$PY" plan mode=system ls="$staging/sls.json" groups=system dry=$(( !yes )) \
+    verbose=$verbose sysroot="$sys_root" includes="$sys_includes" > "$staging/splan.tsv" || die 1 "planning (system) failed"
+  awk -F'\t' '$1 == "system" && index($3, "/etc/ssh/ssh_host_") == 1 {f = 1} END {exit !f}' "$staging/splan.tsv" && hostkeys=1
+
+  # labvault must exist before /var/lib/labvault is put in place: with the snapshot's UID/GID when they're free,
+  # else with free system IDs, and the restored tree's owners are remapped from the old IDs to the new ones.
+  lv=$(awk -F'\t' '$1=="labvault" {print $2, $3}' "$staging/splan.tsv")
+  lv_ok=1 lv_create=0 lv_uid='' lv_gid='' new_uid='' new_gid='' cur_uid='' cur_gid='' uid_free=1 gid_free=1
+  if [[ -n $lv ]]; then
+    read -r lv_uid lv_gid <<< "$lv"
+    cur_uid=$(getent passwd labvault | cut -d: -f3 || true)
+    cur_gid=$(getent group labvault | cut -d: -f3 || true)
+    [[ -n $cur_gid || -z $cur_uid ]] || cur_gid=$(getent passwd labvault | cut -d: -f4)
+    [[ -z $(getent passwd "$lv_uid" || true) ]] || uid_free=0
+    [[ -z $(getent group "$lv_gid" || true) ]] || gid_free=0
+    if [[ -n $cur_uid ]]; then
+      new_uid=$cur_uid new_gid=$cur_gid
+      if [[ $cur_uid == "$lv_uid" && $cur_gid == "$lv_gid" ]]; then
+        note "user labvault already exists with UID $lv_uid / GID $lv_gid"
+      elif [[ -n $(S find "$sys_root/var/lib/labvault" -mindepth 1 -print -quit 2>/dev/null || true) ]]; then
+        warn "user labvault has $cur_uid:$cur_gid here, the snapshot has $lv_uid:$lv_gid, and $sys_root/var/lib/labvault"
+        warn "already has files: refusing the system group. Move them aside or fix labvault's IDs, then re-run"
+        lv_ok=0; failed=1
+      else
+        note "user labvault exists with $cur_uid:$cur_gid (snapshot: $lv_uid:$lv_gid): restored owners will be remapped"
+      fi
+    else
+      lv_create=1
+      if (( uid_free && gid_free )); then
+        new_uid=$lv_uid new_gid=$lv_gid
+        note "$( (( yes )) && echo creating || echo would create ) user labvault with UID $lv_uid / GID $lv_gid"
+      else
+        note "$( (( yes )) && echo creating || echo would create ) user labvault with free system IDs" \
+          "(snapshot's $lv_uid:$lv_gid taken here) and remap the restored owners"
+      fi
+    fi
+  fi
+
+  if (( yes && lv_ok )); then
+    S test -d "$sys_root/var/lib/pi-backup" || S install -d -m 0755 "$sys_root/var/lib/pi-backup"
+    sstage=$(S mktemp -d "$sys_root/var/lib/pi-backup/restore.XXXXXX")   # root, 0700
+    say "restic restore $ssnap_short to root's staging dir"
+    if ! RS restore "$ssnap_id" --host "$host" --tag pi-backup --target "$sstage"; then
+      warn "restic restore (system) failed; nothing was put in place"; failed=1
+    else
+      if (( lv_create )); then
+        if [[ -n $sys_root ]]; then note "PI_RESTORE_SYSTEM_ROOT set: not creating labvault (test run)"
+        else
+          if [[ -z $cur_gid ]]; then
+            if (( gid_free )); then S groupadd --system --gid "$lv_gid" labvault; else S groupadd --system labvault; fi
+          fi
+          uid_arg=(); (( uid_free )) && uid_arg=(--uid "$lv_uid")
+          S useradd --system "${uid_arg[@]}" --gid labvault --home-dir /var/lib/labvault --no-create-home \
+            --shell /usr/sbin/nologin labvault
+          new_uid=$(getent passwd labvault | cut -d: -f3) new_gid=$(getent group labvault | cut -d: -f3)
+          note "created user labvault ($new_uid:$new_gid)"
+        fi
+      fi
+      # Remap in root's staging copy (only entries that had the old IDs), so files never land with a foreign owner.
+      if [[ -n $new_uid && -n $new_gid ]] && [[ $new_uid != "$lv_uid" || $new_gid != "$lv_gid" ]]; then
+        if [[ $new_uid != "$lv_uid" ]]; then
+          S find "$sstage/var/lib/labvault" -uid "$lv_uid" -exec chown -h "$new_uid" {} +
+        fi
+        if [[ $new_gid != "$lv_gid" ]]; then
+          S find "$sstage/var/lib/labvault" -gid "$lv_gid" -exec chgrp -h "$new_gid" {} +
+        fi
+        note "remapped /var/lib/labvault owners $lv_uid:$lv_gid -> $new_uid:$new_gid"
+      elif (( lv_create )) && [[ -z $new_uid ]]; then
+        note "labvault not created (test run): owners not remapped"
+      fi
+      say "system -> ${sys_root:-/}"
+      rc=0
+      rows system "$staging/splan.tsv" \
+        | S bash -c "$PLACE" place "$sstage" "$sys_root/root/.pi-restore-backup-$ts" || rc=$?
+      case $rc in 0) ;; 4) incomplete=1 ;; *) failed=1 ;; esac
+    fi
+  fi
+fi
+
+# --- what's left by hand ---
+if (( yes )); then say "Left to do by hand"; else say "After --yes, left to do by hand"; fi
+[[ -d $bak ]] && note "- In $bak: the files this restore replaced${teleporter_saved:+, and the Pi-hole export}"
+want system && (( yes )) && note "- Replaced root files, if any: sudo ls $sys_root/root/.pi-restore-backup-$ts"
+if (( drill )); then
+  note "- Drill: check it with  HOME=$thome HERMES_HOME=$hermes_home hermes status"
+  note "  then delete it:  rm -rf $thome"
+else
+  note "- Tailscale: sudo tailscale up --ssh   (a restored Pi joins the tailnet as a new node)"
+  if [[ $host != "$own_host" ]]; then
+    note "- Hermes on this Pi needs its own Anthropic API key (one per Pi): create one for $own_host and replace"
+    note "  ANTHROPIC_API_KEY in $hermes_home/.env (the restored one is $host's)"
+  fi
+  if want hermes && [[ $host != "$own_host" ]]; then
+    note "- $host's Hermes cron jobs came along (hermes cron list): remove the ones this Pi shouldn't run before its"
+    note "  gateway starts, or both Pis run them"
+  fi
+  if want hermes && (( ! keep_tg )); then
+    note "- Telegram removed from Hermes; hermes-gateway.service: ${gw_action:-stopped and disabled (if installed)}."
+    note "  Only the main Pi runs Telegram. If this Pi replaces the main Pi, write 'main' to ~/.config/pi-role and"
+    note "  re-run: ${0##*/} --yes --only hermes"
+  elif want hermes; then
+    note "- Check the gateway that hermes import restarted: hermes gateway status"
+  fi
+  if want data; then
+    note "- Pi-hole lists (never imported automatically), when the pihole container runs:"
+    note "    docker cp ${teleporter_saved:-<the saved pihole-teleporter.zip>} pihole:/tmp/teleporter.zip"
+    note "    docker exec pihole pihole-FTL --teleporter /tmp/teleporter.zip && docker exec pihole rm /tmp/teleporter.zip"
+    note "  (or the admin UI: Settings > Teleporter > Import)"
+  fi
+  (( hostkeys )) && note "- SSH host keys restored: sudo systemctl restart ssh (the Mac's known_hosts then matches again)"
+  note "- Root side of the backup: sudo $here/setup, then sudo /usr/local/lib/pi-backup/pi-backup-system init"
+  note "- User side: pi-backup init (links and enables the nightly timer)"
+fi
+
+if (( failed )); then exit 1; fi
+if (( incomplete )); then exit 4; fi
+exit 0

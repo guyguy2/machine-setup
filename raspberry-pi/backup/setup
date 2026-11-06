@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# setup: install the root side of the nightly backup. Run with sudo; safe to re-run, and re-run it after changing
+# pi-backup-system, system-includes.txt or systemd/pi-backup-system.* (the timer only ever runs the installed copies).
+#   - /usr/local/lib/pi-backup/ (root:root 0755): pi-backup-system, system-includes.txt, rclone (a copy of Homebrew's
+#     static binary, because /home/linuxbrew is writable by guy) and rclone.version
+#   - /etc/systemd/system/pi-backup-system.{service,timer} (0644), then systemctl daemon-reload
+#   - /root/.config/rclone/rclone.conf (0600): only the [gdrive-backup] section of guy's, and only if root has none
+#   - /var/lib/pi-backup, /root/.cache/restic, /root/.config/{rclone,pi-backup}: the unit's writable paths
+# It never writes the restic password or enables the timer: it prints those commands (pi-backup-system init enables).
+# Root never opens a guy-writable path: the caller reads each source into a root-owned staging dir, a diff of that
+# copy against what's installed is shown, and you type yes before root installs it (the point: a human reads what
+# root will run). --yes skips the prompt but refuses while backup/ has uncommitted or unpushed changes.
+# Usage: sudo setup [--dry-run] [--yes]     setup --check (as guy: 0 installed copies match, 1 differ, 2 not installed)
+# Contract: raspberry-pi/MULTI-PI.md, "Security model" and "Interfaces".
+set -euo pipefail
+umask 022
+
+usage() { sed -n '2,14s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; }
+
+dry=0 check=0 yes=0
+while (( $# )); do
+  case $1 in
+    --dry-run) dry=1 ;;
+    --check) check=1 ;;
+    --yes) yes=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'usage: sudo %s [--dry-run] [--yes] | %s --check\n' "${0##*/}" "${0##*/}" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+src=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+lib=/usr/local/lib/pi-backup
+units=/etc/systemd/system
+restic=/usr/bin/restic
+brew_rclone=/home/linuxbrew/.linuxbrew/bin/rclone
+root_conf=/root/.config/rclone/rclone.conf
+pwfile=/root/.config/pi-backup/restic-password
+# installed path -> repo source and mode
+files=("$lib/pi-backup-system|$src/pi-backup-system|755"
+       "$lib/system-includes.txt|$src/system-includes.txt|644"
+       "$units/pi-backup-system.service|$src/systemd/pi-backup-system.service|644"
+       "$units/pi-backup-system.timer|$src/systemd/pi-backup-system.timer|644")
+
+# The account whose Homebrew rclone and rclone.conf are copied: the sudo caller, never assumed.
+if (( EUID == 0 )); then user_name=${SUDO_USER:-}; else user_name=$(id -un); fi
+[[ $user_name == root ]] && user_name=
+user_home=
+[[ -n $user_name ]] && user_home=$(getent passwd "$user_name" | cut -d: -f6)
+
+say() { printf '%s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+# as_user <cmd>: run with the caller's privileges, never root's, when touching their files or their binaries.
+as_user() { if (( EUID == 0 )); then /usr/sbin/runuser -u "$user_name" -- "$@"; else "$@"; fi; }
+first_line() { local out; out=$("$@" 2>/dev/null) || return 1; printf '%s\n' "${out%%$'\n'*}"; }
+
+# ---- --check: compare what's installed with the repo (read-only, no sudo) ----
+if (( check )); then
+  [[ -x $lib/pi-backup-system ]] || { say "pi-backup system side not installed ($lib): sudo $src/setup"; exit 2; }
+  [[ -n $user_name ]] || { say "run --check as your own user (or with sudo from it), not as root" >&2; exit 2; }
+  diffs=()
+  for f in "${files[@]}"; do
+    IFS='|' read -r dst from mode <<< "$f"
+    if [[ ! -e $dst ]]; then diffs+=("$dst: missing"); continue; fi
+    as_user cat -- "$from" | cmp -s - "$dst" || diffs+=("$dst: differs from ${from#"$src"/}")
+    [[ $(stat -c '%u:%g %a' -- "$dst") == "0:0 $mode" ]] || diffs+=("$dst: $(stat -c '%U:%G %a' -- "$dst"), want root:root $mode")
+  done
+  if [[ ! -x $lib/rclone ]]; then diffs+=("$lib/rclone: missing")
+  else
+    as_user cat -- "$brew_rclone" | cmp -s - "$lib/rclone" || diffs+=("$lib/rclone: differs from Homebrew's ($brew_rclone)")
+    [[ $(stat -c '%u:%g %a' -- "$lib/rclone") == "0:0 755" ]] || diffs+=("$lib/rclone: not root:root 755")
+    have=$(cat "$lib/rclone.version" 2>/dev/null || true)
+    want=$(first_line as_user "$brew_rclone" version || true)
+    [[ -n $want && $have == "$want" ]] || diffs+=("$lib/rclone.version: '${have:-missing}', Homebrew has '${want:-?}'")
+  fi
+  if (( ${#diffs[@]} )); then
+    printf '  %s\n' "${diffs[@]}"
+    say "pi-backup system side is out of date: sudo $src/setup"
+    exit 1
+  fi
+  say "pi-backup system side matches the repo ($lib, $(cat "$lib/rclone.version" 2>/dev/null))"
+  exit 0
+fi
+
+# ---- stage: the caller reads every source; root only ever touches the staged copies ----
+if (( !dry && EUID != 0 )); then say "run with sudo: sudo $src/setup   (or $src/setup --dry-run)" >&2; exit 2; fi
+[[ -n $user_name ]] || { say "run setup with sudo from your own account (SUDO_USER is needed to read the repo as you)" >&2; exit 2; }
+(( dry )) && say "dry run: nothing is changed"
+run() { if (( dry )); then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
+
+refuse=0
+if [[ ! -x $restic ]]; then
+  say "restic missing: sudo apt install restic   (from apt: the root timer must not run Homebrew's)" >&2
+  (( dry )) || exit 2
+  refuse=1
+fi
+if [[ -L $lib ]]; then say "$lib is a symlink; refusing" >&2; exit 2; fi
+
+stage=$(mktemp -d)
+trap 'rm -rf -- "$stage"' EXIT
+# 0755 so the caller can run the staged rclone for its version line; only root can change anything in here.
+chmod 0755 "$stage"
+for f in "${files[@]}"; do
+  IFS='|' read -r dst from mode <<< "$f"
+  as_user cat -- "$from" > "$stage/${dst##*/}" || { say "can't read $from as $user_name" >&2; exit 2; }
+done
+as_user cat -- "$brew_rclone" > "$stage/rclone" || { say "no Homebrew rclone at $brew_rclone: brew install rclone" >&2; exit 2; }
+chmod 0755 "$stage/rclone"
+bash -n "$stage/pi-backup-system" || { say "pi-backup-system has a syntax error" >&2; exit 2; }
+rclone_version=$(first_line as_user "$stage/rclone" version) || { say "the copied rclone doesn't run" >&2; exit 2; }
+rclone_sha=$(sha256sum < "$stage/rclone"); rclone_sha=${rclone_sha%% *}
+
+# ---- review: what root is about to run ----
+same() { [[ -e $2 ]] && cmp -s -- "$1" "$2" && [[ $(stat -c '%u:%g %a' -- "$2") == "0:0 $3" ]]; }
+changes=0
+say "review: what root will run (repo copy vs installed)"
+for f in "${files[@]}"; do
+  IFS='|' read -r dst from mode <<< "$f"
+  if same "$stage/${dst##*/}" "$dst" "$mode"; then say "  unchanged: $dst"; continue; fi
+  changes=$(( changes + 1 ))
+  if [[ -e $dst ]]; then say "  changed: $dst"; else say "  new file: $dst"; fi
+  diff -u --label "installed $dst" --label "repo ${from#"$src"/}" -- "$( [[ -e $dst ]] && echo "$dst" || echo /dev/null)" \
+    "$stage/${dst##*/}" | sed 's/^/    /' || true
+done
+installed_sha=$( [[ -f $lib/rclone ]] && sha256sum < "$lib/rclone" || true ); installed_sha=${installed_sha%% *}
+if [[ $installed_sha == "$rclone_sha" ]] && same "$stage/rclone" "$lib/rclone" 755; then
+  say "  unchanged: $lib/rclone ($rclone_version, sha256 $rclone_sha)"
+else
+  changes=$(( changes + 1 ))
+  say "  rclone: $lib/rclone ${installed_sha:+(installed $(cat "$lib/rclone.version" 2>/dev/null), sha256 $installed_sha) }<- Homebrew's"
+  say "    $rclone_version, sha256 $rclone_sha"
+fi
+unpushed=$(as_user git -C "$src" log --oneline '@{u}..HEAD' -- . 2>/dev/null) || unpushed="(can't tell: no upstream branch?)"
+uncommitted=$(as_user git -C "$src" status --porcelain -- . 2>/dev/null) || uncommitted="(can't tell: git status failed)"
+[[ -z $unpushed ]] || { say "  unpushed commits touching backup/:"; printf '%s\n' "$unpushed" | sed 's/^/    /'; }
+[[ -z $uncommitted ]] || { say "  uncommitted changes in backup/:"; printf '%s\n' "$uncommitted" | sed 's/^/    /'; }
+
+# ---- gate: a human says yes before root installs anything new ----
+if (( changes == 0 )); then
+  say "nothing to install"
+elif (( dry )); then
+  say "  [dry-run] a real run asks you to type yes (or takes --yes when backup/ is committed and pushed)"
+elif (( yes )); then
+  if [[ -n $unpushed || -n $uncommitted ]]; then
+    say "--yes refused: backup/ has uncommitted or unpushed changes; review them and run without --yes" >&2; exit 2
+  fi
+  say "  --yes: installing the committed, pushed version"
+else
+  if ! ( : </dev/tty ) 2>/dev/null; then
+    say "no terminal to confirm on: run setup interactively, or with --yes once backup/ is committed and pushed" >&2; exit 2
+  fi
+  printf 'Install these %d change(s) for root to run? Type yes: ' "$changes" >/dev/tty
+  read -r answer </dev/tty || answer=
+  [[ $answer == yes ]] || { say "not installed" >&2; exit 1; }
+fi
+
+# install_file <dst> <staged> <mode>: atomic, root-owned, from the staged copy only.
+install_file() {
+  local dst=$1 from=$2 mode=$3 what=updated
+  [[ -e $dst ]] || what=new
+  if same "$from" "$dst" "$mode"; then return 0; fi
+  if (( dry )); then say "  [dry-run] install $dst ($what, root:root $mode)"; return 0; fi
+  install -o root -g root -m "$mode" -- "$from" "$dst.new"
+  mv -f -- "$dst.new" "$dst"
+  say "  $what: $dst"
+}
+
+say "installing"
+run install -d -o root -g root -m 0755 "$lib" /var/lib/pi-backup
+# The unit's ReadWritePaths (and restic's cache, root's rclone.conf, the password file) live here.
+run install -d -o root -g root -m 0700 /root/.cache /root/.cache/restic /root/.config /root/.config/rclone /root/.config/pi-backup
+for f in "${files[@]}"; do
+  IFS='|' read -r dst _ mode <<< "$f"
+  install_file "$dst" "$stage/${dst##*/}" "$mode"
+done
+install_file "$lib/rclone" "$stage/rclone" 755
+if [[ $(cat "$lib/rclone.version" 2>/dev/null) != "$rclone_version" ]]; then
+  if (( dry )); then say "  [dry-run] write $lib/rclone.version: $rclone_version"
+  else
+    printf '%s\n' "$rclone_version" | install -o root -g root -m 0644 /dev/stdin "$lib/rclone.version.new"
+    mv -f -- "$lib/rclone.version.new" "$lib/rclone.version"
+    say "  $lib/rclone.version: $rclone_version"
+  fi
+fi
+
+# ---- root's rclone.conf: only the [gdrive-backup] section, checked to be a plain Drive remote ----
+say "rclone.conf for root"
+user_conf=${user_home:+$user_home/.config/rclone/rclone.conf}
+section=
+if [[ -n $user_conf ]]; then
+  # read as the caller, so a symlink there can't make root read something else
+  section=$(as_user cat -- "$user_conf" 2>/dev/null | awk '
+    /^[[:space:]]*\[/ { on = ($0 ~ /^[[:space:]]*\[gdrive-backup\][[:space:]]*$/); if (on) print; next }
+    on && NF { print }' || true)
+fi
+section_ok=0
+if [[ -n $section ]]; then
+  # Root runs rclone with this config, so only plain Drive keys (rclone backends like sftp can run programs).
+  bad=$(printf '%s\n' "$section" | sed 1d | grep -vE '^[[:space:]]*(#|;)' \
+    | grep -vE '^[[:space:]]*(type|client_id|client_secret|scope|token|root_folder_id|team_drive)[[:space:]]*=' || true)
+  if ! printf '%s\n' "$section" | grep -qE '^[[:space:]]*type[[:space:]]*=[[:space:]]*drive[[:space:]]*$'; then
+    warn "[gdrive-backup] in $user_conf isn't type = drive; not copying it"
+  elif [[ -n $bad ]]; then
+    warn "[gdrive-backup] in $user_conf has keys other than type/client_id/client_secret/scope/token/root_folder_id/team_drive; not copying it:"
+    printf '%s\n' "$bad" | sed -E 's/=.*/= .../; s/^/  /' >&2
+  else
+    section_ok=1
+    printf '%s\n' "$section" | grep -qE '^[[:space:]]*scope[[:space:]]*=[[:space:]]*drive\.file[[:space:]]*$' \
+      || warn "[gdrive-backup] scope isn't drive.file (the plan's decision 3)"
+  fi
+fi
+if (( dry && EUID != 0 )); then
+  if (( section_ok )); then say "  [dry-run] copy [gdrive-backup] from $user_conf to $root_conf (0600) if root has none (can't see /root as $user_name)"
+  else say "  no usable [gdrive-backup] remote in ${user_conf:-your rclone.conf} yet: create it, then re-run setup"; fi
+elif [[ -s $root_conf ]]; then
+  grep -q '^\[gdrive-backup\]' "$root_conf" && say "  root already has $root_conf with [gdrive-backup]; left alone" \
+    || warn "$root_conf exists without [gdrive-backup]; add it by hand (sudoedit $root_conf) or remove the file and re-run setup"
+  run chown root:root "$root_conf"; run chmod 0600 "$root_conf"
+elif (( section_ok )); then
+  if (( dry )); then say "  [dry-run] write $root_conf (0600) with the [gdrive-backup] section from $user_conf"
+  else
+    printf '%s\n' "$section" | install -o root -g root -m 0600 /dev/stdin "$root_conf"
+    say "  wrote $root_conf (0600) with [gdrive-backup] from $user_conf"
+  fi
+else
+  say "  no usable [gdrive-backup] remote in ${user_conf:-your rclone.conf} yet: create it (MULTI-PI.md user step 3), then re-run setup"
+fi
+
+# ---- password file: checked, never written ----
+need_pw=1
+if (( dry && EUID != 0 )); then
+  say "  can't see $pwfile as $user_name"
+elif [[ -s $pwfile ]]; then
+  need_pw=0
+  if [[ $(stat -c '%u %a' -- "$pwfile") != "0 600" ]]; then run chown root:root "$pwfile"; run chmod 0600 "$pwfile"; fi
+  say "  $pwfile present (root 0600)"
+fi
+
+run systemctl daemon-reload
+
+say ""
+say "next:"
+if (( need_pw )); then
+  say "  # the system repo's passphrase (also kept in the password manager); typed at a hidden prompt, so it"
+  say "  # stays out of shell history, the process list and the journal (sudo logs only the command line):"
+  # printed for the user to run, not expanded here
+  cat <<EOF2
+  sudo bash -c 'umask 077; read -rsp "system restic passphrase: " p; echo; printf "%s" "\$p" > $pwfile'
+EOF2
+fi
+say "  sudo $lib/pi-backup-system init        # creates the repo if missing, enables the 03:30 timer"
+say "  sudo $lib/pi-backup-system run         # first backup now (or wait for the timer)"
+say "  $src/setup --check                       # after changing the root-side files or upgrading rclone"
+(( refuse )) && { say "a real run stops at the missing restic (exit 2)" >&2; exit 2; }
+exit 0

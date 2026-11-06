@@ -23,7 +23,9 @@ health (load, temperature, throttling, RAM/swap, disks, kernel vs reboot, OOM, S
 services, unused images, Pi-hole versions), repos (git state of `~/dev`, untracked folders, broken links, bogus
 lockfile entries), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (LAN
 listeners, ad-hoc servers, rpcbind, firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
-agents (Hermes/OpenClaw up and answering, shared skills, gws/gh/Claude logins), drift (snapshot vs this machine,
+agents (Hermes/OpenClaw up and answering, shared skills, gws/gh/Claude logins), backup (`pi-backup status` for both
+restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days),
+drift (snapshot vs this machine,
 files `save.sh` doesn't back up, PATH duplicates, Brewfile).
 
 ## Changing it

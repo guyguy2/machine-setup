@@ -162,8 +162,11 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
   dotfiles github repos links pihole agents pi-status rei shell systemd. Safe to re-run.
 - `raspberry-pi/save.sh [--push]`: rewrites `raspberry-pi/snapshot/` (dotfiles, apt/Homebrew/uv/npm lists, units,
   `system.txt`, `repos.txt`) and commits only `snapshot/`; then warns about unpushed work in `~/dev`. `upd` runs it.
-- No secrets or agent state are backed up (public repo). Never put secrets, SSH private keys, history or files over
-  100 KB in `snapshot/` (`save.sh` enforces this). Add paths to the `dotfiles` list at the top of `save.sh`.
+- No secrets in git (public repo). Agent state, sign-ins, secrets and app data go in the nightly encrypted restic
+  backup on Google Drive (`raspberry-pi/backup/`, being built; plan in `raspberry-pi/MULTI-PI.md`), restored with
+  `pi-restore-state` (dry run first, `--yes` to write). New secret or data file to keep → `raspberry-pi/backup/includes.txt`.
+  Never put secrets, SSH private keys, history or files over 100 KB in `snapshot/` (`save.sh` enforces this). Add
+  paths to the `dotfiles` list at the top of `save.sh`.
 - Folders symlinked from `~/dev` (edit them here, never keep a second copy): `bin/` (`~/dev/scripts`: Hermes,
   OpenClaw launchers), `pi-status/` (`~/dev/pi-status`), `services/pihole/` (`~/dev/pihole`: Pi-hole
   docker compose; `.env` and `etc-pihole/` gitignored), `services/hermes-proxy/` (`~/dev/hermes-proxy`: Caddyfile that serves Hermes under `/hermes` on the tailnet), `services/openclaw_node/` (`~/dev/openclaw_node`: the npm
@@ -176,7 +179,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 - After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
 - `raspberry-pi/docker/README.md`: notes on the Docker setup, how to add a container service, and Caddy 2 as a
   possible single reverse proxy later.
-- `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates security agents
+- `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates security agents backup
   drift), OK/INFO/WARN lines, exit 1 on warnings. The `pi-checkup` skill (`checkup/skill/`) runs it and sends an agent per
   domain with warnings. Add mechanical checks here, not to the skill; accepted warnings go in its `ACCEPTED` list.
 - `save.sh --to DIR` writes a snapshot to a new DIR instead (pi-checkup's drift check compares it with `snapshot/`).

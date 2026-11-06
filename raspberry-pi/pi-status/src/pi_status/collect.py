@@ -667,6 +667,100 @@ def rei() -> dict:
     }
 
 
+# ---------- backup (restic, machine-setup/raspberry-pi/backup; MULTI-PI.md "Interfaces" has the last.json schema) ----------
+
+BACKUP_SIDES = {  # side: (label, status file pi-backup writes, env var tests point at a fake file, timer, systemctl scope)
+    "user": ("Your data", Path(HOME) / ".local" / "state" / "pi-backup" / "last.json", "PI_STATUS_BACKUP_USER",
+             "pi-backup.timer", "--user"),
+    "system": ("System (root)", Path("/var/lib/pi-backup/last.json"), "PI_STATUS_BACKUP_SYSTEM",
+               "pi-backup-system.timer", "--system"),
+}
+BACKUP_TIMER_ENV = "PI_STATUS_BACKUP_TIMERS"  # tests set it to "on"/"off"/"not set up" so no real systemctl is asked
+BACKUP_STALE_S = 36 * 3600  # the same rule as `pi-backup status` (and pi-checkup): nightly, so 36 h means a missed night
+BACKUP_CHECK_STALE_S = 8 * 86400  # `restic check` is due weekly
+BACKUP_CHROMIUM_STALE_S = 14 * 86400  # the lab browser profile is only copied when Chromium isn't running
+BACKUP_SETUP = "~/dev/machine-setup/raspberry-pi/README.md (Backup)"
+BACKUP_EXIT = {1: "failed", 2: "setup problem (pi-backup status)", 3: "Drive unreachable", 4: "incomplete"}
+
+
+def backup_timer(timer: str, scope: str) -> str:
+    """"on", "off" (installed, not enabled/active), "failed" or "not set up" (no unit)."""
+    fake = os.environ.get(BACKUP_TIMER_ENV)
+    if fake:
+        return fake
+    out = run("systemctl", scope, "show", timer, "-pLoadState", "-pActiveState")
+    props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if props.get("LoadState", "not-found") != "loaded":
+        return "not set up"
+    active = props.get("ActiveState", "")
+    return "on" if active == "active" else "failed" if active == "failed" else "off"
+
+
+def backup_side(side: str, now: float) -> dict:
+    """One repository's last.json reduced to what the page shows, plus `state` (ok, warn, bad, not set up) and
+    `problems` (short sentences, empty when all is well). The rules are code here, not in the page."""
+    label, default, env, timer_unit, scope = BACKUP_SIDES[side]
+    path = Path(os.environ.get(env) or default)
+    timer = backup_timer(timer_unit, scope)
+    out: dict = {"side": side, "label": label, "timer": timer, "state": "ok", "problems": [], "last_ok_age_s": None,
+                 "last_run": None, "bytes_total": None, "bytes_added": None, "check_ok": None, "check_age_s": None,
+                 "repo_bytes": None, "chromium_age_s": None, "chromium": None}
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        out["state"] = "not set up"
+        out["problems"] = ["never ran" if timer == "on" else "not set up"]
+        return out
+    except (OSError, ValueError):
+        out.update(state="bad", problems=["status file unreadable"])
+        return out
+    if not isinstance(data, dict):
+        out.update(state="bad", problems=["status file unreadable"])
+        return out
+
+    def section(key: str) -> dict:
+        value = data.get(key)
+        return value if isinstance(value, dict) else {}
+
+    last_ok, last_run, check = section("last_ok"), section("last_run"), section("last_check")
+    items = section("items")
+    age = iso_age(last_ok.get("finished"), now) if last_ok.get("finished") else None
+    check_age = iso_age(check.get("finished"), now) if check.get("finished") else None
+    chromium_age = iso_age(data.get("chromium_last_ok"), now) if data.get("chromium_last_ok") else None
+    exit_code = last_run.get("exit")
+    out.update(last_ok_age_s=age, check_ok=check.get("ok"), check_age_s=check_age, repo_bytes=check.get("repo_bytes"),
+               bytes_total=last_ok.get("bytes_total") or last_run.get("bytes_total"),
+               bytes_added=last_run.get("bytes_added"), chromium=items.get("chromium"), chromium_age_s=chromium_age,
+               last_run={"ok": last_run.get("ok"), "exit": exit_code,
+                         "age_s": iso_age(last_run.get("finished"), now) if last_run.get("finished") else None})
+    bad, warn = [], []
+    if last_run.get("ok") is False:
+        why = BACKUP_EXIT.get(exit_code, "failed") if isinstance(exit_code, int) else "failed"
+        (warn if exit_code == 4 else bad).append(f"last run {why}")
+    if age is None:
+        bad.append("no good backup yet")
+    elif age > BACKUP_STALE_S:
+        bad.append(f"last good backup {int(age // 3600)} h ago")
+    if check.get("ok") is False:
+        bad.append("restic check failed")
+    elif age is not None and (check_age is None or check_age > BACKUP_CHECK_STALE_S):
+        warn.append("no restic check in over a week" if check_age is not None else "never checked")
+    if side == "user" and items.get("chromium") not in (None, "skipped") and (
+            chromium_age is None or chromium_age > BACKUP_CHROMIUM_STALE_S):
+        warn.append("lab browser profile not copied in 14 days (Chromium always running)")
+    if timer != "on":
+        warn.append(f"timer {timer}")
+    out["problems"] = bad + warn
+    out["state"] = "bad" if bad else "warn" if warn else "ok"
+    return out
+
+
+def backup() -> dict:
+    now = time.time()
+    return {"sides": [backup_side(side, now) for side in BACKUP_SIDES], "setup": BACKUP_SETUP,
+            "stale_after_s": BACKUP_STALE_S}
+
+
 # ---------- emails (suggestions from the private mail sorter, read from one file) ----------
 
 MAIL_STATE = Path(HOME) / ".local" / "share" / "mail" / "state.json"  # written by `mail run` (mail-sync.timer)

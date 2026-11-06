@@ -1,0 +1,14 @@
+# Root-only files for the system restic repo (pi-backup-system). Absolute paths or globs, one per line;
+# '#' comment lines and blank lines are ignored. Never anything under /home (root's backup never reads it).
+# Installed root-owned to /usr/local/lib/pi-backup/ by `sudo setup`: re-run setup after editing this file.
+
+# labvault: website logins kept away from the agents (user labvault, uid recorded in the snapshot)
+/var/lib/labvault/
+# systemd-creds host key: labvault's encrypted credentials only decrypt with it
+/var/lib/systemd/credential.secret
+# agent-lab config (billers.toml, logins.toml)
+/etc/agent-lab/
+# SSH host keys, so a rebuilt Pi keeps its identity for known_hosts
+/etc/ssh/ssh_host_*
+# sudo rules written by agent-lab's setup scripts
+/etc/sudoers.d/agent-lab-*

@@ -608,7 +608,7 @@ const AUTH_PROBLEM = { signed_out: ["is signed out", "warn"], expired: ["sign-in
 
 // Everything on the Pi that needs you, each problem once. Empty when all is well.
 function problems() {
-  const { s, list, auth, svc } = overviewData;
+  const { s, list, auth, svc, bk } = overviewData;
   const item = (kind, text, href, action) => h("li", {}, h("span", { class: "dot " + kind }), href ? h("a", { href }, text) : text, action);
   const agentUnits = new Set((list || []).map(a => a.unit).filter(Boolean));  // a failed agent is listed as the agent
   const v = lastVersion;
@@ -622,6 +622,8 @@ function problems() {
     svc && [...svc.user, ...svc.system].filter(r => r.active === "failed" && !agentUnits.has(r.unit))
       .map(r => item("bad", `${r.unit} failed`, "#system/services")),
     (p => p && item(p.kind, "Email sorter: " + p.text, "#emails"))(mailProblem(lastMail)),
+    (bk?.sides || []).filter(b => b.problems.length).map(b =>
+      item(b.state === "bad" ? "bad" : "warn", `Backup (${b.label.toLowerCase()}): ${b.problems.join("; ")}`)),
     v?.stale && item("warn", "Newer pi-status code on disk", null,
       v.can_restart && h("button", { class: "copy", type: "button", onclick: e => restartServer(e.currentTarget) }, "Restart now")),
   ].flat().filter(Boolean);
@@ -633,9 +635,27 @@ function attentionCard() {
     h("h3", { style: "margin:0 0 6px" }, "Needs attention"), h("ul", {}, items));
 }
 
-function overview(s, list, auth, svc, dash) {
+// The nightly restic backup, one row per repository. collect.backup_side decides ok/warn/bad and the problems.
+const BACKUP_PILL = { ok: ["ok", "ok"], warn: ["check", "warn"], bad: ["failing", "bad"], "not set up": ["not set up", ""] };
+function backupCard(bk) {
+  return h("div", { class: "card strip backup" }, bk.sides.map(b => {
+    const [word, kind] = BACKUP_PILL[b.state] || [b.state, ""];
+    const detail = [
+      b.last_ok_age_s != null && "last good " + dur(Math.round(b.last_ok_age_s)) + " ago",
+      b.bytes_total != null && size(b.bytes_total),
+      b.bytes_added != null && "+" + size(b.bytes_added) + " last night",
+      b.check_ok === true && b.check_age_s != null && "checked " + dur(Math.round(b.check_age_s)) + " ago",
+      b.problems.length && b.problems.join("; "),
+    ].filter(Boolean).join(" · ");
+    return h("div", { class: "strip-row" },
+      h("span", {}, b.label, h("span", { class: "sub" }, detail ? " · " + detail : "")),
+      h("span", { class: "status" }, pill(word, kind)));
+  }));
+}
+
+function overview(s, list, auth, svc, dash, bk) {
   brand(s);
-  overviewData = { s, list, auth, svc };
+  overviewData = { s, list, auth, svc, bk };
   const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
   const mp = s.mem_used / s.mem_total * 100, dp = s.disk_used / s.disk_total * 100;
   return [
@@ -653,6 +673,8 @@ function overview(s, list, auth, svc, dash) {
           h("a", { href: "#agents" }, a.name),
           h("span", { class: "status" }, pill(...agentStatus(a, byName[a.name])), a.unit && serviceButton(a)))))
       : empty("Agent status unavailable."),
+    h("h3", {}, "Backup"),
+    bk ? backupCard(bk) : empty("Backup status unavailable."),
     h("div", { class: "card", style: "margin-top:12px" }, h("dl", {},
       h("dt", {}, "Model"), h("dd", {}, s.model),  // also in the sidebar; repeated here on purpose
       h("dt", {}, "Uptime"), h("dd", {}, dur(s.uptime_s)),
@@ -1901,7 +1923,7 @@ const SYSTEM = [
 // `group` is the sidebar section; a tab without `api` would be rendered straight away, nothing fetched
 const TABS = [
   { id: "overview", group: "Pi", title: "Overview", api: "/api/status",
-    also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards"], render: overview },
+    also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards", "/api/backup"], render: overview },
   { id: "agents", group: "Pi", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
   { id: "lab", group: "Pi", title: "Agent Lab", api: "/api/lab", render: lab },
   { id: "websites", group: "Pi", title: "Websites", api: "/api/websites", render: websites },
