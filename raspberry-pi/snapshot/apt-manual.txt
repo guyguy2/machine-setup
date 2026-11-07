@@ -196,6 +196,7 @@ raspi-config
 raspi-firmware
 raspi-utils
 readline-common
+restic
 rpd-applications
 rpd-developer
 rpd-graphics

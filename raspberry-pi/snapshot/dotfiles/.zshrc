@@ -273,11 +273,28 @@ _upd_tick() {
 _upd_backup() {
   local dir=$HOME/dev/machine-setup/raspberry-pi
   [[ -x $dir/save.sh ]] || { echo "raspberry-pi backup not found, skipped"; return 0 }
-  if git -C $dir rev-parse --abbrev-ref '@{u}' &>/dev/null; then
+  # snapshot/ is the main Pi's: a worker (~/.config/pi-role) saves locally only, and save.sh --push refuses there
+  if [[ $(cat ~/.config/pi-role 2>/dev/null || echo main) != main ]]; then
+    echo "worker Pi: saving locally only (snapshot/ belongs to the main Pi)"; $dir/save.sh --to "$(mktemp -d)/snap" >/dev/null
+  elif git -C $dir rev-parse --abbrev-ref '@{u}' &>/dev/null; then
     $dir/save.sh --push
   else
     echo "machine-setup has no upstream; saving locally only"; $dir/save.sh
   fi
+}
+
+# The nightly restic backup (machine-setup/raspberry-pi/backup): is it current, and do root's installed copies still
+# match the repo and Homebrew's rclone (an upgraded rclone or a changed script needs `sudo .../backup/setup` again)?
+_upd_restic() {
+  local bk=$HOME/dev/machine-setup/raspberry-pi/backup
+  [[ -x $bk/pi-backup ]] || { echo "not installed"; return 0 }
+  $bk/pi-backup status || _upd_note "nightly backup isn't current (pi-backup status)"
+  $bk/setup --check
+  case $? in
+    0) ;;
+    1) _upd_note "root's backup copies differ from the repo or Homebrew's rclone: review, then sudo $bk/setup" ;;
+    *) _upd_note "root side of the nightly backup isn't installed: sudo $bk/setup" ;;
+  esac
 }
 
 # End-of-run summary: work out what is still needed to be fully up to date, list it, and offer to do each item.
@@ -421,6 +438,8 @@ upd() {
   else
     _upd_step "Settings backup (machine-setup/raspberry-pi)"; echo "skipped, next backup in $_upd_left run(s)"
   fi
+
+  _upd_step "Nightly backup (restic): status and root-side copies"; _upd_restic
 
   _upd_summary
   rm -f $_upd_log

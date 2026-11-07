@@ -16,6 +16,7 @@ hermes-gateway.service
 keyboxd.socket
 mail-sync.timer
 mpris-proxy.service
+pi-backup.timer
 pipewire-pulse.service
 pipewire-pulse.socket
 pipewire.service
@@ -26,5 +27,6 @@ rei-proxy.service
 rei.service
 rei-vault-sync.timer
 ssh-agent.socket
+vault-index.timer
 wireplumber.service
 xdg-desktop-portal-rewrite-launchers.service

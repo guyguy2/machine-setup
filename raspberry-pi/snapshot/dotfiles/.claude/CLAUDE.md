@@ -44,7 +44,8 @@ CLI's `--no-launch-browser`/device-code mode when it has one.
 ## Personal data store (`me`)
 
 The user's personal details (name, address, email, phone, family, accounts) live in a SQLite store at
-`/home/guy/.local/share/agent-lab/me/facts.db` (with `pending.db` for agents' proposals), not in any repo and not backed up by choice. Built and
+`/home/guy/.local/share/agent-lab/me/facts.db` (with `pending.db` for agents' proposals), not in any repo; it's in the Pi's nightly encrypted backup (restic on Google
+Drive, see `~/dev/machine-setup/raspberry-pi/MULTI-PI.md`). Built and
 documented in `~/dev/agent-lab/me.md`: read that first. Look things up with `~/dev/agent-lab/tools/bin/me get|search|show`
 or browse with `~/dev/agent-lab/bin/me-admin view`; only the user changes values (`bin/me-admin set|edit|review`).
 Don't read the database files directly or copy its values into docs, commits or memory notes unless asked.
