@@ -695,6 +695,11 @@ if (( user_groups && yes )); then
     fi
   fi
   start_units
+  # pi-backup's fresh-Pi guard: this Pi now holds restored state, so its nightly backup may run (not in a drill).
+  if (( ! drill && ! failed )); then
+    printf 'restored %s from %s\n' "$(date -Iseconds)" "$host" > "$state/restored"
+    note "marked restored for pi-backup ($state/restored)"
+  fi
 fi
 
 # --- system repo (root; sudo only here) ---
@@ -786,6 +791,11 @@ if want system; then
       rows system "$staging/splan.tsv" \
         | S bash -c "$PLACE" place "$sstage" "$sys_root/root/.pi-restore-backup-$ts" || rc=$?
       case $rc in 0) ;; 4) incomplete=1 ;; *) failed=1 ;; esac
+      if (( rc == 0 || rc == 4 )); then   # pi-backup-system's fresh-Pi guard
+        printf 'restored %s from %s\n' "$(date -Iseconds)" "$host" \
+          | S sh -c 'cat > "$1" && chmod 0644 "$1"' sh "$sys_root/var/lib/pi-backup/restored"
+        note "marked restored for pi-backup-system"
+      fi
     fi
   fi
 fi
