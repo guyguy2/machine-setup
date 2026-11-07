@@ -197,6 +197,8 @@ fi
 if want npm; then
   say "npm global packages"
   if need npm-global.txt && have npm; then
+    # Only install releases at least a week old (supply-chain delay; upd relies on it too)
+    run sudo npm config set min-release-age 7 --location=global
     mapfile -t n < "$snap/npm-global.txt"
     (( ${#n[@]} )) && run sudo npm install -g "${n[@]}" || echo "  none"
   fi
