@@ -79,6 +79,7 @@ Fixed 2026-11-06 before building. Change them here first, then in the code.
 | Password file | `~/.config/pi-backup/restic-password` (dir 0700, file 0600) | `/root/.config/pi-backup/restic-password` (dir 0700, file 0600) |
 | State dir | `~/.local/state/pi-backup/` (0700) | `/var/lib/pi-backup/` (root, 0755) |
 | Status | `~/.local/state/pi-backup/last.json` | `/var/lib/pi-backup/last.json` (0644, readable by guy) |
+| Restored marker | `~/.local/state/pi-backup/restored`: one line (`restored <time> from <host>` or `fresh <time>`), written by `pi-restore-state --yes` (not a drill) or `--fresh` | `/var/lib/pi-backup/restored` (0644), same |
 | Staging | `~/.local/state/pi-backup/staging/` (0700; files 0600; removed at the end of every run, success or not) | `/var/lib/pi-backup/staging/` (0700, same rule; only if something needs staging) |
 | Lock | `flock -n` on `<state dir>/lock`; a second run exits 1 with "already running" | same |
 | Role | `~/.config/pi-role`: one line, `main` or `worker` | |
@@ -170,6 +171,11 @@ incomplete (restic exit 3, or a staging item failed).
   an unreachable repo, exit 3, leaves the previous `last_check` alone). `--dry-run`: stage, `restic backup
   --dry-run --json` (falls back to a `du` estimate if the repo can't be reached), print what and how much, remove
   staging, write nothing else (no `last.json`).
+- Fresh-Pi guard (`init` and `run`, both sides): go ahead if the restored marker exists, or `last.json` has a
+  `last_ok` for this host, or `restic snapshots --host <host> --tag pi-backup --latest 1` is empty. Otherwise exit
+  **2** naming the newest snapshot (`run` records it in `last.json`; `init` leaves the timer alone). `--fresh`
+  writes the marker first. `--dry-run` says whether a real run would refuse. Why: a new Pi with the old hostname
+  would make its near-empty state the newest snapshot, the one `pi-restore-state` restores by default.
 - `status [--json]`: print `last.json` readably; exit 0 if `last_ok` is under 36 h old and `last_check.ok` isn't
   false, else 1. No network.
 - `check`: `forget --prune` then `check`; updates `last_check`.

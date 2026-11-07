@@ -4,7 +4,7 @@
 # The contract (paths, env overrides, list formats, staging layout, last.json, exit codes) is "Interfaces" in
 # ../MULTI-PI.md; change it there first.
 #
-# Usage: pi-backup init [--dry-run] | run [--dry-run] | status [--json] | check | list | --help
+# Usage: pi-backup init [--dry-run] [--fresh] | run [--dry-run] [--fresh] | status [--json] | check | list | --help
 # Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
 #
 # bash (not zsh) and /usr/bin/python3 -I for JSON and SQLite: the systemd user unit has no Homebrew on PATH.
@@ -33,9 +33,14 @@ usage() {
   cat <<'EOF'
 usage: pi-backup <command> [options]
 
-  init [--dry-run]   create the restic repo if it doesn't exist, link the systemd user units, enable the timer
-  run [--dry-run]    stage consistent copies, back up, apply retention, write last.json (weekly: prune + check)
+  init [--dry-run] [--fresh]
+                     create the restic repo if it doesn't exist, link the systemd user units, enable the timer
+  run [--dry-run] [--fresh]
+                     stage consistent copies, back up, apply retention, write last.json (weekly: prune + check)
                      --dry-run: stage, show what would be backed up and how much, write nothing
+  Fresh-Pi guard: init and run refuse (exit 2) when Drive has backups of this hostname but this Pi has neither
+  backed up nor been restored (pi-restore-state --yes marks it), so a new Pi can't make its near-empty home the
+  newest snapshot. --fresh: back up this Pi's state anyway (writes the restored marker in the state dir).
   status [--json]    show last.json; exit 0 if the last good backup is under 36 h old and the last check
                      didn't fail, else 1 (no network)
   check              forget --prune, then restic check; updates last_check in last.json
@@ -376,9 +381,30 @@ def cmd_status(a):
     print("  verdict:    " + ("OK" if good else "ATTENTION: " + "; ".join(problems)))
     sys.exit(0 if good else 1)
 
+def cmd_armed(a):
+    """armed <last.json> <host> <marker>: exit 0 if this Pi may back up without asking (guard_fresh_pi): the
+    marker exists (restored, or --fresh), or last.json records a good backup of this host from this Pi."""
+    last, host, marker = a
+    if os.path.exists(marker):
+        sys.exit(0)
+    try:
+        d = load(last)
+    except (OSError, ValueError):
+        sys.exit(1)
+    lo = d.get("last_ok")
+    sys.exit(0 if d.get("host") == host and isinstance(lo, dict) and lo.get("snapshot") else 1)
+
+def cmd_latest(a):
+    """latest <restic snapshots --json output>: print '<short id> <date time>' of the newest snapshot, or nothing."""
+    with open(a[0]) as f:
+        snaps = json.load(f) or []
+    if snaps:
+        s = max(snaps, key=lambda s: s.get("time", ""))
+        print(s.get("short_id") or s.get("id", "")[:8], s.get("time", "")[:16].replace("T", " "))
+
 cmds = {"write-last": cmd_write_last, "write-check": cmd_write_check, "check-due": cmd_check_due,
         "repo-bytes": cmd_repo_bytes, "summary": cmd_summary, "manifest": cmd_manifest, "sqlite": cmd_sqlite,
-        "estimate": cmd_estimate, "status": cmd_status}
+        "estimate": cmd_estimate, "status": cmd_status, "armed": cmd_armed, "latest": cmd_latest}
 cmds[sys.argv[1]](sys.argv[2:])
 PYEOF
 pyh() { "$py" -I -c "$PYCODE" "$@"; }
@@ -696,6 +722,32 @@ do_check() {
   pyh write-check file="$last" host="$host" exit="$check_code" repo_bytes="$bytes"
 }
 
+# The fresh-Pi guard. A new Pi with the old Pi's hostname would otherwise back up its near-empty home as the
+# newest snapshot, which pi-restore-state restores by default. A Pi may back up when it has backed up before
+# (last.json has a good run of this host), when $armed exists (pi-restore-state --yes writes it, so does --fresh),
+# or when Drive has no snapshots of this host yet. Otherwise init and run refuse (exit 2).
+armed=$state/restored
+guard_code=0
+# guard_fresh_pi <command>: sets guard_code (this script's exit codes; 0 = go ahead). Needs errf (start_tmp).
+guard_fresh_pi() {
+  local rc=0 snaps latest
+  guard_code=0
+  pyh armed "$last" "$host" "$armed" && return 0
+  snaps=$(tmp snapshots.json)
+  restic_run "$snaps" snapshots --json --host "$host" --tag pi-backup --latest 1 || rc=$?
+  if (( rc != 0 )); then
+    show_err; guard_code=$(classify "$rc"); warn "couldn't list the snapshots on Drive (restic exit $rc)"; return 0
+  fi
+  latest=$(pyh latest "$snaps" || true)
+  [[ -n $latest ]] || return 0   # nothing of this host's on Drive yet: a first backup
+  warn "Drive already has backups of $host (newest: snapshot $latest), but this Pi has neither made one
+  nor been restored. Backing up now would make this Pi's state the newest snapshot, the one pi-restore-state
+  restores by default. Restore first: pi-restore-state (a dry run), then pi-restore-state --yes.
+  To back up this Pi's state anyway (starting over on purpose): pi-backup $1 --fresh"
+  guard_code=2
+}
+mark_fresh() { mkdir -p "$state" && chmod 700 "$state" && printf 'fresh %s\n' "$(date -Iseconds)" >"$armed"; }
+
 lock() {
   mkdir -p "$state" && chmod 700 "$state"
   exec 9>"$state/lock"
@@ -733,9 +785,11 @@ cmd_check() {
 }
 
 cmd_init() {
-  local dry=0
-  case ${1:-} in --dry-run) dry=1 ;; "") ;; *) usage >&2; exit 2 ;; esac
-  (( $# <= 1 )) || { usage >&2; exit 2; }
+  local dry=0 fresh=0
+  while (( $# )); do
+    case $1 in --dry-run) dry=1 ;; --fresh) fresh=1 ;; *) usage >&2; exit 2 ;; esac
+    shift
+  done
   local udir=$HOME/.config/systemd/user u rc=0
   if (( dry )); then
     say "init (dry run): repo $repo"
@@ -745,6 +799,11 @@ cmd_init() {
       restic_run /dev/null cat config || rc=$?
       case $rc in 0) note "repo exists: nothing to create" ;; 10) note "[dry-run] restic init" ;;
                   *) note "can't tell whether the repo exists (restic exit $rc)"; show_err ;; esac
+      if (( fresh )); then note "[dry-run] --fresh: write $armed"
+      elif (( rc == 0 )); then
+        guard_fresh_pi init
+        (( guard_code == 0 )) || note "a real init would refuse (exit $guard_code), see above"
+      fi
     else
       note "[dry-run] restic cat config, then restic init if it doesn't exist (restic or password file missing now)"
     fi
@@ -766,6 +825,11 @@ cmd_init() {
   else
     show_err; local code; code=$(classify "$rc"); die "$code" "couldn't open the repo (restic exit $rc)"
   fi
+  if (( fresh )); then mark_fresh; note "--fresh: this Pi's state will be backed up ($armed)"
+  else
+    guard_fresh_pi init
+    (( guard_code == 0 )) || die "$guard_code" "timer not enabled"
+  fi
   say "systemd user timer"
   mkdir -p "$udir"
   for u in pi-backup.service pi-backup.timer; do ln -sfn "$units/$u" "$udir/$u"; done
@@ -775,9 +839,11 @@ cmd_init() {
 }
 
 cmd_run() {
-  local dry=0
-  case ${1:-} in --dry-run) dry=1 ;; "") ;; *) usage >&2; exit 2 ;; esac
-  (( $# <= 1 )) || { usage >&2; exit 2; }
+  local dry=0 fresh=0
+  while (( $# )); do
+    case $1 in --dry-run) dry=1 ;; --fresh) fresh=1 ;; *) usage >&2; exit 2 ;; esac
+    shift
+  done
   lock
   trap cleanup EXIT
   trap 'exit 130' INT TERM HUP
@@ -800,6 +866,15 @@ cmd_run() {
       pyh write-last file="$last" host="$host" started="$started" exit="$code" >/dev/null
       exit "$code"
     fi
+    if (( fresh )); then mark_fresh; note "--fresh: this Pi's state will be backed up ($armed)"; fi
+    guard_fresh_pi run
+    if (( guard_code != 0 )); then
+      pyh write-last file="$last" host="$host" started="$started" exit="$guard_code" >/dev/null
+      exit "$guard_code"
+    fi
+  elif [[ -x $restic_bin && -r $pwfile ]] && (( !fresh )); then
+    guard_fresh_pi run
+    (( guard_code == 0 )) || note "a real run would refuse (exit $guard_code), see above"
   fi
 
   say "staging"

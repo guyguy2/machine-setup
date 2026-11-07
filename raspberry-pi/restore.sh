@@ -441,8 +441,10 @@ cat <<'MSG'
   - Restore state: no secrets are in git; ~/.hermes, the sign-ins (claude, gcloud, gws, gh, rclone, ...) and data
     (~/.local/share/mail, ~/dev/rei/inputs/, the services' .env files, ...) come back from the encrypted restic
     backup: pi-restore-state (a dry run: shows what it would restore), then pi-restore-state --yes. Needs the
-    restic passphrases (password manager) and the gdrive-backup: rclone remote (README.md).
-    Then ./restore.sh --only rei to enable the REI vault sync, and systemctl --user start rei.service.
+    restic passphrases and ~/.config/gws/client_secret.json (password manager), the gdrive-backup: rclone remote
+    (~/dev/agent-lab/bin/rclone-login --remote gdrive-backup) and sudo backup/setup first: README.md,
+    "New Pi from backup". Then ./restore.sh --only rei to enable the REI vault sync, and
+    systemctl --user start rei.service.
   - Only if not restoring state (a first-ever setup), or for what pi-restore-state reports missing:
     - claude             (log in; installed via the Brewfile cask)
     - gcloud auth login --no-launch-browser
@@ -451,8 +453,9 @@ cat <<'MSG'
     - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
     - REI dashboard: copy ~/dev/rei/inputs/ from the Mac, set up the rclone remote gdrive: (printed by the rei step).
   - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
-  - Nightly backup (README.md): sudo ~/dev/machine-setup/raspberry-pi/backup/setup, then pi-backup init and
-    sudo /usr/local/lib/pi-backup/pi-backup-system init.
+  - Nightly backup (README.md), only after restoring state: pi-backup init and
+    sudo /usr/local/lib/pi-backup/pi-backup-system init (they refuse on an unrestored Pi whose hostname has
+    backups on Drive; --fresh starts over on purpose).
   - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
     ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
     (or openclaw-gateway).

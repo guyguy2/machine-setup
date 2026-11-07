@@ -93,7 +93,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    **Restore state**: `pi-restore-state` (dry run), then `pi-restore-state --yes`. It brings back `~/.hermes`,
    sign-ins and data, so the sign-ins and onboarding in steps 3 to 6 are only for a first-ever setup or what it
    reports as missing; still start the agent you use (step 5) and re-run `restore.sh --only rei` (step 6). Needs the
-   restic passphrases (password manager) and the `gdrive-backup:` rclone remote; see [Nightly backup](#nightly-backup-restic).
+   restic passphrases and the OAuth client file (password manager) and the `gdrive-backup:` rclone remote; see [New Pi from backup](#new-pi-from-backup).
 3. **Claude Code**: run `claude` and log in. The agents use this login too.
 4. **Google**: `gcloud auth login --no-launch-browser`. For gws, download the OAuth client from Google Cloud console
    → APIs & Services → Credentials to `~/.config/gws/client_secret.json`, then `gws auth login`.
@@ -162,7 +162,19 @@ is the undo.
 `~/.config/pi-backup/restic-password` and `/root/.config/pi-backup/restic-password` (0600). Without them nobody can
 open the backup.
 
+**Keep outside the Pi** (password manager): both passphrases **and the Google OAuth client file**
+(`~/.config/gws/client_secret.json`, the gws Desktop client). `gdrive-backup:` uses that client, and
+`drive.file` only shows a client the files it created, so a new client can't see the backup. The Pi's only copy is
+inside the backup, and Google Cloud console may not show the secret again.
+
+**Fresh-Pi guard**: `pi-backup` and `pi-backup-system` (`init` and `run`) refuse, exit 2, when Drive already has
+backups of this hostname but this Pi has neither backed up (`last.json`) nor been restored. Otherwise a new Pi would
+make its near-empty home the newest snapshot, which `pi-restore-state` restores by default. `pi-restore-state --yes`
+marks the Pi (`<state dir>/restored`); `--fresh` backs up this Pi's state anyway (starting over on purpose).
+
 ### Set it up (once per Pi; the user runs these, one at a time)
+
+Replacing a Pi from its backup? Use [New Pi from backup](#new-pi-from-backup) instead: restore first, `init` last.
 
 1. Google OAuth client for rclone (Desktop app) in Google Cloud console, if there isn't one yet. Use the same client
    on every Pi: the `drive.file` scope only sees files made by that client.
@@ -189,6 +201,21 @@ write. `--only hermes,signins,data,system`, `--snapshot ID`, `--host <other Pi>`
 Pi restoring its own backup; otherwise `TELEGRAM_*` is removed and the gateway stays off, so two Pis never poll
 one bot. `~/.ssh/authorized_keys` is merged, not replaced. The Pi-hole export is never imported automatically (it
 prints the command). Drill without touching anything live: `pi-restore-state --target-home <empty dir> --yes`.
+
+### New Pi from backup
+
+The order matters: restore before the nightly backup is switched on (the fresh-Pi guard refuses the other way round).
+Shut the old Pi down first if it still runs: the restored main Pi keeps the Telegram bot, and two gateways can't
+share one.
+
+1. Flash with the same hostname (`raspberrypi`) and user `guy`; then `bootstrap.sh` (sections 1 and 2). It installs
+   restic, zip, rclone and Hermes.
+2. Put the OAuth client file back at `~/.config/gws/client_secret.json` (password manager), then
+   `~/dev/agent-lab/bin/rclone-login --remote gdrive-backup` (two steps, from the Mac's browser).
+3. Write both passphrase files (password manager), then `sudo ~/dev/machine-setup/raspberry-pi/backup/setup`.
+4. `pi-restore-state` (dry run: check what it would restore), then `pi-restore-state --yes`.
+5. Only now: `pi-backup init` and `sudo /usr/local/lib/pi-backup/pi-backup-system init` (they enable the timers).
+6. The rest of section 4 (Tailscale, `restore.sh --only rei`, ...).
 
 ## Layout
 

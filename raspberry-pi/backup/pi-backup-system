@@ -16,12 +16,16 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 usage() {
   cat <<'EOF'
 usage: pi-backup-system <command> [options]     (as root: sudo /usr/local/lib/pi-backup/pi-backup-system ...)
-  init [--dry-run]    create the system restic repo if missing, enable pi-backup-system.timer
-  run [--dry-run]     back up system-includes.txt, apply retention (7 daily, 4 weekly, 6 monthly), write
+  init [--dry-run] [--fresh]
+                      create the system restic repo if missing, enable pi-backup-system.timer
+  run [--dry-run] [--fresh]
+                      back up system-includes.txt, apply retention (7 daily, 4 weekly, 6 monthly), write
                       /var/lib/pi-backup/last.json; prune + check when the last check is over 6.5 days old.
                       --dry-run: what and how much, writes nothing (runs as any user; problems are warnings)
   status [--json]     show last.json; exit 0 if the last good backup is under 36 h old and the last check passed
   check               forget --prune, then restic check; updates last_check
+fresh-Pi guard: init and run refuse (exit 2) when Drive has system backups of this hostname but this Pi has
+  neither backed up nor been restored (pi-restore-state --yes marks it); --fresh backs up this Pi's files anyway
 exit: 0 ok, 1 failed, 2 usage/setup/unsafe files, 3 repo unreachable, 4 finished but incomplete
 overrides (drills and tests; the unit sets none): PI_BACKUP_REPO PI_BACKUP_PASSWORD_FILE PI_BACKUP_RESTIC
   PI_BACKUP_RCLONE PI_BACKUP_STATE_DIR PI_BACKUP_HOST
@@ -194,6 +198,26 @@ def check_due():
         return 0
     return 0 if datetime.datetime.now(datetime.timezone.utc) - t > datetime.timedelta(days=6.5) else 1
 
+def armed():
+    # armed <last.json> <host> <marker>: exit 0 if this Pi may back up without asking (guard_fresh_pi)
+    last, host, marker = sys.argv[2:5]
+    if os.path.exists(marker):
+        return 0
+    d = load(last)
+    lo = d.get("last_ok")
+    return 0 if d.get("host") == host and isinstance(lo, dict) and lo.get("snapshot") else 1
+
+def latest():
+    # stdin: restic snapshots --json; prints "<short id> <date time>" of the newest, or nothing
+    try:
+        snaps = json.load(sys.stdin) or []
+    except ValueError:
+        return 1
+    if snaps:
+        s = max(snaps, key=lambda s: s.get("time", ""))
+        print(s.get("short_id") or s.get("id", "")[:8], s.get("time", "")[:16].replace("T", " "))
+    return 0
+
 def size(n):
     if not isinstance(n, int):
         return "?"
@@ -258,7 +282,7 @@ def status():
     return rc
 
 sys.exit({"summary": summary, "errors": errors, "stats": stats, "write": write, "check-due": check_due,
-          "status": status}[sys.argv[1]]())
+          "status": status, "armed": armed, "latest": latest}[sys.argv[1]]())
 PYEOF
 pyrun() { "$py" -I -c "$PY" "$@"; }
 
@@ -364,6 +388,29 @@ net_error() {
   grep -qiE 'error talking HTTP to rclone|rclone: .*(ERROR|CRITICAL|Failed to)|dial tcp|no such host|connection (refused|reset)|i/o timeout|timed out|TLS handshake|googleapi: Error|unexpected EOF|network is unreachable|Error 50[0-4]|HTTP 50[0-4]' "$1" 2>/dev/null
 }
 
+# The fresh-Pi guard (same rule as pi-backup's): back up only when this Pi has backed up before (last.json),
+# was restored ($armed: pi-restore-state --yes writes it, so does --fresh), or Drive has no snapshots of this host.
+# Otherwise a new Pi would make its near-empty system files the newest snapshot, which pi-restore-state restores.
+armed=$state/restored
+# guard_fresh_pi <command>: 0 = go ahead, else prints why and returns the exit code to use (2 or 3). Needs $tmp.
+guard_fresh_pi() {
+  local rc=0 latest
+  pyrun armed "$last" "$host" "$armed" && return 0
+  r snapshots --json --host "$host" --tag pi-backup --latest 1 >"$tmp/snaps" 2>"$tmp/err" || rc=$?
+  if (( rc != 0 )); then
+    pyrun errors <"$tmp/err" >&2
+    if (( rc == 1 )) && net_error "$tmp/err"; then say "repository unreachable listing snapshots" >&2; return 3; fi
+    say "couldn't list the snapshots (restic exit $rc)" >&2; return 1
+  fi
+  latest=$(pyrun latest <"$tmp/snaps" || true)
+  [[ -n $latest ]] || return 0
+  say "Drive already has system backups of $host (newest: snapshot $latest), but this Pi has neither made one" >&2
+  say "  nor been restored. Restore first: pi-restore-state (a dry run), then pi-restore-state --yes." >&2
+  say "  To back up this Pi's files anyway (starting over on purpose): sudo $self $1 --fresh" >&2
+  return 2
+}
+mark_fresh() { install -d -m 0755 "$state" && printf 'fresh %s\n' "$(date -Iseconds)" >"$armed" && chmod 0644 "$armed"; }
+
 lock() {
   install -d -m 0755 "$state"
   exec 9>"$state/lock"
@@ -423,9 +470,9 @@ cmd_run_dry() {
 }
 
 cmd_run() {
-  local dry=0
+  local dry=0 fresh=0
   while (( $# )); do
-    case $1 in --dry-run) dry=1 ;; *) die 2 "run: unknown option $1" ;; esac
+    case $1 in --dry-run) dry=1 ;; --fresh) fresh=1 ;; *) die 2 "run: unknown option $1" ;; esac
     shift
   done
   self_check $(( !dry ))
@@ -443,6 +490,10 @@ cmd_run() {
   done < <(printf '%s\n' "${counts[@]}")
 
   open_repo || code=$?
+  if (( code == 0 )); then
+    if (( fresh )); then mark_fresh; say "--fresh: this Pi's files will be backed up"; fi
+    guard_fresh_pi run || code=$?
+  fi
   if (( code == 0 )); then
     r unlock >/dev/null 2>"$tmp/err" || pyrun errors <"$tmp/err" >&2
     set +e
@@ -505,9 +556,9 @@ cmd_check() {
 }
 
 cmd_init() {
-  local dry=0 rc=0
+  local dry=0 rc=0 fresh=0 grc=0
   while (( $# )); do
-    case $1 in --dry-run) dry=1 ;; *) die 2 "init: unknown option $1" ;; esac
+    case $1 in --dry-run) dry=1 ;; --fresh) fresh=1 ;; *) die 2 "init: unknown option $1" ;; esac
     shift
   done
   self_check $(( !dry ))
@@ -536,6 +587,11 @@ cmd_init() {
     12) die 2 "wrong password for the existing repo $repo (check $pwfile)" ;;
     *) pyrun errors <"$tmp/err" >&2; die 3 "repository unreachable: $repo (restic exit $rc)" ;;
   esac
+  if (( fresh )); then mark_fresh; say "--fresh: this Pi's files will be backed up"
+  else
+    guard_fresh_pi init || grc=$?
+    (( grc == 0 )) || die "$grc" "timer not enabled"
+  fi
   systemctl enable --now pi-backup-system.timer
   say "timer enabled: $(systemctl show -P NextElapseUSecRealtime pi-backup-system.timer 2>/dev/null || true)"
 }
