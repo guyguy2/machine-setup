@@ -29,7 +29,7 @@ its `systemd` step) and the Hermes install. They deliberately skip everything be
 
 | # | Topic | Decision | Why |
 |---|---|---|---|
-| 1 | Backup tool | **restic, from apt** (trixie: 0.18) | Encrypted, versioned, deduplicated, one restore command. apt, not Homebrew: a system service (the root timer) depends on it, and `/home/linuxbrew` is writable by `guy` (see Security) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill not yet run |
+| 1 | Backup tool | **restic, from apt** (trixie: 0.18) | Encrypted, versioned, deduplicated, one restore command. apt, not Homebrew: a system service (the root timer) depends on it, and `/home/linuxbrew` is writable by `guy` (see Security) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill into an empty home ok (hermes, signins, data) |
 | 2 | Passphrase | Master copies in the user's password manager; each Pi keeps owner-only password files for the nightly runs | Without it the backup can't be opened by anyone | |
 | 3 | Drive access | New rclone remote **`gdrive-backup:`**, scope **`drive.file`**, on **the user's own Google OAuth client from day one** | `gdrive:` stays `drive.readonly`. `drive.file` only sees files created by the same OAuth client, so switching clients later would hide the repo || ✅ code 2026-11-06: pi-status Overview Backup strip + attention items (`/api/backup`), `pi-checkup backup` domain, `upd` step, README "Nightly backup"; shows real data after the first run |
 | 4 | Scope | **Everything**: Hermes incl. secrets, sign-ins, `me` store, app data | Restore without re-teaching or re-signing in | ✅ 2026-11-06 (worker skips `rei`, `mail`, DreamBase; `save.sh --push` refuses on a worker) |
@@ -371,7 +371,7 @@ Read in the installed Hermes before wiring: `reference/cli-commands.md` (`hermes
 | Step | What | Depends on | Status |
 |---|---|---|---|
 | 0 | **Rewrite the "not backed up, by choice" rules** so agents don't follow the old policy: this `README.md` (top and section 3 `agents` row), `machine-setup/CLAUDE.md` (Raspberry Pi section), `~/.claude/CLAUDE.md` (`me` section), `agent-lab/me.md`, the `pi-rebuild` memory note. New rule: no secrets in git; everything else in the encrypted restic backup | | ✅ 2026-11-06 (also agent-lab `CLAUDE.md`, `agents.md`, memory notes `rei-on-pi`, `me-data-store`) |
-| 1 | Part A on `raspberrypi`: scripts, `setup`, units, user steps, first backup | own OAuth client, passphrases (user) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill not yet run |
+| 1 | Part A on `raspberrypi`: scripts, `setup`, units, user steps, first backup | own OAuth client, passphrases (user) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill into an empty home ok (hermes, signins, data) |
 | 2 | Restore drills (scratch home, labvault) | 1 | |
 | 3 | pi-status tile, pi-checkup warning, README section | 1 || ✅ code 2026-11-06: pi-status Overview Backup strip + attention items (`/api/backup`), `pi-checkup backup` domain, `upd` step, README "Nightly backup"; shows real data after the first run |
 | 4 | `restore.sh --role` | | ✅ 2026-11-06 (worker skips `rei`, `mail`, DreamBase; `save.sh --push` refuses on a worker) |
