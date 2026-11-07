@@ -39,7 +39,7 @@ CLOUD_TOOLS=()
 CONTAINER_TOOLS=("docker")
 
 # Network Tools
-NETWORK_TOOLS=("telnet")
+NETWORK_TOOLS=("telnet" "tailscale")
 
 # Terminal Applications
 TERMINAL_APPS=("warp" "ghostty")

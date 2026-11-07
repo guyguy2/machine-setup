@@ -113,7 +113,7 @@ Comprehensive Mac setup script that automates Homebrew installation and configur
 - DEV_CORE_TOOLS: git, gh, node, python, uv, bun
 - DEV_CLI_UTILS: eza, ripgrep, tree, ffmpeg, macmon, glow, inshellisense, scrcpy
 - CONTAINER_TOOLS: docker
-- NETWORK_TOOLS: telnet
+- NETWORK_TOOLS: telnet, tailscale (CLI + tailscaled formula, not the GUI app)
 - TERMINAL_APPS: warp
 - DEV_GUI_APPS: visual-studio-code, docker-desktop, jetbrains-toolbox, opencode, claude, cmux (via manaflow-ai/cmux tap), antigravity-cli
 - PRODUCTIVITY_APPS: todoist, dropbox, macwhisper, iina, bettercmdtab, caskhub, handy, bramble, bentobox
@@ -150,6 +150,22 @@ Enhanced Google Voice call launcher with multi-browser support, contacts, and ca
 ./google-voice-call.zsh "Pizza Place"                       # Call saved contact
 ./google-voice-call.zsh --history                           # View call history
 ./google-voice-call.zsh --list-contacts                     # List contacts
+```
+
+### keep-awake.zsh
+Temporarily keeps the Mac awake with the lid closed (even on battery with no external display) using `pmset disablesleep`, then restores normal sleep behavior automatically when time expires, on Ctrl-C, or when the terminal closes.
+
+**Key features:**
+- Re-runs itself with `sudo` once at startup so reverting `pmset disablesleep 0` never blocks on a password prompt while the lid is closed
+- Signal traps (`EXIT`, `INT`, `TERM`, `HUP`) ensure sleep prevention is turned back off cleanly
+- Supports custom duration (`-m` / `--minutes`, default 60), `--status`, and `--off` recovery flag
+
+**Usage:**
+```bash
+./keep-awake.zsh                # Stay awake for 60 minutes (default)
+./keep-awake.zsh -m 120         # Stay awake for 2 hours
+./keep-awake.zsh --status       # Check whether lid-closed sleep prevention is active
+./keep-awake.zsh --off          # Turn off immediately (e.g. if previously force-killed)
 ```
 
 ## Raspberry Pi (raspberry-pi/)

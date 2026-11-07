@@ -28,6 +28,7 @@ The agent launchers live in `raspberry-pi/bin/` and the status web page in `rasp
 - **backup-dev-environment.zsh** - Orchestrates a comprehensive backup of settings and dotfiles (.zshrc, .gitconfig, Homebrew packages, etc.)
 - **google-voice-call.zsh** - Enhanced Google Voice call launcher with contacts and call history
 - **install-homebrew-new-mac.zsh** - Comprehensive Mac setup script with Homebrew installation and app configuration
+- **keep-awake.zsh** - Temporarily prevents the Mac from sleeping when the lid is closed (even on battery with no display) using `pmset disablesleep`
 
 Each macOS script is executable and includes a `--help` option for detailed usage information:
 
@@ -46,6 +47,10 @@ Each macOS script is executable and includes a `--help` option for detailed usag
 
 # Set up a new Mac with Homebrew
 ./install-homebrew-new-mac.zsh
+
+# Keep Mac awake with the lid closed for 60 minutes (default) or custom duration
+./keep-awake.zsh
+./keep-awake.zsh -m 120
 ```
 
 Make sure scripts have execution permissions: `chmod +x script-name.zsh`
