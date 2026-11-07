@@ -34,6 +34,7 @@ NetworkManager-dispatcher.service
 NetworkManager.service
 NetworkManager-wait-online.service
 nfs-client.target
+pi-backup-system.timer
 regenerate_ssh_host_keys.service
 remote-fs.target
 rp1-test.service
