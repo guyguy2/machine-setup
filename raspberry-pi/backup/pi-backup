@@ -24,6 +24,8 @@ rclone_bin=${PI_BACKUP_RCLONE:-/home/linuxbrew/.linuxbrew/bin/rclone}
 state=${PI_BACKUP_STATE_DIR:-$HOME/.local/state/pi-backup}
 stage=$state/staging
 last=$state/last.json
+logf=$state/pi-backup.log
+history=$state/history.jsonl
 py=/usr/bin/python3
 # The lab Chromium profile: never backed up live (excludes.txt); copied into staging only while Chromium is closed
 # (the lab's shared browser is stopped for the copy: stage_chromium).
@@ -45,8 +47,11 @@ usage: pi-backup <command> [options]
                      didn't fail, else 1 (no network)
   check              forget --prune, then restic check; updates last_check in last.json
   list               print "<group><TAB><path>" for every resolved include (no staging, no network)
+  log [N]            debugging: the last N (default 60) lines of the run log and the last 10 runs of history.jsonl
 
 Exit codes: 0 ok, 1 failed, 2 usage/missing dependency/setup, 3 repo unreachable, 4 finished but incomplete.
+Logs: every real run also appends timestamped lines to <state dir>/pi-backup.log (rotated at 1 MB, 3 kept) and one
+  JSON line per run to <state dir>/history.jsonl (last.json only keeps the latest run). The journal has the same text.
 Env overrides (drills and tests): PI_BACKUP_REPO PI_BACKUP_PASSWORD_FILE PI_BACKUP_RESTIC PI_BACKUP_RCLONE
                                   PI_BACKUP_STATE_DIR PI_BACKUP_HOST
 EOF
@@ -57,6 +62,32 @@ note() { printf '  %s\n' "$*"; }
 warn() { printf 'pi-backup: %s\n' "$*" >&2; }
 die() { local code=$1; shift; warn "$*"; exit "$code"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Run log. start_log (real runs only) sends stdout+stderr both to the journal (as before) and, with a timestamp,
+# to $logf. phase says what the run was doing, so a failure (or a kill by the unit timeout) records where it was.
+phase=init run_started=
+start_log() {
+  local sz
+  sz=$(stat -c %s "$logf" 2>/dev/null || echo 0)
+  if (( sz > 1048576 )); then mv -f "$logf.2" "$logf.3" 2>/dev/null; mv -f "$logf.1" "$logf.2" 2>/dev/null; mv -f "$logf" "$logf.1"; fi
+  exec > >(while IFS= read -r l; do printf '%s\n' "$l"; printf '%(%Y-%m-%dT%H:%M:%S%z)T %s\n' -1 "$l" >>"$logf"; done) 2>&1
+  run_started=$(date -Iseconds)
+  printf '==> pi-backup run starting (pid %s, host %s, repo %s, restic %s)\n' "$$" "$host" "$repo" \
+    "$("$restic_bin" version 2>/dev/null | cut -d' ' -f2)"
+}
+# phase_done <what>: logs how long the phase that just ended took.
+phase_t0=$SECONDS
+phase_done() { printf '  %s took %s s\n' "$1" "$(( SECONDS - phase_t0 ))"; phase_t0=$SECONDS; }
+# log_end <exit code>: the last line of every real run, and its row in history.jsonl.
+log_end() {
+  local rc=$1 fin; fin=$(date -Iseconds)
+  [[ -n $run_started ]] || return 0
+  if (( rc == 0 )); then printf '==> pi-backup run finished: ok\n'; else printf '==> pi-backup run FAILED: exit %s during phase "%s"\n' "$rc" "$phase" >&2; fi
+  printf '{"host":"%s","started":"%s","finished":"%s","exit":%s,"phase":"%s","duration_s":%s}\n' \
+    "$host" "$run_started" "$fin" "$rc" "$phase" "$(( $(date +%s) - $(date -d "$run_started" +%s) ))" >>"$history" 2>/dev/null || true
+  # lines go through the logger pipe asynchronously; let it drain before the process exits
+  sleep 0.2
+}
 
 # ---------------------------------------------------------------------------------------------------------------
 # Python helpers (JSON, SQLite backup API, size estimate). Run isolated (-I) so nothing on disk can shadow stdlib.
@@ -657,7 +688,7 @@ start_tmp() { tmpd=$(mktemp -d -p "$state" .run.XXXXXX); }
 cleanup_tmp() { [[ -z $tmpd ]] || rm -rf "$tmpd"; return 0; }
 # Only for commands holding the lock (run): staging belongs to whoever holds it.
 # A run killed mid-copy still brings the lab browser back.
-cleanup() { lab_browser_start; rm -rf "$stage"; cleanup_tmp; }
+cleanup() { local rc=$?; lab_browser_start; rm -rf "$stage"; cleanup_tmp; log_end "$rc"; }
 
 # Dependencies and setup. Exit 2 with the next step when something is missing.
 check_setup() {
@@ -764,6 +795,13 @@ cmd_list() {
   for i in "${!inc_path[@]}"; do printf '%s\t%s\n' "${inc_group[$i]}" "${inc_path[$i]}"; done
 }
 
+cmd_log() {
+  local n=${1:-60}
+  [[ $n =~ ^[0-9]+$ ]] || { usage >&2; exit 2; }
+  [[ -r $logf ]] && { printf '== %s (last %s lines)\n' "$logf" "$n"; tail -n "$n" "$logf"; } || echo "no run log yet ($logf)"
+  [[ -r $history ]] && { printf '== %s (last 10 runs)\n' "$history"; tail -n 10 "$history"; } || echo "no history yet ($history)"
+}
+
 cmd_status() {
   local -a json=()
   case ${1:-} in --json) json=(--json) ;; "") ;; *) usage >&2; exit 2 ;; esac
@@ -847,6 +885,7 @@ cmd_run() {
   lock
   trap cleanup EXIT
   trap 'exit 130' INT TERM HUP
+  (( dry )) || start_log
   local started rc=0 code out ff xf
   started=$(date -Iseconds)
   start_tmp; errf=$(tmp restic.err)
@@ -854,6 +893,7 @@ cmd_run() {
   # A real run records even a setup failure in last.json, so pi-status shows why the night failed.
   if (( !dry )); then
     local setup_rc=0
+    phase=setup
     (check_setup) || setup_rc=$?
     if (( setup_rc )); then
       pyh write-last file="$last" host="$host" started="$started" exit="$setup_rc" >/dev/null
@@ -877,10 +917,12 @@ cmd_run() {
     (( guard_code == 0 )) || note "a real run would refuse (exit $guard_code), see above"
   fi
 
+  phase=staging; phase_t0=$SECONDS
   say "staging"
   resolve_includes
   stage_all
   note "hermes ${items[hermes]}, sqlite ${items[sqlite]} (${#sqlite_live[@]} files), chromium ${items[chromium]}, pihole ${items[pihole]}"
+  (( dry )) || { note "staging: $(du -sh "$stage" 2>/dev/null | cut -f1), ${#inc_path[@]} include paths"; phase_done staging; }
 
   ff=$(tmp files-from); xf=$(tmp excludes); out=$(tmp restic.out)
   printf '%s\n' "${inc_path[@]}" "$stage" >"$ff"
@@ -904,15 +946,21 @@ cmd_run() {
     exit 0
   fi
 
+  phase=backup
   say "restic backup"
   restic_run "$out" "${backup_args[@]}" || rc=$?
   code=$(classify "$rc")
+  note "restic backup exit $rc -> pi-backup exit $code"
+  phase_done "restic backup"
+  # restic's stderr normally goes unseen on success: keep warnings (unreadable files, retries) in the log
   (( rc == 0 )) || show_err
+  if (( rc == 0 )) && [[ -s $errf ]]; then note "restic stderr:"; tail -n 20 "$errf" | sed 's/^/    /'; fi
   if (( code == 0 )) && any_item_failed; then code=4; fi
 
   # A snapshot exists (exit 0 or 3): apply retention. No prune here; that's the weekly check's job.
   if (( rc == 0 || rc == 3 )); then
     local frc=0
+    phase=forget
     restic_run /dev/null forget --quiet "${grouping[@]}" "${retention[@]}" || frc=$?
     if (( frc != 0 )); then
       show_err; warn "restic forget failed"
@@ -921,6 +969,7 @@ cmd_run() {
     fi
   fi
 
+  phase=write-last
   local -a iargs
   mapfile -t iargs < <(item_args)
   pyh write-last file="$last" host="$host" started="$started" exit="$code" out="$out" "${iargs[@]}" | sed 's/^/  /'
@@ -928,8 +977,10 @@ cmd_run() {
   local final=$code
   # Exit 4 still made a snapshot: an item failing every night mustn't stop prune and check from ever running.
   if (( code == 0 || code == 4 )) && pyh check-due "$last"; then
+    phase=check
     say "weekly: restic forget --prune + check"
     do_check
+    phase_done "forget --prune + check"
     if (( check_code == 0 )); then note "check ok"; else warn "check failed (exit $check_code)"; final=$check_code; fi
   fi
   if (( final == 0 )); then note "done"; else warn "finished with exit $final"; fi
@@ -944,6 +995,7 @@ case ${1:-} in
   status) shift; cmd_status "$@" ;;
   check)  shift; cmd_check "$@" ;;
   list)   shift; cmd_list "$@" ;;
+  log)    shift; cmd_log "$@" ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

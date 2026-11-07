@@ -81,6 +81,8 @@ Fixed 2026-11-06 before building. Change them here first, then in the code.
 | Status | `~/.local/state/pi-backup/last.json` | `/var/lib/pi-backup/last.json` (0644, readable by guy) |
 | Restored marker | `~/.local/state/pi-backup/restored`: one line (`restored <time> from <host>` or `fresh <time>`), written by `pi-restore-state --yes` (not a drill) or `--fresh` | `/var/lib/pi-backup/restored` (0644), same |
 | Staging | `~/.local/state/pi-backup/staging/` (0700; files 0600; removed at the end of every run, success or not) | `/var/lib/pi-backup/staging/` (0700, same rule; only if something needs staging) |
+| Run log (user side only) | `~/.local/state/pi-backup/pi-backup.log`: timestamped copy of the run's output (also in the journal); rotated at 1 MB, 3 kept. `pi-backup log [N]` shows it. Real runs only | none yet: the system job's journal is its log |
+| History (user side only) | `~/.local/state/pi-backup/history.jsonl`: one JSON line per real run (`host, started, finished, exit, phase, duration_s`; `phase` = where it was when it ended) | none yet |
 | Lock | `flock -n` on `<state dir>/lock`; a second run exits 1 with "already running" | same |
 | Role | `~/.config/pi-role`: one line, `main` or `worker` | |
 
