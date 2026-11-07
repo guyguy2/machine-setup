@@ -15,7 +15,8 @@
 ~/.openclaw/cache
 ~/.openclaw/**/tmp
 
-# The live lab Chromium profile: pi-backup copies it into staging instead, only while Chromium is closed.
+# The live lab Chromium profile: pi-backup copies it into staging instead, only while Chromium is closed (it stops
+# and restarts the shared lab browser for that).
 ~/.local/share/agent-lab/chromium
 # Chromium caches and runtime files. Lines starting with agent-lab/chromium/ are also what pi-backup leaves out when
 # it copies the profile (as rsync patterns anchored at the profile).
