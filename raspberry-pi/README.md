@@ -145,7 +145,7 @@ schema and exit codes are in `MULTI-PI.md` ("Interfaces").
 
 | Repo | What | Runs as | When |
 |---|---|---|---|
-| `gdrive-backup:pi-backups/<host>/user` | `backup/includes.txt` + staged copies: Hermes (`hermes backup`), SQLite databases, Pi-hole Teleporter export, the lab Chromium profile (only when Chromium isn't running), gitignored `.env` files in `~/dev` | `guy`: `pi-backup`, user timer | ~03:00 |
+| `gdrive-backup:pi-backups/<host>/user` | `backup/includes.txt` + staged copies: Hermes (`hermes backup`), SQLite databases, Pi-hole Teleporter export, the lab Chromium profile (the shared lab browser is stopped for the copy and restarted), gitignored `.env` files in `~/dev` | `guy`: `pi-backup`, user timer | ~03:00 |
 | `gdrive-backup:pi-backups/<host>/system` | `backup/system-includes.txt`: labvault, `credential.secret`, `/etc/agent-lab`, SSH host keys, agent-lab sudoers | root: `/usr/local/lib/pi-backup/pi-backup-system`, system timer | ~03:30 |
 
 Keeps 7 daily, 4 weekly, 6 monthly; `restic check` runs weekly. Never backed up: Tailscale state, `/etc/machine-id`,

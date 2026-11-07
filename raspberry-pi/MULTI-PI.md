@@ -29,7 +29,7 @@ its `systemd` step) and the Hermes install. They deliberately skip everything be
 
 | # | Topic | Decision | Why |
 |---|---|---|---|
-| 1 | Backup tool | **restic, from apt** (trixie: 0.18) | Encrypted, versioned, deduplicated, one restore command. apt, not Homebrew: a system service (the root timer) depends on it, and `/home/linuxbrew` is writable by `guy` (see Security) | 🟡 code built and reviewed 2026-11-06 (`backup/`; stub-tested only); user steps and first backup pending |
+| 1 | Backup tool | **restic, from apt** (trixie: 0.18) | Encrypted, versioned, deduplicated, one restore command. apt, not Homebrew: a system service (the root timer) depends on it, and `/home/linuxbrew` is writable by `guy` (see Security) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill not yet run |
 | 2 | Passphrase | Master copies in the user's password manager; each Pi keeps owner-only password files for the nightly runs | Without it the backup can't be opened by anyone | |
 | 3 | Drive access | New rclone remote **`gdrive-backup:`**, scope **`drive.file`**, on **the user's own Google OAuth client from day one** | `gdrive:` stays `drive.readonly`. `drive.file` only sees files created by the same OAuth client, so switching clients later would hide the repo || ✅ code 2026-11-06: pi-status Overview Backup strip + attention items (`/api/backup`), `pi-checkup backup` domain, `upd` step, README "Nightly backup"; shows real data after the first run |
 | 4 | Scope | **Everything**: Hermes incl. secrets, sign-ins, `me` store, app data | Restore without re-teaching or re-signing in | ✅ 2026-11-06 (worker skips `rei`, `mail`, DreamBase; `save.sh --push` refuses on a worker) |
@@ -232,7 +232,8 @@ Live SQLite files must not be copied raw. Before each run, into a fresh 0700 sta
 - **Other SQLite**: `sqlite3 <db> ".backup <staging>/..."` for `~/.local/share/mail/mail.db`,
   `~/.local/share/agent-lab/me/facts.db` and `pending.db`, and any other `*.db` found in the include paths.
 - **Pi-hole**: a Teleporter export (`docker exec pihole pihole-FTL --teleporter` or the API) into staging.
-- **Lab Chromium profile**: copy with `lab-chromium.service` stopped for the copy, or skip it (open question).
+- **Lab Chromium profile**: copied with the lab's shared browser (`lab-chromium`, a transient unit from agent-lab
+  `bin/browser start`) stopped for the copy, then started again with the same command line (decided 2026-11-06).
 
 Use `--ignore-inode --ignore-ctime` on the staging paths so unchanged files aren't re-read.
 
@@ -370,7 +371,7 @@ Read in the installed Hermes before wiring: `reference/cli-commands.md` (`hermes
 | Step | What | Depends on | Status |
 |---|---|---|---|
 | 0 | **Rewrite the "not backed up, by choice" rules** so agents don't follow the old policy: this `README.md` (top and section 3 `agents` row), `machine-setup/CLAUDE.md` (Raspberry Pi section), `~/.claude/CLAUDE.md` (`me` section), `agent-lab/me.md`, the `pi-rebuild` memory note. New rule: no secrets in git; everything else in the encrypted restic backup | | ✅ 2026-11-06 (also agent-lab `CLAUDE.md`, `agents.md`, memory notes `rei-on-pi`, `me-data-store`) |
-| 1 | Part A on `raspberrypi`: scripts, `setup`, units, user steps, first backup | own OAuth client, passphrases (user) | 🟡 code built and reviewed 2026-11-06 (`backup/`; stub-tested only); user steps and first backup pending |
+| 1 | Part A on `raspberrypi`: scripts, `setup`, units, user steps, first backup | own OAuth client, passphrases (user) | ✅ set up 2026-11-06: both repos on Drive, timers 03:00 (user) / 03:30 (system), first backups and checks ok (~107 MB on Drive); restore drill not yet run |
 | 2 | Restore drills (scratch home, labvault) | 1 | |
 | 3 | pi-status tile, pi-checkup warning, README section | 1 || ✅ code 2026-11-06: pi-status Overview Backup strip + attention items (`/api/backup`), `pi-checkup backup` domain, `upd` step, README "Nightly backup"; shows real data after the first run |
 | 4 | `restore.sh --role` | | ✅ 2026-11-06 (worker skips `rei`, `mail`, DreamBase; `save.sh --push` refuses on a worker) |
@@ -384,8 +385,11 @@ Read in the installed Hermes before wiring: `reference/cli-commands.md` (`hermes
 - rclone: **Homebrew for `guy`; `setup` copies that static binary root-owned to `/usr/local/lib/pi-backup/rclone`**
   and records its version. `setup --check` (run by `upd` and `pi-checkup`) flags a stale copy. rei and agent-lab keep
   their Homebrew path.
-- Lab Chromium profile: **copied (without caches, ~91 MB) only when Chromium isn't running**; otherwise skipped that
-  night and recorded in `last.json`. `pi-checkup` warns when the last copy is over 14 days old.
+- Lab Chromium profile: **copied (without caches, ~100 MB) only when Chromium isn't running**. The lab's shared
+  browser (`lab-chromium`) runs all day, so a real run stops it for the copy (a few seconds; open tabs are lost, sign-ins
+  kept) and starts it again with the unit's own command line and environment. Anything else using the profile (a
+  `browser login` window) makes it skip that night, recorded in `last.json`; `pi-checkup` warns when the last copy is
+  over 14 days old.
 - DreamBase `photos/`: **skipped** (`photos_sync.py` re-fetches from the shared album; the album URL file is kept).
 - Snapshot layout: **`snapshot/` stays the main Pi's**; a worker restores from it filtered by role, and `save.sh`
   refuses `--push` on a worker. Decide a per-worker folder in step 5 if they drift.

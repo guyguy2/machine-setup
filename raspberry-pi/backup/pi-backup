@@ -25,7 +25,8 @@ state=${PI_BACKUP_STATE_DIR:-$HOME/.local/state/pi-backup}
 stage=$state/staging
 last=$state/last.json
 py=/usr/bin/python3
-# The lab Chromium profile: never backed up live (excludes.txt); copied into staging only while Chromium is closed.
+# The lab Chromium profile: never backed up live (excludes.txt); copied into staging only while Chromium is closed
+# (the lab's shared browser is stopped for the copy: stage_chromium).
 chromium_profile=$HOME/.local/share/agent-lab/chromium
 
 usage() {
@@ -524,17 +525,60 @@ chromium_running() {
   return 1
 }
 
+# The lab's shared browser (agent-lab `browser start`: the transient user unit lab-chromium) runs all day, so the
+# profile would never be copied. A real run stops it for the copy and starts it again with the same command line and
+# environment. Anything else using the profile (a `browser login` window on the desktop) is left alone: skipped.
+lab_unit=lab-chromium
+lab_argv=() lab_env=() lab_stopped=0
+lab_browser_detect() {
+  local exec a e
+  lab_argv=() lab_env=()
+  systemctl --user is-active --quiet "$lab_unit" 2>/dev/null || return 1
+  # The unit's argv, not /proc/<pid>/cmdline (Chromium rewrites that into one string). Split on whitespace: the
+  # launcher's arguments have none.
+  exec=$(systemctl --user show -p ExecStart --value "$lab_unit" 2>/dev/null) || return 1
+  [[ $exec == *"argv[]="*" ; "* ]] || return 1
+  exec=${exec#*argv[]=}; exec=${exec%% ; *}
+  read -r -a lab_argv <<<"$exec"
+  for a in "${lab_argv[@]}"; do
+    if [[ $a == "--user-data-dir=$chromium_profile" || $a == "--user-data-dir=$chromium_real" ]]; then
+      for e in $(systemctl --user show -p Environment --value "$lab_unit" 2>/dev/null); do lab_env+=("--setenv=$e"); done
+      return 0
+    fi
+  done
+  lab_argv=(); return 1
+}
+lab_browser_start() {
+  (( lab_stopped )) || return 0
+  lab_stopped=0
+  if systemd-run --user --quiet --collect --unit="$lab_unit" "${lab_env[@]}" -- "${lab_argv[@]}" &&
+     sleep 3 && systemctl --user is-active --quiet "$lab_unit"; then
+    note "lab browser ($lab_unit) restarted"
+  else
+    warn "couldn't restart the lab browser ($lab_unit): ~/dev/agent-lab/bin/browser start"
+  fi
+}
+
 stage_chromium() {
-  local dest
+  local dest i
   if [[ ! -d $chromium_real ]]; then items[chromium]=skipped; return 0; fi
-  if chromium_running "$chromium_real"; then items[chromium]=skipped-running; return 0; fi
+  if chromium_running "$chromium_real"; then
+    if ! lab_browser_detect; then items[chromium]=skipped-running; return 0; fi
+    if (( ${dry:-0} )); then note "[dry-run] would stop $lab_unit for the profile copy"; items[chromium]=skipped-running; return 0; fi
+    systemctl --user stop "$lab_unit" 2>/dev/null || true
+    lab_stopped=1
+    for i in {1..20}; do chromium_running "$chromium_real" || break; sleep 0.5; done
+    if chromium_running "$chromium_real"; then lab_browser_start; items[chromium]=skipped-running; return 0; fi
+  fi
   dest=$stage/home/${chromium_real#"$HOME"/}
   mkdir -p "$dest"
   if ! rsync -a --exclude-from=<(chromium_rsync_excludes) "$chromium_real/" "$dest/"; then
+    lab_browser_start
     warn "copying the Chromium profile failed"; rm -rf "$dest"; items[chromium]=failed; return 0
   fi
-  # Started while we copied: the copy may be torn, so drop it.
-  if chromium_running "$chromium_real"; then rm -rf "$dest"; items[chromium]=skipped-running; return 0; fi
+  # Started while we copied (by something else): the copy may be torn, so drop it.
+  if chromium_running "$chromium_real"; then lab_stopped=0; rm -rf "$dest"; items[chromium]=skipped-running; return 0; fi
+  lab_browser_start
   items[chromium]=ok
 }
 
@@ -586,7 +630,8 @@ tmp() { printf '%s/%s' "$tmpd" "$1"; }
 start_tmp() { tmpd=$(mktemp -d -p "$state" .run.XXXXXX); }
 cleanup_tmp() { [[ -z $tmpd ]] || rm -rf "$tmpd"; return 0; }
 # Only for commands holding the lock (run): staging belongs to whoever holds it.
-cleanup() { rm -rf "$stage"; cleanup_tmp; }
+# A run killed mid-copy still brings the lab browser back.
+cleanup() { lab_browser_start; rm -rf "$stage"; cleanup_tmp; }
 
 # Dependencies and setup. Exit 2 with the next step when something is missing.
 check_setup() {
