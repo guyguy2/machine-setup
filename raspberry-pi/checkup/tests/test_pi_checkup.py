@@ -134,3 +134,44 @@ def test_shutdown_was_clean():
     cut = "Finished vault-index.service\nmagicsock: disco: node now using 192.0.2.1\n"
     assert sh('shutdown_was_clean && echo clean || echo unclean', stdin=clean) == "clean\n"
     assert sh('shutdown_was_clean && echo clean || echo unclean', stdin=cut) == "unclean\n"
+
+
+# ---------- R-029: exposure (TCP + UDP, global IPv6, the host firewall table) ----------
+
+SS = (
+    'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))\n'
+    'tcp LISTEN 0 128 [::]:8090 [::]:* users:(("caddy",pid=2,fd=4))\n'
+    'tcp LISTEN 0 128 127.0.0.1:8080 0.0.0.0:*\n'
+    'udp UNCONN 0 0 *:8091 *:* users:(("caddy",pid=2,fd=6))\n'
+    'udp UNCONN 0 0 [fe80::1%eth0]:546 [::]:* users:(("NetworkManager",pid=3,fd=28))\n'
+    'tcp LISTEN 0 128 [2001:db8::5]:9000 [::]:*\n'
+    'tcp LISTEN 0 128 100.64.0.1:9001 0.0.0.0:*\n'
+)
+
+
+def test_parse_listeners_tcp_and_udp():
+    assert sh("parse_listeners", stdin=SS).splitlines() == [
+        "tcp 0.0.0.0 22 sshd pid 1",
+        "tcp :: 8090 caddy pid 2",
+        "tcp 127.0.0.1 8080 -",
+        "udp * 8091 caddy pid 2",
+        "udp fe80::1 546 NetworkManager pid 3",
+        "tcp 2001:db8::5 9000 -",
+        "tcp 100.64.0.1 9001 -",
+    ]
+
+
+def test_listener_scope():
+    addrs = ["127.0.0.1", "::1", "100.64.0.1", "fd7a:115c::1", "0.0.0.0", "192.168.1.5", "*", "::",
+             "2601:db8::5", "fe80::1", "fd00::1"]
+    assert sh('for a in "$@"; do listener_scope "$a"; done', *addrs).split() == [
+        "local", "local", "tailnet", "tailnet", "v4", "v4", "v6", "v6", "v6", "lan6", "lan6",
+    ]
+
+
+def test_host_firewall_needs_input_drop_in_its_table():
+    drop = "table inet host {\n\tchain input {\n\t\ttype filter hook input priority filter + 10; policy drop;\n\t}\n}\n"
+    accept = drop.replace("policy drop", "policy accept")
+    fwd_only = drop.replace("hook input", "hook forward")
+    for text, want in ((drop, "yes"), (accept, "no"), (fwd_only, "no"), ("", "no")):
+        assert sh("host_firewall_drops && echo yes || echo no", stdin=text) == want + "\n", text

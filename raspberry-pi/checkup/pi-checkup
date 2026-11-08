@@ -25,6 +25,9 @@ role=$(tr -d '[:space:]' 2>/dev/null < "$HOME/.config/pi-role"); role=${role:-ma
 AGENTS=("Hermes|hermes-dashboard.service hermes-proxy.service" "OpenClaw|openclaw-gateway.service")
 # Ports meant to be reachable from the LAN; everything else should listen on 127.0.0.1 or the tailnet.
 LAN_PORTS=(22 53 8090 8091)
+# UDP: Pi-hole DNS, DreamBase's HTTP/3 (QUIC), Tailscale's WireGuard, the DHCP/DHCPv6 clients, mDNS (avahi-daemon,
+# stock Raspberry Pi OS; its other UDP sockets are random query ports and are skipped).
+LAN_UDP_PORTS=(53 8091 41641 68 546 5353)
 # Pages on the LAN to probe, name|url; {ts} is this Pi's tailnet DNS name (connections go to 127.0.0.1). This repo is
 # public, so sites with private names or paths are read from the private websites repo's sites.json (as pi-status does).
 WEBSITES=()
@@ -118,6 +121,31 @@ serve_routes() {
 # shutdown_was_clean < the last lines of the previous boot's journal (journalctl -b -1 -o cat)
 shutdown_was_clean() { grep -qE 'Journal stopped|Syncing filesystems and block devices|systemd-shutdown'; }
 
+# parse_listeners < `ss -ltunH[p]`: "proto addr port process" per socket (addr without brackets/%iface, * = all;
+# process "-" when unknown)
+parse_listeners() {
+  local netid local_ rest addr port proc
+  while read -r netid _ _ _ local_ _ rest; do
+    [[ -n $local_ ]] || continue
+    port=${local_##*:}; addr=${local_%:*}; addr=${addr%%\%*}; addr=${addr//[\[\]]/}
+    proc=$(grep -oE '\("[^"]+",pid=[0-9]+' <<<"$rest" | head -1 | tr -d '("' | sed 's/,pid=/ pid /')
+    echo "$netid $addr $port ${proc:--}"
+  done
+}
+# listener_scope <addr>: local | tailnet | v4 (IPv4 LAN or all IPv4) | v6 (all interfaces incl. IPv6, or a global
+# 2000::/3 address: reachable on the Pi's public IPv6 address unless something drops it) | lan6 (link-local/ULA)
+listener_scope() {
+  case $1 in
+    127.*|::1) echo local ;;
+    100.*|fd7a:*) echo tailnet ;;
+    \*|::) echo v6 ;;
+    [23][0-9a-f][0-9a-f][0-9a-f]:*) echo v6 ;;
+    *:*) echo lan6 ;;
+    *) echo v4 ;;
+  esac
+}
+# host_firewall_drops < `nft list table inet host`: true when it has an input-hook chain with policy drop
+host_firewall_drops() { grep -E 'hook input' | grep -q 'policy drop'; }
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -436,17 +464,21 @@ check_updates() {
 
 # ---------- security: exposure, firewall, ssh, secrets, tailnet ----------
 check_security() {
-  # Listeners on every interface (or the LAN address) that aren't meant for the LAN.
-  local line addr port proc seen=" "
-  while read -r line; do
-    addr=$(awk '{print $4}' <<<"$line"); port=${addr##*:}; addr=${addr%:*}; addr=${addr%%\%*}; addr=${addr//[\[\]]/}
-    [[ $addr == 127.* || $addr == ::1 || $addr == 100.* || $addr == fd7a:* ]] && continue
-    [[ " ${LAN_PORTS[*]} " == *" $port "* || $seen == *" $port "* ]] && continue
-    seen+="$port "
-    proc=$(grep -oE '\("[^"]+",pid=[0-9]+' <<<"$line" | head -1 | tr -d '("' | sed 's/,pid=/ pid /')
-    warn security.listener "port $port (${proc:-unknown process}) listens on ${addr:-all interfaces}, not just localhost/tailnet"
-  done < <(S ss -ltnHp || ss -ltnH)
-  [[ $seen == " " ]] && ok "only ports ${LAN_PORTS[*]} are open to the LAN"
+  # Listeners (TCP and UDP) on every interface (or the LAN address) that aren't meant for the LAN.
+  local proto addr port proc scope allowed seen=" " v6open=" "
+  while read -r proto addr port proc; do
+    scope=$(listener_scope "$addr")
+    [[ $scope == local || $scope == tailnet ]] && continue
+    # tailscaled's WireGuard port is meant to be reachable from the internet
+    [[ $scope == v6 && $proc != tailscaled* && $v6open != *" $proto/$port "* ]] && v6open+="$proto/$port "
+    if [[ $proto == udp ]]; then allowed=" ${LAN_UDP_PORTS[*]} "; [[ $proc == avahi-daemon* ]] && continue
+    else allowed=" ${LAN_PORTS[*]} "; fi
+    [[ $allowed == *" $port "* || $seen == *" $proto/$port "* ]] && continue
+    seen+="$proto/$port "
+    [[ $proc == - ]] && proc="unknown process"
+    warn security.listener "$proto port $port ($proc) listens on ${addr/#\*/all interfaces}, not just localhost/tailnet"
+  done < <({ S ss -ltunHp || ss -ltunH; } | parse_listeners)
+  [[ $seen == " " ]] && ok "only TCP ${LAN_PORTS[*]} and UDP ${LAN_UDP_PORTS[*]} are open to the LAN"
 
   # Ad-hoc file servers left behind by earlier sessions.
   local pid
@@ -458,9 +490,17 @@ check_security() {
     warn security.rpcbind "rpcbind runs with no NFS in use (sudo systemctl disable --now rpcbind.service rpcbind.socket nfs-blkmap; sudo systemctl mask rpcbind.service rpcbind.socket nfs-blkmap)"
   fi
 
+  # The host firewall is its own nftables table (table inet host, coexisting with Docker's and Tailscale's rules)
+  # with an input chain that drops by default; any other chain with policy drop doesn't count. (R-029)
+  local global6 fw=0
+  global6=$(ip -6 -o addr show scope global 2>/dev/null | awk '$2 != "tailscale0" && $4 !~ /^fd/ {print $2}' | sort -u | paste -sd ' ')
   if can_sudo; then
-    if S nft list ruleset | grep -E 'hook input' | grep -v ts-input | grep -q 'policy drop'; then ok "host firewall drops unsolicited input"
-    else warn security.firewall "no host firewall (input policy accept): every LAN listener is reachable"; fi
+    if S nft list table inet host 2>/dev/null | host_firewall_drops; then
+      fw=1; ok "host firewall (table inet host) drops unsolicited input"
+    else warn security.firewall "no host firewall (no table inet host with an input chain policy drop): every LAN listener is reachable"; fi
+    if [[ -n $global6 && $v6open != " " ]] && (( ! fw )); then
+      warn security.ipv6-global "$(wc -w <<<"$v6open") listener(s) on all interfaces are reachable on this Pi's global IPv6 address ($global6), with no host firewall: ${v6open# }(only the router's IPv6 firewall stands between them and the internet)"
+    fi
     local sshd
     sshd=$(S sshd -T)
     grep -qx 'passwordauthentication yes' <<<"$sshd" && warn security.ssh-password "sshd allows password logins"

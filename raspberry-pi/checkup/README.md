@@ -21,8 +21,8 @@
 health (load, temperature, throttling, RAM/swap, disks, kernel vs reboot, OOM, SD errors, unclean shutdown, journal), services
 (always-on units and timers, recurring failures, tailnet routes, websites and their certificates), docker (containers, compose
 services, unpinned `:latest` images, unused images, Pi-hole versions and image tag), repos (git state of `~/dev`, untracked folders, broken links, bogus
-lockfile entries), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (LAN
-listeners, ad-hoc servers, rpcbind, firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
+lockfile entries), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
+listeners, listeners reachable on a global IPv6 address, ad-hoc servers, rpcbind, the `table inet host` firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
 agents (Hermes/OpenClaw dashboards up and answering, the Hermes Telegram gateway, shared skills, gws/gh/Claude logins), backup (`pi-backup status` for both
 restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days),
 drift (snapshot vs this machine, links `restore.sh` would make,
