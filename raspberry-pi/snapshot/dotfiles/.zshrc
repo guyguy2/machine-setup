@@ -133,7 +133,7 @@ PROMPT+=' $(git_prompt_info)'
 
 # ---------------------------------------------------------------------------
 # upd: update apt packages + kernel, Pi firmware, manually-installed tools,
-# shallow-update (depth 1) every git repo under ~/dev (depth 1-2), and back up + push
+# update every git repo under ~/dev (depth 1-2; own repos: pull --ff-only, see gpull), and back up + push
 # machine settings; the last two run every 5th run.
 # ---------------------------------------------------------------------------
 _upd_step() { print -P "\n%F{cyan}==>%f %B$1%b" }
@@ -154,7 +154,7 @@ _upd_on_hold() { grep -qx "$1" $HOME/dev/agent-lab/on-hold 2>/dev/null }
 # Record something that went wrong, for the end-of-run summary. A file, not an array: _upd_sub runs steps in a pipe subshell.
 _upd_note() { print -r -- "$1" >> $_upd_log }
 
-# OpenClaw: npm install in ~/dev/openclaw_node (~/dev/openclaw is the source checkout)
+# OpenClaw: npm install in ~/dev/openclaw_node (no source checkout is kept; read the docs in node_modules/openclaw)
 _upd_openclaw() {
   # Resolve the symlink (into machine-setup/services): npm run through it writes ../ paths into package-lock.json
   local dir=$HOME/dev/openclaw_node cur latest
@@ -185,35 +185,47 @@ _upd_hermes() {
   return $rc
 }
 
-# Shallow-update the git repo in the current dir (or $1): fetch only the newest
-# commit of the upstream branch and reset to it, so history never accumulates.
-# Skips repos with uncommitted changes to tracked files. Prints a one-line result.
+# Update the git repo in the current dir (or $1). Skips repos with uncommitted changes to tracked files.
+# Prints a one-line result.
+# - Own repos (upstream remote under github.com/guyguy2): a normal `git pull --ff-only` with full history (unshallowed
+#   once if an older version of this function left the clone shallow). It never rewrites local work: if the Pi's
+#   branch has diverged from GitHub, the pull fails and says so. (agent-lab/reviews R-044)
+# - Upstream reference clones (anyone else's repo): fetch only the newest commit and reset to it, so history never
+#   accumulates. Skipped when any local branch has unpushed commits, since the reset and gc would lose them.
 gpull() {
-  local repo=${1:-.} before after
+  local repo=${1:-.} before after up
   git -C $repo rev-parse --abbrev-ref '@{u}' &>/dev/null || { echo "no upstream, skipped"; return 0 }
   if [[ -n $(git -C $repo status --porcelain --untracked-files=no) ]]; then
     print -P "%F{red}skipped%f (uncommitted changes)"; return 1
   fi
-  if [[ $(git -C $repo rev-list --count '@{u}..HEAD' 2>/dev/null) -gt 0 ]]; then
-    print -P "%F{red}skipped%f (unpushed commits)"; return 1
-  fi
+  up=$(git -C $repo rev-parse --abbrev-ref '@{u}')
   before=$(git -C $repo rev-parse HEAD)
   # Big repos take minutes with no output, so say we're working; the note is erased once there's a result
   local note="fetching... "
   print -n $note
-  # Only the tracked branch: a bare `fetch --depth 1` grabs every remote branch and tag (thousands in hermes-agent)
-  local up=$(git -C $repo rev-parse --abbrev-ref '@{u}')
-  git -C $repo fetch --depth 1 --no-tags --quiet ${up%%/*} ${up#*/} && git -C $repo reset --hard --quiet '@{u}' || {
-    print -n "\e[${#note}D\e[K"; print -P "%F{red}update failed%f"; return 1
-  }
+  if [[ $(git -C $repo remote get-url ${up%%/*} 2>/dev/null) == (https://github.com/|git@github.com:)guyguy2/* ]]; then
+    { [[ $(git -C $repo rev-parse --is-shallow-repository) == false ]] || git -C $repo fetch --unshallow --quiet } &&
+      git -C $repo pull --ff-only --quiet || {
+      print -n "\e[${#note}D\e[K"
+      print -P "%F{red}update failed%f (diverged from $up? see: git -C ${repo/#$HOME/~} status)"; return 1
+    }
+  else
+    if git -C $repo for-each-ref --format='%(upstream:track)' refs/heads | grep -q ahead; then
+      print -n "\e[${#note}D\e[K"; print -P "%F{red}skipped%f (unpushed commits on a local branch)"; return 1
+    fi
+    # Only the tracked branch: a bare `fetch --depth 1` grabs every remote branch and tag (thousands in big repos)
+    git -C $repo fetch --depth 1 --no-tags --quiet ${up%%/*} ${up#*/} && git -C $repo reset --hard --quiet '@{u}' || {
+      print -n "\e[${#note}D\e[K"; print -P "%F{red}update failed%f"; return 1
+    }
+    # Each shallow fetch adds a pack and strands the previous commit's objects; drop them or .git grows forever
+    git -C $repo reflog expire --expire=now --all && git -C $repo gc --prune=now --quiet
+  fi
   print -n "\e[${#note}D\e[K"
-  # Each shallow fetch adds a pack and strands the previous commit's objects; drop them or .git grows forever
-  git -C $repo reflog expire --expire=now --all && git -C $repo gc --prune=now --quiet
   after=$(git -C $repo rev-parse HEAD)
   [[ $before == $after ]] && echo "up to date" || echo "updated ${before[1,7]} -> ${after[1,7]}"
 }
 
-# Shallow-update every repo under ~/dev
+# Update every repo under ~/dev (see gpull)
 _upd_repos() {
   local git_dir repo
   for git_dir in $HOME/dev/{*,*/*}/.git(N/); do
@@ -388,16 +400,23 @@ upd() {
   if command -v brew >/dev/null; then
     _upd_step "Homebrew"
     # --yes: Homebrew 7 asks for confirmation by default (ask mode)
-    # gcloud-cli is an auto_updates cask, which plain `brew upgrade` skips
-    brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli && brew cleanup ||
+    # gcloud-cli and antigravity-cli are auto_updates casks, which plain `brew upgrade` skips
+    brew update && brew upgrade --yes && brew upgrade --yes --cask --greedy gcloud-cli antigravity-cli && brew cleanup ||
       _upd_note "Homebrew update failed"
   fi
 
   if command -v npm >/dev/null; then
     _upd_step "npm global packages (e.g. pyright)"
-    # npm and corepack come with apt's nodejs, so apt updates them
-    local -a _npm_pkgs=(${(f)"$(npm ls -g --depth=0 --json 2>/dev/null | jq -r '.dependencies // {} | keys[]' | grep -vxE 'npm|corepack')"})
-    if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]/%/@latest}" || _upd_note "npm global update failed"; else echo "none"; fi
+    # npm and corepack come with apt's nodejs, so apt updates them.
+    # Supply-chain delay (agent-lab/reviews R-083): /usr/etc/npmrc sets min-release-age=7, so only releases at least
+    # a week old are eligible. `npm outdated` reports the newest eligible version, which can be OLDER than the one
+    # installed; upgrade only when it's newer, so the delay never downgrades anything.
+    local -a _npm_pkgs=(${(f)"$(npm outdated -g --json 2>/dev/null |
+      jq -r 'to_entries[] | select(.key != "npm" and .key != "corepack") | "\(.key) \(.value.current) \(.value.latest)"' |
+      while read -r _p _cur _new; do
+        [[ $_cur != $_new && $(printf '%s\n%s\n' $_cur $_new | sort -V | tail -1) == $_new ]] && echo "$_p@$_new"
+      done)"})
+    if (( $#_npm_pkgs )); then sudo npm install -g --no-fund "${_npm_pkgs[@]}" || _upd_note "npm global update failed"; else echo "up to date"; fi
   fi
 
   if command -v uv >/dev/null && [[ -n "$(uv tool list 2>/dev/null | grep -v '^No tools')" ]]; then
