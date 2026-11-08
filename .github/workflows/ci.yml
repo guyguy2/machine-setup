@@ -32,9 +32,12 @@ jobs:
           fail=0
           for f in $(git ls-files); do
             [ -f "$f" ] || continue
-            case $(head -n1 "$f") in
+            first=; IFS= read -r first < "$f" || true
+            case $first in
               '#!'*bash*|'#!/bin/sh'*)
-                echo "$f"; bash -n "$f" || fail=1; shellcheck -S warning "$f" || fail=1 ;;
+                echo "$f"; bash -n "$f" || fail=1
+                # snapshot/ holds copies of this Pi's files (save.sh), not this repo's code: syntax only
+                case $f in raspberry-pi/snapshot/*) ;; *) shellcheck -S warning "$f" || fail=1 ;; esac ;;
             esac
           done
           exit $fail

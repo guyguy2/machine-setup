@@ -4,7 +4,7 @@
 # drift.hooks warns when it isn't set). Skip in an emergency: git commit --no-verify.
 #   1. gitleaks on the staged changes (brew install gitleaks)
 #   2. this Pi's tailnet name in the staged lines (save.sh checks the snapshot the same way; write <tailnet>)
-#   3. bash -n and shellcheck -S warning on staged bash scripts; the pi-checkup tests when checkup/ is staged
+#   3. bash -n and shellcheck -S warning on staged bash scripts (snapshot/: bash -n only); the pi-checkup tests when checkup/ is staged
 # CI (.github/workflows/ci.yml) runs 1 and 3 on every push.
 set -e
 root=$(git rev-parse --show-toplevel)
@@ -25,9 +25,12 @@ fi
 
 for f in $(git diff --cached --name-only --diff-filter=ACMR); do
   [ -f "$root/$f" ] || continue
-  case $(head -n1 "$root/$f") in
+  first=; IFS= read -r first < "$root/$f" || true
+  case $first in
     '#!'*bash*|'#!/bin/sh'*)
       bash -n "$root/$f" || fail=1
+      # snapshot/ holds copies of this Pi's files (save.sh commits them), not this repo's code: syntax only
+      case $f in raspberry-pi/snapshot/*) continue ;; esac
       if command -v shellcheck >/dev/null 2>&1; then shellcheck -S warning "$root/$f" || fail=1; fi ;;
   esac
 done
