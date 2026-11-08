@@ -4,19 +4,21 @@
 # backup (raspberry-pi/backup/) with pi-restore-state. What's left by hand is listed at the end.
 # Usage: restore.sh [--role main|worker] [--dry-run] [--only step,step,...]
 # Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
-#                            pihole agents pi-status rei mail shell systemd
-# --role: main (the default: every step) or worker (skips the main-only steps rei and mail, and DreamBase in the
-#   systemd step; see MULTI-PI.md). The flag beats ~/.config/pi-role, which beats the default; a real run writes
+#                            pihole agents pi-status rei mail lab shell systemd
+# --role: main (the default: every step) or worker (skips the main-only steps rei and mail, DreamBase and
+#   hermes-gateway in the systemd step, and Pi-hole's local DNS record; see MULTI-PI.md). The flag beats ~/.config/pi-role, which beats the default; a real run writes
 #   the role to ~/.config/pi-role so save.sh and upd know it. snapshot/ is the main Pi's: a worker restores from it.
 # Safe to re-run. Existing files are moved to ~/.pi-restore-backup-<timestamp>/.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail shell systemd)
-# The only per-role filter: what a worker skips. Step names, plus "dreambase" (~/dev/websites/install.sh, run in the
-# systemd step). Everything else runs on both, including pihole (the worker runs a second Pi-hole) and pi-status.
-main_only=(rei mail dreambase)
+all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail lab shell systemd)
+# The only per-role filter: what a worker skips. Step names, plus "dreambase" (~/dev/websites/install.sh in the
+# systemd step, and the Pi-hole local DNS record for it) and "hermes-gateway" (the Telegram bot: one per bot token).
+# The systemd step skips user units whose names start with one of these. Everything else runs on both, including
+# pihole (the worker runs a second Pi-hole), pi-status and lab.
+main_only=(rei mail dreambase hermes-gateway)
 brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
 role_file=$HOME/.config/pi-role
 
@@ -62,6 +64,13 @@ role_skips() {
   local s
   [[ $role == main ]] && return 1
   for s in "${main_only[@]}"; do [[ $s == "$1" ]] && return 0; done
+  return 1
+}
+# unit_role_skips <unit>: true when this Pi's role doesn't enable it (its name starts with a main_only entry).
+unit_role_skips() {
+  local s
+  [[ $role == main ]] && return 1
+  for s in "${main_only[@]}"; do [[ $1 == "$s"* ]] && return 0; done
   return 1
 }
 # want <step>: asked for (all steps, or --only), and run by this role.
@@ -290,6 +299,30 @@ if want links; then
   link_dir "$here/backup/pi-restore-state" "$HOME/.local/bin/pi-restore-state"
 fi
 
+# pihole_local_dns <pihole.toml>: the main Pi's one local DNS record, "<LAN IP> <tailnet name>", so devices on the
+# home network that use this Pi-hole reach this Pi's tailnet-named sites (DreamBase) over the LAN, without Tailscale.
+# Both values are read from this machine at run time (none in git; a new Pi gets its own). It adds the record only
+# when Pi-hole has no local DNS records at all; any other list is left alone and reported. pi-checkup checks it too.
+pihole_local_dns() {
+  local toml=$1 lan name want cur
+  lan=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p')
+  name=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' 2>/dev/null | sed 's/\.$//')
+  if [[ -z $lan || -z $name ]]; then
+    echo "  local DNS record: no LAN address or Tailscale isn't signed in yet; after 'sudo tailscale up' re-run ./restore.sh --only pihole"
+    return 0
+  fi
+  want="$lan $name"
+  if [[ -r $toml ]] && grep -qF "\"$want\"" "$toml"; then echo "  local DNS record already there ($want)"; return 0; fi
+  if would "add Pi-hole local DNS record '$want' if Pi-hole has none (sudo docker exec pihole pihole-FTL --config dns.hosts)"; then
+    cur=$(sudo docker exec pihole pihole-FTL --config dns.hosts 2>/dev/null) || { echo "  local DNS record: can't read dns.hosts (is the pihole container up?)"; return 0; }
+    if [[ $cur == "[]" ]]; then
+      sudo docker exec pihole pihole-FTL --config dns.hosts "[\"$want\"]" >/dev/null && echo "  added local DNS record $want"
+    else
+      echo "  Pi-hole already has local DNS records ($cur) but not '$want': check them in the admin UI (Settings > Local DNS Records)"
+    fi
+  fi
+}
+
 if want pihole; then
   say "Pi-hole (docker compose in ~/dev/pihole; DNS on port 53, admin UI on 127.0.0.1:8081)"
   ph=$here/services/pihole
@@ -302,6 +335,8 @@ if want pihole; then
       fi
     fi
     if would "(cd $ph && sudo docker-compose up -d --wait)"; then (cd "$ph" && sudo docker-compose up -d --wait); fi
+    if role_skips dreambase; then echo "  local DNS record: skipped (main only)"
+    else pihole_local_dns "$ph/etc-pihole/pihole.toml"; fi
   fi
 fi
 
@@ -408,6 +443,25 @@ if want mail; then
 MSG
 fi
 
+if want lab; then
+  say "agent-lab units (~/dev/agent-lab/tools/systemd): vault-index timer (hourly vault index), lab Chromium (shared browser)"
+  lab=$HOME/dev/agent-lab
+  ud=$HOME/.config/systemd/user
+  if [[ ! -d $lab/tools/systemd ]]; then echo "  ~/dev/agent-lab not cloned (private; run the github and repos steps)"
+  else
+    for u in vault-index.service vault-index.timer; do link_dir "$lab/tools/systemd/$u" "$ud/$u"; done
+    run systemctl --user daemon-reload
+    # Enabled, not started: the index reads Google Drive through rclone, which comes back with pi-restore-state.
+    run systemctl --user enable vault-index.timer
+    # lab-chromium.service: agent-lab's own installer links it, enables it and reports linger.
+    if [[ -L $ud/lab-chromium.service && $(readlink -f "$ud/lab-chromium.service") == "$(readlink -f "$lab/tools/systemd/lab-chromium.service")" ]]; then
+      echo "  $ud/lab-chromium.service already linked"
+    elif ! have uv; then echo "  uv not installed (run the brew step): lab Chromium not set up"
+    else run "$lab/bin/browser" install-service || step_failed lab
+    fi
+  fi
+fi
+
 if want shell; then
   say "login shell -> zsh"
   zsh_path=$(command -v zsh || true)
@@ -426,11 +480,20 @@ if want systemd; then
   else echo "  ~/dev/websites not cloned (private; run the github and repos steps): DreamBase not set up"; fi
   if need systemd-user-enabled.txt; then
     run systemctl --user daemon-reload
-    # Only enable user units whose file we restored; stock ones come with the image.
+    # Only enable user units whose file we restored or a step linked; stock ones come with the image. A unit that
+    # was enabled on the old Pi but has no unit file here is listed, not ignored: its repo or step is missing.
+    nofile=()
     while read -r u; do
-      [[ -f $HOME/.config/systemd/user/$u ]] && run systemctl --user enable "$u"
+      [[ -n $u ]] || continue
+      if unit_role_skips "$u"; then echo "  $u: not enabled (main only)"; continue; fi
+      if [[ -f $HOME/.config/systemd/user/$u ]]; then run systemctl --user enable "$u"
+      elif ! systemctl --user cat "$u" >/dev/null 2>&1; then nofile+=("$u"); fi
     done < "$snap/systemd-user-enabled.txt"
+    (( ${#nofile[@]} )) && echo "  enabled on the old Pi but no unit file here (its repo or restore step is missing; set it up, then re-run --only systemd): ${nofile[*]}"
   fi
+  # User services start at boot without a login only with linger (pi-status, DreamBase, the Telegram gateway).
+  if [[ $(loginctl show-user "$USER" -p Linger --value 2>/dev/null) == yes ]]; then echo "  linger already on"
+  else run sudo loginctl enable-linger "$USER"; fi
   if [[ -f $snap/systemd-system-enabled.txt ]]; then
     now=$(mktemp); systemctl list-unit-files --state=enabled --no-legend | awk '{print $1}' | sort > "$now"
     missing=$(comm -23 "$snap/systemd-system-enabled.txt" "$now" | tr '\n' ' ')

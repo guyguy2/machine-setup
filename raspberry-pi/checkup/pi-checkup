@@ -36,6 +36,12 @@ SITES_JSON=~/dev/websites/sites.json
 SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev/pihole/.env ~/.config/gh/hosts.yml
   ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc
   ~/.config/pi-backup/restic-password)
+# Pi-hole settings changed outside compose (pihole.toml "### CHANGED" without "(env)") that are expected: dns.hosts is
+# the main Pi's local DNS record (restore.sh's pihole step writes it, checked below); webserver.api.pwhash is the hash of
+# FTLCONF_webserver_api_password (.env); files.macvendor is the image's own.
+# Any other key lives only in etc-pihole/ (the Teleporter backup), so a rebuild would lose it: move it to compose.
+PIHOLE_TOML=~/dev/pihole/etc-pihole/pihole.toml
+PIHOLE_UI_KEYS=(dns.hosts webserver.api.pwhash files.macvendor)
 # Warnings the user has looked at and accepted, by key (shown as INFO "accepted"). Add keys here, not in your head.
 ACCEPTED=()
 
@@ -78,6 +84,22 @@ unpinned_images() {
 links_drift() {
   sed -nE -e "s#^  linked ([^ ]+) -> .*#\1 is missing#p" -e "s#^  ([^ ]+) exists and is not this repo's .*#\1 exists but isn't the repo's link#p" \
     | sed "s#^$HOME/#~/#"
+}
+# pihole_ui_keys < pihole.toml: dotted keys marked "### CHANGED" that weren't set by an FTLCONF_ variable ("(env)")
+pihole_ui_keys() {
+  awk '/^[[:space:]]*#/ { next }
+       /^[[:space:]]*\[[A-Za-z.]+\][[:space:]]*$/ { sec = $0; gsub(/[][:space:][]/, "", sec); next }
+       /^[[:space:]]*[A-Za-z_]+[[:space:]]*=/ { key = $0; sub(/^[[:space:]]*/, "", key); sub(/[[:space:]]*=.*/, "", key) }
+       /### CHANGED/ && !/### CHANGED \(env\)/ { print sec "." key }'
+}
+# pihole_dns_hosts < pihole.toml: the local DNS records in [dns] hosts, one "IP name" per line
+pihole_dns_hosts() {
+  awk '/^[[:space:]]*#/ { next }
+       /^[[:space:]]*\[[A-Za-z.]+\][[:space:]]*$/ { sec = $0; gsub(/[][:space:][]/, "", sec); next }
+       sec == "dns" && /^[[:space:]]*hosts[[:space:]]*=/ { in_h = 1 }
+       in_h { line = $0; done = (line ~ /\]/)
+              while (match(line, /"[^"]*"/)) { print substr(line, RSTART + 1, RLENGTH - 2); line = substr(line, RSTART + RLENGTH) }
+              if (done) in_h = 0 }'
 }
 # save_sh_lists <save.sh>: the text of its dotfiles=( ) and regenerated=( ) arrays (paths save.sh covers)
 save_sh_lists() { sed -n -e '/^dotfiles=(/,/^)/p' -e '/^regenerated=(/,/^)/p' "$1"; }
@@ -411,6 +433,21 @@ check_docker() {
     elif [[ $newest != "${pinned##*:}" && $(printf '%s\n' "$newest" "${pinned##*:}" | sort -V | tail -1) == "$newest" ]]; then
       warn docker.pihole-tag "Pi-hole $newest is out, compose pins ${pinned##*:} (read the release notes, bump the tag, run upd)"
     else ok "Pi-hole image tag ${pinned##*:} is the newest release"; fi
+  fi
+  # Settings that live only in Pi-hole's data, not in compose (R-039), and the main Pi's local DNS record.
+  if [[ -r $PIHOLE_TOML ]]; then
+    local k extra=() want rec
+    while read -r k; do [[ -n $k && " ${PIHOLE_UI_KEYS[*]} " != *" $k "* ]] && extra+=("$k"); done < <(pihole_ui_keys < "$PIHOLE_TOML")
+    if (( ${#extra[@]} )); then warn docker.pihole-ui "Pi-hole settings changed in the UI, not in compose (a rebuild loses them; only the Teleporter backup has them): ${extra[*]} (add FTLCONF_ variables to ~/dev/pihole/docker-compose.yml)"
+    else ok "Pi-hole's settings come from compose (plus the expected ${PIHOLE_UI_KEYS[*]})"; fi
+    if [[ $role == main ]]; then
+      want="$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p') $(ts_name)"
+      rec=$(pihole_dns_hosts < "$PIHOLE_TOML")
+      if [[ $want == " "* || $want == *" " ]]; then info "no LAN address or tailnet name: local DNS record not checked"
+      elif grep -qxF "$want" <<<"$rec"; then ok "Pi-hole resolves this Pi's tailnet name to its LAN address"
+      elif grep -qE " ${want#* }\$" <<<"$rec"; then warn docker.pihole-dns "Pi-hole's local DNS record for this Pi's tailnet name points at an old LAN address (fix it in the admin UI: Settings > Local DNS Records)"
+      else warn docker.pihole-dns "Pi-hole has no local DNS record for this Pi's tailnet name, so LAN devices reach DreamBase only over Tailscale (fix: restore.sh --only pihole)"; fi
+    fi
   fi
   info "disk: $(docker system df --format '{{.Type}} {{.Size}} ({{.Reclaimable}} reclaimable)' | paste -sd ';' | sed 's/;/; /g')"
 }

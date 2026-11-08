@@ -75,13 +75,14 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `github` | `gh auth login` (device code) + `gh auth setup-git` | |
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
 | `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills` | pi-checkup `drift.links` warns about any that are missing |
-| `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
+| `pihole` | asks for the admin password, then `docker-compose up -d`; on the main Pi adds the local DNS record `<LAN IP> <this Pi's tailnet name>` (read on the Pi at run time; only when Pi-hole has none) so home-network devices reach DreamBase without Tailscale | `services/pihole/` |
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data comes back with `pi-restore-state` (section 4), not this step | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `rei` | the REI dashboard: clones the private repo to `~/dev/rei` (needs the `github` step), `uv sync`, its `deploy/pi/install.sh` (links and enables `rei.service` and `rei-proxy.service`; `rei-vault-sync.timer` only once the rclone remote `gdrive:` exists), then `tailscale serve --https=8446` (tailnet only). Prints its manual follow-ups (section 4) | `~/dev/rei` |
 | `mail` | the email sorter behind Home Base's Emails tab: clones the private repo to `~/dev/mail` (needs the `github` step), `uv sync`, links and enables `mail-sync.timer` (every hour). Needs the gws Gmail sign-in and Claude Code signed in; its data (`~/.local/share/mail`) comes back with `pi-restore-state`; without a backup, `uv run mail bootstrap` relearns the last two weeks | `~/dev/mail` |
+| `lab` | agent-lab's units: links `vault-index.{service,timer}` from `~/dev/agent-lab/tools/systemd` and enables the timer (hourly Obsidian vault index; needs the rclone remote from `pi-restore-state`); lab Chromium via agent-lab's `bin/browser install-service` | `~/dev/agent-lab` |
 | `shell` | login shell → zsh | |
-| `systemd` | enables the restored user units that were enabled before (only pi-status; the agents stay off) | `snapshot/systemd-user-enabled.txt` |
+| `systemd` | DreamBase (`~/dev/websites/install.sh`), then enables the user units that were enabled before and have a unit file here (pi-status, `hermes-gateway.service` on the main Pi only, ...; the agent dashboards stay off), lists enabled units that have no unit file, turns on linger | `snapshot/systemd-user-enabled.txt` |
 
 ## 4. Finish by hand (user; also printed at the end of restore.sh)
 
@@ -267,9 +268,11 @@ raspberry-pi/
 ```
 
 `.env`, `etc-pihole/` and `node_modules/` stay local (gitignored). Pi-hole's whole config is in its compose file:
-upstream DNS 8.8.8.8/8.8.4.4, Pi-hole's default blocklist, no local DNS records. `etc-pihole/` is rebuilt on first
-start. To change Pi-hole settings, use the `pihole` Claude skill or the admin UI; put anything that should survive
-a rebuild into the compose file as an `FTLCONF_` variable.
+upstream DNS 8.8.8.8/8.8.4.4, Pi-hole's default blocklist, and one local DNS record (this Pi's tailnet name → its LAN
+IP, written by the `pihole` step because both values are per-Pi and the repo is public). `etc-pihole/` is rebuilt on
+first start (the nightly backup keeps a Teleporter export of it). To change Pi-hole settings, use the `pihole` Claude
+skill or the admin UI; put anything that should survive a rebuild into the compose file as an `FTLCONF_` variable
+(pi-checkup's `docker.pihole-ui` warns about settings that are only in `etc-pihole/`).
 
 ### Services and ports
 
@@ -278,6 +281,9 @@ a rebuild into the compose file as an `FTLCONF_` variable.
 | pi-status website | user unit `pi-status.service` (enabled) | 127.0.0.1:8080 | `https://raspberrypi.<tailnet>.ts.net` |
 | Hermes dashboard | user unit `hermes-dashboard.service` | 127.0.0.1:9119 | `:8443/hermes/` (through `hermes-proxy.service`, Caddy on 127.0.0.1:9120) |
 | OpenClaw gateway + UI | user unit `openclaw-gateway.service` | 127.0.0.1:18789 | `:8444/openclaw/` |
+| Hermes Telegram bot | user unit `hermes-gateway.service` (enabled; main Pi only, one gateway per bot token), unit file in `snapshot/dotfiles` | none | none |
+| Obsidian vault index | user timer `vault-index.timer` (hourly), linked from `~/dev/agent-lab/tools/systemd` by the `lab` step | none | none |
+| Lab Chromium (shared browser for the agents) | user unit `lab-chromium.service`, linked by agent-lab's `bin/browser install-service` (the `lab` step) | CDP 127.0.0.1:9222 | none |
 | Pi-hole | docker container `pihole` | DNS :53 (all interfaces), UI 127.0.0.1:8081 | `:8445/pihole/admin/` |
 | REI dashboard | user units `rei.service` (uvicorn) and `rei-proxy.service` (Caddy; rewrites Host, the app only accepts loopback Hosts), `rei-vault-sync.timer` (rclone, read-only Drive), from the private repo `~/dev/rei` (its `deploy/pi/install.sh`, run by the `rei` step) | 127.0.0.1:8420, Caddy 127.0.0.1:8421 | `:8446/` → 8421, tailnet only (not on the Wi-Fi/LAN, no redirect port) |
 | DreamBase (family site) | user units `dreambase*` from the private repo `~/dev/websites` (its `install.sh`, run by the systemd step; manual steps in its README) | 127.0.0.1:8092 | not `tailscale serve`: its own Caddy on :8091 (HTTPS, Wi-Fi and tailnet), :8090 redirects |
