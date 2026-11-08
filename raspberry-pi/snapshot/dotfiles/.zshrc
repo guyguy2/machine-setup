@@ -313,9 +313,11 @@ _upd_restic() {
 # Reads $_upd_log (failures noted by the steps) and $_upd_claude_before / $_upd_omz_before (versions at the start).
 _upd_summary() {
   local running=$(uname -r) newest m pid unit uunit comm i claude_now
-  local -a todo acts svcs sess heavy reasons
+  local -a todo acts svcs usvcs sess heavy reasons
   local -A seen
-  local stale_re='\.so[^ ]* \(deleted\)|/usr/s?bin/[^ ]+ \(deleted\)'
+  # Deleted shared libraries, /usr binaries, and Homebrew kegs that brew cleanup removed (static binaries like caddy
+  # have no .so to catch, R-086)
+  local stale_re='\.so[^ ]* \(deleted\)|/usr/s?bin/[^ ]+ \(deleted\)|/home/linuxbrew/\.linuxbrew/Cellar/[^ ]+ \(deleted\)'
 
   # Reboot reasons: a newer kernel of the running flavour (e.g. rpt-rpi-2712), or packages that ask for it
   newest=$(ls /lib/modules | grep -F -- "+${running#*+}" | sort -V | tail -1)
@@ -337,16 +339,22 @@ _upd_summary() {
     seen[$unit$uunit]=1
     case $unit in
       ssh.service|sshd.service|systemd-*|dbus.service) heavy+=($unit) ;;
-      user@*.service|session-*.scope) sess+=($comm) ;;
+      # A user service (e.g. the Caddy proxies) can be restarted by itself; other session processes need a re-login
+      user@*.service) if [[ $uunit == *.service ]]; then usvcs+=($uunit); else sess+=($comm); fi ;;
+      session-*.scope) sess+=($comm) ;;
       *.service) svcs+=($unit) ;;
     esac
   done
   if (( $#reasons )); then
-    [[ -n $svcs$sess$heavy ]] && reasons+=("also refreshes ${#svcs} service(s) and ${#sess} desktop process(es) on old libraries")
+    [[ -n $svcs$usvcs$sess$heavy ]] && reasons+=("also refreshes $(( $#svcs + $#usvcs )) service(s) and ${#sess} desktop process(es) on old libraries")
   else
     if (( $#svcs )); then
       todo+=("Restart services running old libraries: ${svcs}. Docker or Pi-hole may drop briefly")
       acts+=("sudo systemctl restart $svcs")
+    fi
+    if (( $#usvcs )); then
+      todo+=("Restart user services running old binaries or libraries: ${usvcs}")
+      acts+=("systemctl --user restart $usvcs")
     fi
     if [[ -n $sess$heavy ]]; then
       reasons=(${(u)sess} ${(u)heavy})
