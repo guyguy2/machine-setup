@@ -303,9 +303,10 @@ if want agents; then
   say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes (official installer, not Homebrew)"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
-  elif (( dry )); then echo "  [dry-run] zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"
+  elif (( dry )); then echo "  [dry-run] NO_TMUX=1 zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"
     echo "  [dry-run] curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use"
-  else zsh -ic '_upd_openclaw' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
+  # NO_TMUX: over SSH, ~/.zshrc would otherwise attach to tmux and the rebuild would stop there (R-038).
+  else NO_TMUX=1 zsh -ic '_upd_openclaw' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
     # The Control UI is published at /openclaw (see the pi-status step), so it must serve under that path.
     "$HOME/dev/openclaw_node/node_modules/.bin/openclaw" config set gateway.controlUi.basePath /openclaw || true
   fi
