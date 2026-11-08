@@ -9,7 +9,7 @@ description: Use the `gws` Google Workspace CLI to read or act on the user's Gma
 Workspace REST API from the shell. Commands are generated from Google's API discovery documents, so every API
 method exists as a command, and the CLI itself is the documentation.
 
-Account: you@example.com (personal Gmail, not a Workspace domain). GCP project / OAuth client: `gws-cli-guy`.
+Account: the user's personal Gmail, not a Workspace domain (`gws gmail users getProfile --params '{"userId":"me"}'` prints the address). GCP project / OAuth client: `gws-cli-guy`.
 Config and encrypted credentials: `~/.config/gws/`.
 
 ## Work it out yourself: `--help` at every level

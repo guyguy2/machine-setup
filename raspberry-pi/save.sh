@@ -131,6 +131,22 @@ if [[ -n $tailnet ]] && grep -rIlF "$tailnet" "$snap"; then
   echo "save.sh: the tailnet name $tailnet appears in the files above; replace it with <tailnet>. Not committing." >&2
   exit 1
 fi
+# Personal email addresses, and private site names/paths (family names) from the private websites repo's sites.json.
+# Only file names are printed, never the match.
+if grep -rEIl --exclude='*.gpg' --exclude='*.asc' \
+    '[A-Za-z0-9._%+-]+@(gmail|googlemail|hotmail|outlook|live|yahoo|icloud|me|proton|protonmail)\.(com|me)\b' "$snap"; then
+  echo "save.sh: a personal email address appears in the files above; write you@example.com instead. Not committing." >&2
+  exit 1
+fi
+sites=~/dev/websites/sites.json
+if [[ -r $sites ]]; then
+  while read -r term; do
+    if (( ${#term} >= 3 )) && grep -rIliwF -- "$term" "$snap"; then
+      echo "save.sh: a private site name from $sites appears in the files above. Not committing." >&2
+      exit 1
+    fi
+  done < <(jq -r '.[].path // empty' "$sites" 2>/dev/null | tr '/' '\n' | sed '/^$/d' | sort -u)
+fi
 echo "  clean"
 
 if (( push )); then
