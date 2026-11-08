@@ -3,7 +3,7 @@
 # pi-backup-system, system-includes.txt or systemd/pi-backup-system.* (the timer only ever runs the installed copies).
 #   - /usr/local/lib/pi-backup/ (root:root 0755): pi-backup-system, system-includes.txt, rclone (a copy of Homebrew's
 #     static binary, because /home/linuxbrew is writable by guy) and rclone.version
-#   - /etc/systemd/system/pi-backup-system.{service,timer} (0644), then systemctl daemon-reload
+#   - /etc/systemd/system/pi-backup-system{,-copy}.{service,timer} (0644), then systemctl daemon-reload
 #   - /root/.config/rclone/rclone.conf (0600): only the [gdrive-backup] section of guy's, and only if root has none
 #   - /var/lib/pi-backup, /root/.cache/restic, /root/.config/{rclone,pi-backup}: the unit's writable paths
 # It never writes the restic password or enables the timer: it prints those commands (pi-backup-system init enables).
@@ -40,7 +40,9 @@ pwfile=/root/.config/pi-backup/restic-password
 files=("$lib/pi-backup-system|$src/pi-backup-system|755"
        "$lib/system-includes.txt|$src/system-includes.txt|644"
        "$units/pi-backup-system.service|$src/systemd/pi-backup-system.service|644"
-       "$units/pi-backup-system.timer|$src/systemd/pi-backup-system.timer|644")
+       "$units/pi-backup-system.timer|$src/systemd/pi-backup-system.timer|644"
+       "$units/pi-backup-system-copy.service|$src/systemd/pi-backup-system-copy.service|644"
+       "$units/pi-backup-system-copy.timer|$src/systemd/pi-backup-system-copy.timer|644")
 
 # The account whose Homebrew rclone and rclone.conf are copied: the sudo caller, never assumed.
 if (( EUID == 0 )); then user_name=${SUDO_USER:-}; else user_name=$(id -un); fi
@@ -250,6 +252,9 @@ EOF2
 fi
 say "  sudo $lib/pi-backup-system init        # creates the repo if missing, enables the 03:30 timer"
 say "  sudo $lib/pi-backup-system run         # first backup now (or wait for the timer)"
+[[ -s /root/.config/pi-backup/mac-repo ]] || (( dry && EUID != 0 )) ||
+  say "  # second copy on the Mac: write /root/.config/pi-backup/mac-repo (README, 'Second copy on the Mac'), then"
+say "  sudo $lib/pi-backup-system copy-init   # the Mac copy: creates the Mac repo, enables the hourly copy timer"
 say "  $src/setup --check                       # after changing the root-side files or upgrading rclone"
 (( refuse )) && { say "a real run stops at the missing restic (exit 2)" >&2; exit 2; }
 exit 0

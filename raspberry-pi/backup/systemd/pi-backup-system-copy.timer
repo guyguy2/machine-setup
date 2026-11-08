@@ -1,0 +1,10 @@
+# Enabled by `sudo /usr/local/lib/pi-backup/pi-backup-system copy-init`. Hourly (the Mac may be asleep at night).
+[Unit]
+Description=pi-backup system copy to the Mac, hourly
+
+[Timer]
+OnCalendar=*-*-* *:40
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

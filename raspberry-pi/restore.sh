@@ -584,7 +584,9 @@ cat <<'MSG'
     Pi's LAN IP, secondary 8.8.8.8 (README.md, "The house's DNS").
   - Nightly backup (README.md), only after restoring state: pi-backup init and
     sudo /usr/local/lib/pi-backup/pi-backup-system init (they refuse on an unrestored Pi whose hostname has
-    backups on Drive; --fresh starts over on purpose).
+    backups on Drive; --fresh starts over on purpose). Then the append-only copy on the Mac:
+    backup/mac/pi-copy-credentials, pi-backup copy-init, sudo /usr/local/lib/pi-backup/pi-backup-system copy-init
+    (README.md, "Second copy on the Mac"). Drive gone? pi-restore-state --from-mac restores from that copy.
   - Agents are installed but not started (8 GB RAM: run one at a time). Start one with
     ~/dev/agent-lab/bin/lab, the pi-status Agents tab, or: systemctl --user start hermes-dashboard
     (or openclaw-gateway).
@@ -604,7 +606,8 @@ cat <<'MSG'
       (tailscale ip -4; not 0.0.0.0, which would open it to the LAN). Port 8642.
     - On the main Pi: hermes peer add <this Pi> --url http://<tailnet IP>:8642 --key <API_SERVER_KEY>
   - This Pi's own nightly backup (README.md): sudo ~/dev/machine-setup/raspberry-pi/backup/setup, then
-    pi-backup init and sudo /usr/local/lib/pi-backup/pi-backup-system init.
+    pi-backup init and sudo /usr/local/lib/pi-backup/pi-backup-system init; then the Mac copy:
+    backup/mac/pi-copy-credentials, pi-backup copy-init, sudo /usr/local/lib/pi-backup/pi-backup-system copy-init.
   - Agents are installed but not started. Start one with ~/dev/agent-lab/bin/lab, the pi-status Agents tab,
     or: systemctl --user start hermes-dashboard
 MSG

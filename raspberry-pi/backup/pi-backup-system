@@ -6,6 +6,7 @@
 # guy is in adm and can read the system journal, so nothing here prints file names: no --verbose, restic's JSON
 # output is parsed rather than echoed, and paths in error text are blanked.
 # Contract (paths, env overrides, last.json, exit codes): raspberry-pi/MULTI-PI.md, "Interfaces".
+# A second copy goes to the Mac's append-only rest-server (copy, hourly timer): README, "Second copy on the Mac".
 set -euo pipefail
 umask 077
 self=$(readlink -f -- "${BASH_SOURCE[0]}")  # before the cd: $0 may be relative
@@ -24,11 +25,19 @@ usage: pi-backup-system <command> [options]     (as root: sudo /usr/local/lib/pi
                       --dry-run: what and how much, writes nothing (runs as any user; problems are warnings)
   status [--json]     show last.json; exit 0 if the last good backup is under 36 h old and the last check passed
   check               forget --prune, then restic check; updates last_check
+  copy-init           create the Mac repo (same passphrase, chunker parameters from Drive) if missing, enable
+                      pi-backup-system-copy.timer (hourly)
+  copy [--force]      restic copy this host's new system snapshots from Drive to the Mac's append-only rest-server,
+                      when the last good backup is newer than the last good copy (--force: always). Mac asleep or
+                      offline: exit 3, the timer tries again next hour. A backup running: skipped (exit 0)
+  copy-status [--json]
+                      show /var/lib/pi-backup/copy.json (no root needed); exit 0 if the last good copy is under
+                      3 days old and the Mac repo is under 30 GB, else 1
 fresh-Pi guard: init and run refuse (exit 2) when Drive has system backups of this hostname but this Pi has
   neither backed up nor been restored (pi-restore-state --yes marks it); --fresh backs up this Pi's files anyway
 exit: 0 ok, 1 failed, 2 usage/setup/unsafe files, 3 repo unreachable, 4 finished but incomplete
 overrides (drills and tests; the unit sets none): PI_BACKUP_REPO PI_BACKUP_PASSWORD_FILE PI_BACKUP_RESTIC
-  PI_BACKUP_RCLONE PI_BACKUP_STATE_DIR PI_BACKUP_HOST
+  PI_BACKUP_RCLONE PI_BACKUP_STATE_DIR PI_BACKUP_HOST PI_BACKUP_MAC_REPO_FILE
 EOF
 }
 
@@ -40,6 +49,7 @@ here=${self%/*}
 includes=$here/system-includes.txt
 py=/usr/bin/python3
 unit_timer=/etc/systemd/system/pi-backup-system.timer
+copy_timer=/etc/systemd/system/pi-backup-system-copy.timer
 host=${PI_BACKUP_HOST:-$(hostname -s)}
 repo=${PI_BACKUP_REPO:-rclone:gdrive-backup:pi-backups/$host/system}
 pwfile=${PI_BACKUP_PASSWORD_FILE:-/root/.config/pi-backup/restic-password}
@@ -47,6 +57,9 @@ restic=${PI_BACKUP_RESTIC:-/usr/bin/restic}
 rclone=${PI_BACKUP_RCLONE:-/usr/local/lib/pi-backup/rclone}
 state=${PI_BACKUP_STATE_DIR:-/var/lib/pi-backup}
 last=$state/last.json
+# The Mac copy: one line, rest:http://<user>:<password>@<mac tailnet ip>:<port>/<user>/ (root 0600, never printed).
+mac_repo_file=${PI_BACKUP_MAC_REPO_FILE:-/root/.config/pi-backup/mac-repo}
+copy_state=$state/copy.json
 rclone_conf=/root/.config/rclone/rclone.conf
 keep=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
 # One retention group per host: grouping by paths (restic's default) would start a new group, never thinned,
@@ -86,9 +99,11 @@ def load(path):
 PATH_RE = re.compile(r'(?<![\w.~-])/[^\s"\':,()\[\]]*')
 QUOTED_RE = re.compile(r'"[^"]*"')
 
+CRED_RE = re.compile(r'(://)[^/@\s]*@')
+
 def scrub(s):
-    # error text goes to the journal, which guy can read: blank paths and quoted names
-    return QUOTED_RE.sub('"..."', PATH_RE.sub("<path>", s))
+    # error text goes to the journal, which guy can read: blank credentials in URLs, paths and quoted names
+    return QUOTED_RE.sub('"..."', PATH_RE.sub("<path>", CRED_RE.sub(r"\1***@", s)))
 
 def summary():
     # stdin: `restic backup --json` stdout. Status lines name files: read, never printed.
@@ -281,8 +296,96 @@ def status():
     print("status: " + ("OK" if rc == 0 else "STALE (no good backup in 36 h)" if check_ok else "CHECK FAILED"))
     return rc
 
+# ---- the Mac copy (copy.json, 0644: times, counts, short ids and sizes only) ----
+COPY_MAX_AGE = datetime.timedelta(hours=72)
+COPY_MAX_BYTES = 30 * 10**9
+
+def copy_due():
+    # copy-due <last.json> <copy.json>: exit 0 when there is a good backup and no good copy since
+    lo = load(sys.argv[2]).get("last_ok")
+    t_ok = parse_time(lo.get("finished")) if isinstance(lo, dict) else None
+    if t_ok is None:
+        return 1
+    co = load(sys.argv[3]).get("last_ok")
+    t = parse_time(co.get("finished")) if isinstance(co, dict) else None
+    return 0 if t is None or t < t_ok else 1
+
+def copy_write():
+    # copy-write <path> <host> result=ok|offline|unreachable|failed exit=N [copied= snapshots= newest= repo_bytes=]
+    path, host = sys.argv[2:4]
+    kv = dict(a.split("=", 1) for a in sys.argv[4:])
+    num = lambda k: int(kv[k]) if kv.get(k, "").isdigit() else None
+    t = now()
+    doc = {"schema": 1, "side": "system", "host": host, "updated": t,
+           "last_attempt": {"time": t, "result": kv["result"], "exit": num("exit")},
+           "last_ok": load(path).get("last_ok")}
+    if kv["result"] == "ok":
+        newest = kv.get("newest", "")
+        doc["last_ok"] = {"finished": t, "copied": num("copied"), "snapshots": num("snapshots"),
+                          "newest": newest if re.fullmatch(r"[0-9a-f]{8}", newest) else None,
+                          "repo_bytes": num("repo_bytes")}
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", prefix=".copy.json.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(doc, f, indent=2)
+            f.write("\n")
+            os.fchmod(f.fileno(), 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return 0
+
+def copy_status():
+    path, as_json = sys.argv[2], sys.argv[3] == "1"
+    d = load(path)
+    if not d:
+        print("{}" if as_json else "system copy to the Mac: none yet (sudo /usr/local/lib/pi-backup/pi-backup-system copy-init)")
+        return 1
+    lo = d.get("last_ok") if isinstance(d.get("last_ok"), dict) else {}
+    la = d.get("last_attempt") if isinstance(d.get("last_attempt"), dict) else {}
+    t_ok = parse_time(lo.get("finished"))
+    problems = []
+    if t_ok is None:
+        problems.append("no good copy to the Mac yet")
+    elif datetime.datetime.now(datetime.timezone.utc) - t_ok > COPY_MAX_AGE:
+        problems.append("last good copy to the Mac %s" % ago(t_ok))
+    rb = lo.get("repo_bytes")
+    if isinstance(rb, int) and rb > COPY_MAX_BYTES:
+        problems.append("the Mac repo is %s: prune it on the Mac (README, 'Second copy on the Mac')" % size(rb))
+    if as_json:
+        json.dump(d, sys.stdout, indent=2)
+        print()
+        return 1 if problems else 0
+    print("system copy to the Mac of %s (updated %s)" % (d.get("host", "?"), d.get("updated")))
+    if lo:
+        print("  last ok:      %s (%s), %s new snapshot(s), %s on the Mac, newest %s, repo %s" % (
+            lo.get("finished"), ago(t_ok), lo.get("copied"), lo.get("snapshots"), lo.get("newest"), size(rb)))
+    else:
+        print("  last ok:      never")
+    if la:
+        print("  last attempt: %s (%s): %s (exit %s)" % (la.get("time"), ago(parse_time(la.get("time"))),
+                                                        la.get("result"), la.get("exit")))
+    print("status: " + ("OK" if not problems else "ATTENTION: " + "; ".join(problems)))
+    return 1 if problems else 0
+
+def count_snaps():
+    # stdin: restic snapshots --json; prints "<count> <newest original (Drive) short id>"
+    try:
+        snaps = json.load(sys.stdin) or []
+    except ValueError:
+        print("- -")
+        return 0
+    new = max(snaps, key=lambda s: s.get("time", "")) if snaps else {}
+    print(len(snaps), (new.get("original") or new.get("id") or "-")[:8])
+    return 0
+
 sys.exit({"summary": summary, "errors": errors, "stats": stats, "write": write, "check-due": check_due,
-          "status": status, "armed": armed, "latest": latest}[sys.argv[1]]())
+          "status": status, "armed": armed, "latest": latest, "copy-due": copy_due, "copy-write": copy_write,
+          "copy-status": copy_status, "count-snaps": count_snaps}[sys.argv[1]]())
 PYEOF
 pyrun() { "$py" -I -c "$PY" "$@"; }
 
@@ -318,6 +421,7 @@ self_check() {
   vet 1 "$pwfile"
   # rclone.conf can name programs for rclone to run (e.g. an sftp remote's ssh command)
   [[ $repo == rclone:* ]] && vet 1 "$rclone_conf"
+  (( ${need_mac:-0} )) && vet 1 "$mac_repo_file"
   case $repo in /home|/home/*) problems+=("$repo: repository under /home") ;; esac
   (( ${#problems[@]} )) || return 0
   printf '%s\n' "${problems[@]}" | sort -u | sed 's/^/  unsafe: /' >&2
@@ -596,6 +700,107 @@ cmd_init() {
   say "timer enabled: $(systemctl show -P NextElapseUSecRealtime pi-backup-system.timer 2>/dev/null || true)"
 }
 
+# ---- the second copy on the Mac (append-only rest-server) ----
+
+mac_hostport=
+# mac_target: check the Mac repo file (root-only, vetted) and set mac_hostport for the probe. Never prints the file.
+mac_target() {
+  local line
+  [[ -r $mac_repo_file ]] || die 2 "no Mac repo file $mac_repo_file (README, 'Second copy on the Mac')"
+  IFS= read -r line <"$mac_repo_file" || true
+  [[ $line =~ ^rest:https?://([^/@]+@)?([^/@:]+):([0-9]+)/[^[:space:]]*$ ]] ||
+    die 2 "$mac_repo_file: want one line rest:http://<user>:<password>@<host>:<port>/<user>/"
+  mac_hostport=${BASH_REMATCH[2]}:${BASH_REMATCH[3]}
+}
+mac_up() { timeout 6 bash -c 'exec 3<>"/dev/tcp/${1%:*}/${1##*:}"' _ "$mac_hostport" 2>/dev/null; }
+# m <restic args>: restic on the Mac repo; credentials come from the file, never argv.
+m() { "$restic" --repository-file "$mac_repo_file" --password-file "$pwfile" -o "rclone.program=$rclone" "$@"; }
+mac_net_error() {
+  grep -qiE 'dial tcp|no route to host|connection (refused|reset)|i/o timeout|timed out|context deadline|unexpected EOF|network is unreachable|host is down' "$1" 2>/dev/null
+}
+copy_write() { pyrun copy-write "$copy_state" "$host" "$@"; }
+
+cmd_copy_init() {
+  (( $# == 0 )) || die 2 "copy-init takes no options"
+  need_mac=1 self_check 1
+  need_root copy-init
+  need_deps 1
+  [[ -f $copy_timer ]] || die 2 "$copy_timer isn't installed: run sudo raspberry-pi/backup/setup first"
+  mac_target
+  lock
+  mk_tmp
+  local rc=0
+  mac_up || die 3 "the Mac ($mac_hostport) isn't reachable: is it awake and on the tailnet?"
+  m cat config >/dev/null 2>"$tmp/err" || rc=$?
+  case $rc in
+    0) say "Mac repo exists ($mac_hostport)" ;;
+    10) rc=0
+        m init --from-repo "$repo" --from-password-file "$pwfile" --copy-chunker-params >/dev/null 2>"$tmp/err" || rc=$?
+        if (( rc )); then pyrun errors <"$tmp/err" >&2; die 1 "restic init of the Mac repo failed (exit $rc)"; fi
+        say "created the Mac repo ($mac_hostport; same passphrase and chunker parameters as $repo)" ;;
+    12) die 2 "wrong password for the Mac repo" ;;
+    *) pyrun errors <"$tmp/err" >&2; die 3 "Mac repo unreachable (restic exit $rc)" ;;
+  esac
+  systemctl enable --now pi-backup-system-copy.timer
+  say "timer enabled: $(systemctl show -P NextElapseUSecRealtime pi-backup-system-copy.timer 2>/dev/null || true)"
+  say "first copy now: sudo $self copy"
+}
+
+cmd_copy() {
+  local force=0 rc=0 code copied snaps newest bytes
+  while (( $# )); do
+    case $1 in --force) force=1 ;; *) die 2 "copy: unknown option $1" ;; esac
+    shift
+  done
+  need_mac=1 self_check 1
+  need_root copy
+  need_deps 1
+  mac_target
+  install -d -m 0755 "$state"
+  exec 9>"$state/lock"
+  if ! flock -n 9; then say "a backup or copy is running: Mac copy skipped (the timer tries again next hour)"; exit 0; fi
+  if (( !force )) && ! pyrun copy-due "$last" "$copy_state"; then
+    say "Mac copy up to date (no good backup since the last good copy)"; exit 0
+  fi
+  mk_tmp
+  if ! mac_up; then
+    say "Mac copy skipped: $mac_hostport not reachable (Mac asleep or offline); the timer tries again next hour"
+    copy_write result=offline exit=3
+    exit 3
+  fi
+  say "restic copy of the system snapshots to the Mac ($mac_hostport), host $host"
+  # stdout names snapshot paths (the matched system files): counted, never printed
+  m copy --from-repo "$repo" --from-password-file "$pwfile" --host "$host" --tag pi-backup >"$tmp/out" 2>"$tmp/err" || rc=$?
+  if (( rc )); then
+    pyrun errors <"$tmp/err" >&2
+    case $rc in
+      10) code=2; say "the Mac repo doesn't exist yet: sudo $self copy-init" >&2 ;;
+      12) code=2; say "wrong password for the Mac repo" >&2 ;;
+      *) if mac_net_error "$tmp/err"; then code=3; say "the Mac became unreachable during the copy" >&2
+         elif net_error "$tmp/err"; then code=3; say "Drive unreachable during the copy" >&2
+         else code=1; fi ;;
+    esac
+    copy_write result="$( (( code == 3 )) && echo unreachable || echo failed)" exit="$code"
+    say "Mac copy failed (restic exit $rc -> $code)" >&2
+    exit "$code"
+  fi
+  copied=$(grep -cE '^snapshot [0-9a-f]+ saved' "$tmp/out" || true)
+  read -r snaps newest < <(m snapshots --json --host "$host" --tag pi-backup 2>/dev/null | pyrun count-snaps)
+  bytes=$(m stats --json --mode raw-data 2>/dev/null | pyrun stats || true)
+  [[ $bytes == - ]] && bytes=
+  copy_write result=ok exit=0 copied="$copied" snapshots="$snaps" newest="$newest" repo_bytes="$bytes"
+  say "copied $copied new snapshot(s); the Mac has $snaps, newest $newest${bytes:+, repo $bytes bytes}"
+}
+
+cmd_copy_status() {
+  local json=0
+  while (( $# )); do
+    case $1 in --json) json=1 ;; *) die 2 "copy-status: unknown option $1" ;; esac
+    shift
+  done
+  pyrun copy-status "$copy_state" "$json"
+}
+
 cmd_status() {
   local json=0
   while (( $# )); do
@@ -606,7 +811,9 @@ cmd_status() {
 }
 
 case ${1:-} in
-  init|run|status|check) cmd=$1; shift; "cmd_$cmd" "$@" ;;
+  init|run|status|check|copy) cmd=$1; shift; "cmd_$cmd" "$@" ;;
+  copy-init) shift; cmd_copy_init "$@" ;;
+  copy-status) shift; cmd_copy_status "$@" ;;
   -h|--help|help) usage ;;
   '') usage >&2; exit 2 ;;
   *) printf 'pi-backup-system: unknown command %s\n' "$1" >&2; usage >&2; exit 2 ;;

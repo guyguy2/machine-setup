@@ -1,0 +1,17 @@
+# Second copy of the user repo: restic copy from Drive to the Mac's append-only rest-server (README, "Second copy
+# on the Mac"). Linked into ~/.config/systemd/user/ by `pi-backup copy-init`; started hourly by pi-backup-copy.timer.
+# Does nothing until a backup is newer than the last good copy.
+[Unit]
+Description=pi-backup: copy new user snapshots to the Mac (append-only rest-server)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/dev/machine-setup/raspberry-pi/backup/pi-backup copy
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# 3: the Mac is asleep or offline. Not a failure: the next hourly run tries again, and pi-checkup warns when the
+# last good copy is over 3 days old.
+SuccessExitStatus=3
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h

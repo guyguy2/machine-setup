@@ -25,7 +25,8 @@ lockfile entries), packages (`uv audit` per `~/dev` project, `npm audit` of open
 tools installed from two sources, npm `min-release-age`, `~/.cache` size), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
 listeners, listeners reachable on a global IPv6 address, root services running user-writable code, ad-hoc servers, rpcbind, the `table inet host` firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
 agents (Hermes/OpenClaw dashboards up and answering, the Hermes Telegram gateway, shared skills, gws/gh/Claude logins; credential probes: Claude login under 3 days from expiry, gh token and Tailscale node key under 14 days, Anthropic API key, Telegram bot token, WhatsApp (wacli), Todoist (td), gcloud signed in as INFO; tokens are passed to curl on stdin, never printed), backup (`pi-backup status` for both
-restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days),
+restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days, the
+second copy on the Mac under 3 days old for both repos via `copy-status`),
 drift (snapshot vs this machine, links `restore.sh` would make, the pre-commit hook,
 files `save.sh` doesn't back up, PATH duplicates, Brewfile).
 

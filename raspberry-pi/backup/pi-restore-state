@@ -17,7 +17,7 @@ writer_units=(mail-sync.timer mail-sync.service rei.service rei-vault-sync.timer
 usage() {
   cat <<EOF
 usage: ${0##*/} [--yes] [--snapshot ID] [--host HOST] [--only hermes,signins,data,system]
-                        [--target-home DIR] [--verbose]
+                        [--target-home DIR] [--from-mac] [--verbose]
 
 Restores Pi state from the restic backups. Dry run unless --yes.
 
@@ -33,6 +33,10 @@ Restores Pi state from the restic backups. Dry run unless --yes.
                        system   root-only files (labvault, credential.secret, /etc/...); uses sudo for this part
   --target-home DIR  drill: restore into DIR as HOME and DIR/.hermes as HERMES_HOME. Telegram is always
                      stripped, the gateway is never touched, the system group is not allowed.
+  --from-mac         restore from the second copy on the Mac's append-only rest-server instead of Drive (when
+                     Drive is gone): the user groups read ~/.config/pi-backup/mac-repo, the system group
+                     /root/.config/pi-backup/mac-repo (README, "Second copy on the Mac"; on a new Pi write them
+                     first). Snapshot ids there differ from Drive's
   --verbose          list every file that would be replaced (default: the first 40 per group)
   -h, --help         this help
 
@@ -52,13 +56,14 @@ say() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 warn() { printf '  \033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 
-yes=0 verbose=0 want_snap=latest target_home='' only_set=0
+yes=0 verbose=0 want_snap=latest target_home='' only_set=0 from_mac=0
 opt_host=${PI_BACKUP_HOST:-}
 groups=()
 while (( $# )); do
   case $1 in
     --yes) yes=1 ;;
     --verbose|-v) verbose=1 ;;
+    --from-mac) from_mac=1 ;;
     --snapshot) shift; want_snap=${1:-}; [[ -n $want_snap ]] || usage_err "--snapshot needs an ID" ;;
     --host) shift; opt_host=${1:-}; [[ -n $opt_host ]] || usage_err "--host needs a name" ;;
     --only) shift; [[ -n ${1:-} ]] || usage_err "--only needs a list"; IFS=, read -ra groups <<< "$1"; only_set=1 ;;
@@ -91,6 +96,14 @@ sys_repo=${PI_BACKUP_SYSTEM_REPO:-rclone:gdrive-backup:pi-backups/$host/system}
 sys_pwfile=${PI_BACKUP_SYSTEM_PASSWORD_FILE:-/root/.config/pi-backup/restic-password}
 sys_rclone=${PI_BACKUP_SYSTEM_RCLONE:-/usr/local/lib/pi-backup/rclone}
 sys_rclone_conf=/root/.config/rclone/rclone.conf
+# --from-mac: the Mac copy's repo files (one line, rest:http://<user>:<password>@<mac>:<port>/<user>/; never printed)
+mac_repo_file=${PI_BACKUP_MAC_REPO_FILE:-$HOME/.config/pi-backup/mac-repo}
+sys_mac_repo_file=/root/.config/pi-backup/mac-repo
+repo_args=(-r "$repo") sys_repo_args=(-r "$sys_repo")
+if (( from_mac )); then
+  repo_args=(--repository-file "$mac_repo_file") sys_repo_args=(--repository-file "$sys_mac_repo_file")
+  repo="the Mac copy ($mac_repo_file)" sys_repo="the Mac copy ($sys_mac_repo_file)"
+fi
 sys_root=${PI_RESTORE_SYSTEM_ROOT:-}
 sys_root=${sys_root%/}
 read -ra sudo_cmd <<< "${PI_BACKUP_SUDO:-sudo}"
@@ -482,7 +495,8 @@ need_remote() {
 hermes_bin=
 if (( user_groups )); then
   [[ -f $pwfile ]] || die 2 "no restic password file $pwfile (copy the passphrase from the password manager; mode 0600)"
-  need_remote "$repo" "$rclone"
+  if (( from_mac )); then [[ -r $mac_repo_file ]] || die 2 "--from-mac: no $mac_repo_file (README, 'Second copy on the Mac')"
+  else need_remote "$repo" "$rclone"; fi
   if want signins || want data; then [[ -f $includes ]] || die 2 "missing $includes"; fi
   if want hermes; then
     hermes_bin=$(command -v hermes || true)
@@ -500,7 +514,8 @@ fi
 if want system; then
   S test -x "$restic" || die 2 "root can't run $restic"
   S test -f "$sys_pwfile" || die 2 "no system restic password file $sys_pwfile (as root, from the password manager; 0600)"
-  need_remote "$sys_repo" "$sys_rclone" sudo
+  if (( from_mac )); then S test -f "$sys_mac_repo_file" || die 2 "--from-mac: no $sys_mac_repo_file (README, 'Second copy on the Mac')"
+  else need_remote "$sys_repo" "$sys_rclone" sudo; fi
 fi
 
 install -d -m 0700 "$state"
@@ -553,7 +568,7 @@ check_repo() {
 (( drill )) && note "drill: HOME=$thome, HERMES_HOME=$hermes_home"
 
 # --- user repo: hermes, signins, data ---
-R() { "$restic" -r "$repo" --password-file "$pwfile" -o "rclone.program=$rclone" "$@"; }
+R() { "$restic" "${repo_args[@]}" --password-file "$pwfile" -o "rclone.program=$rclone" "$@"; }
 plan=$staging/plan.tsv
 snap_short='' stage='' src_home=''
 if (( user_groups )); then
@@ -704,7 +719,7 @@ fi
 
 # --- system repo (root; sudo only here) ---
 if want system; then
-  RS() { S env HOME=/root RCLONE_CONFIG="$sys_rclone_conf" "$restic" -r "$sys_repo" --password-file "$sys_pwfile" \
+  RS() { S env HOME=/root RCLONE_CONFIG="$sys_rclone_conf" "$restic" "${sys_repo_args[@]}" --password-file "$sys_pwfile" \
            -o "rclone.program=$sys_rclone" "$@"; }
   say "system repo $sys_repo (host $host, via ${sudo_cmd[*]})"
   [[ $host == "$own_host" ]] || warn "restoring $host's SSH host keys and credential.secret makes this Pi take over $host's identity"

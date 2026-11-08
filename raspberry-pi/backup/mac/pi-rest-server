@@ -1,0 +1,143 @@
+#!/bin/bash
+# pi-rest-server: runs ON THE MAC. The append-only restic rest-server that holds the second copy of the Pis'
+# nightly backups (agent-lab review R-020): each Pi's `pi-backup copy` / `pi-backup-system copy` pushes its Drive
+# snapshots here with `restic copy`. Append-only: a client can add snapshots but never delete or prune them, so
+# nothing that has the Pi's rest-server credentials (or its Drive token) can destroy this copy through the server.
+# The hole that stays: the Pi's SSH key logs into this Mac as you and could delete the data dir (R-017).
+#
+# Usage (macOS /bin/bash 3.2; Homebrew isn't on PATH over ssh, so tools are called by full path):
+#   pi-rest-server install          write the LaunchAgent (RunAtLoad, KeepAlive) and (re)start it, bound to this
+#                                   Mac's Tailscale IPv4 only; creates the data dir and an empty htpasswd file
+#   pi-rest-server add-user NAME    add or reset NAME's password (read from stdin, one line, never echoed); NAME
+#                                   is the repo it may use (--private-repos): rest:http://NAME:<pw>@<ip>:<port>/NAME/
+#   pi-rest-server status           LaunchAgent state, listen address, users (names only), data dir size
+#   pi-rest-server uninstall        stop and remove the LaunchAgent (the data dir is kept)
+# Env: PI_REST_SERVER (binary, default ~/go/bin/rest-server), PI_REST_DATA (default ~/restic-pi),
+#      PI_REST_PORT (default 8000), PI_REST_MAX_SIZE (bytes, default 40 GiB: all repos together).
+# Install the server once: /opt/homebrew/bin/go install github.com/restic/rest-server/cmd/rest-server@v0.14.0
+# Contract: raspberry-pi/MULTI-PI.md ("Second copy on the Mac"); runbook: raspberry-pi/README.md.
+set -euo pipefail
+umask 077
+
+label=local.pi-backup.rest-server
+bin=${PI_REST_SERVER:-$HOME/go/bin/rest-server}
+data=${PI_REST_DATA:-$HOME/restic-pi}
+port=${PI_REST_PORT:-8000}
+max_size=${PI_REST_MAX_SIZE:-$((40 * 1024 * 1024 * 1024))}
+conf=$HOME/.config/pi-rest-server
+htpasswd=$conf/htpasswd
+plist=$HOME/Library/LaunchAgents/$label.plist
+logf=$HOME/Library/Logs/pi-rest-server.log
+uid=$(id -u)
+
+say() { printf '%s\n' "$*"; }
+die() { local c=$1; shift; printf 'pi-rest-server: %s\n' "$*" >&2; exit "$c"; }
+usage() { sed -n '6,17s/^# \{0,1\}//p' "$0"; }
+
+tailnet_ip() {
+  local t
+  for t in /opt/homebrew/bin/tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale /usr/local/bin/tailscale; do
+    [ -x "$t" ] || continue
+    "$t" ip -4 2>/dev/null | head -n 1 && return 0
+  done
+  return 1
+}
+
+listening() { /usr/sbin/lsof -nP -a -p "$1" -iTCP -sTCP:LISTEN 2>/dev/null | awk 'NR > 1 { print $9 }'; }
+agent_pid() { launchctl print "gui/$uid/$label" 2>/dev/null | awk '$1 == "pid" { print $3; exit }'; }
+
+cmd_install() {
+  local ip _ pid
+  [ -x "$bin" ] || die 2 "no rest-server at $bin: /opt/homebrew/bin/go install github.com/restic/rest-server/cmd/rest-server@v0.14.0"
+  ip=$(tailnet_ip) || true
+  case $ip in 100.*) ;; *) die 2 "no Tailscale IPv4 on this Mac (is Tailscale up?)" ;; esac
+  mkdir -p "$data" "$conf" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+  chmod 700 "$data" "$conf"
+  [ -f "$htpasswd" ] || : > "$htpasswd"
+  chmod 600 "$htpasswd"
+  cat > "$plist.new" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Written by pi-rest-server install (machine-setup raspberry-pi/backup/mac); re-run it instead of editing. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$bin</string>
+    <string>--path</string><string>$data</string>
+    <string>--listen</string><string>$ip:$port</string>
+    <string>--append-only</string>
+    <string>--private-repos</string>
+    <string>--htpasswd-file</string><string>$htpasswd</string>
+    <string>--max-size</string><string>$max_size</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- at login Tailscale may not be up yet: the bind fails and launchd retries -->
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>$logf</string>
+  <key>StandardErrorPath</key><string>$logf</string>
+</dict>
+</plist>
+EOF
+  chmod 644 "$plist.new"
+  /usr/bin/plutil -lint -s "$plist.new" || die 1 "the generated plist doesn't lint"
+  mv -f "$plist.new" "$plist"
+  launchctl bootout "gui/$uid/$label" 2>/dev/null || true
+  launchctl bootstrap "gui/$uid" "$plist"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    pid=$(agent_pid || true)
+    if [ -n "$pid" ] && [ -n "$(listening "$pid")" ]; then break; fi
+    sleep 1
+  done
+  [ -n "${pid:-}" ] && [ -n "$(listening "$pid")" ] || die 1 "rest-server didn't start listening: tail $logf"
+  say "rest-server $("$bin" --version 2>/dev/null | awk '{print $4}') listening on $(listening "$pid" | head -n 1) (append-only, private repos), data $data"
+  [ -s "$htpasswd" ] || say "no users yet: pi-rest-server add-user <host>-user (password on stdin)"
+}
+
+cmd_add_user() {
+  local name=${1:-} pw
+  case $name in ''|*[!a-z0-9-]*|-*) die 2 "add-user NAME: lowercase letters, digits and -, e.g. raspberrypi-user" ;; esac
+  [ -d "$conf" ] || die 2 "run pi-rest-server install first"
+  IFS= read -r pw || true
+  [ ${#pw} -ge 16 ] || die 2 "the password on stdin must be at least 16 characters"
+  [ -f "$htpasswd" ] || : > "$htpasswd"
+  # -i: password from stdin, so it's never in argv; -B: bcrypt
+  printf '%s\n' "$pw" | /usr/sbin/htpasswd -B -i "$htpasswd" "$name" 2>/dev/null || die 1 "htpasswd failed"
+  chmod 600 "$htpasswd"
+  # restart so the new password counts now (launchd respawns it within ThrottleInterval, 10 s)
+  launchctl kickstart -k "gui/$uid/$label" 2>/dev/null || true
+  say "user $name set; its repo: /$name/"
+}
+
+cmd_status() {
+  local pid rc=0
+  pid=$(agent_pid || true)
+  if [ -n "$pid" ]; then
+    say "LaunchAgent $label: running (pid $pid), listening on $(listening "$pid" | tr '\n' ' ')"
+  elif [ -f "$plist" ]; then
+    say "LaunchAgent $label: installed but not running (see $logf)"; rc=1
+  else
+    say "LaunchAgent $label: not installed (pi-rest-server install)"; rc=1
+  fi
+  [ -f "$htpasswd" ] && say "users: $(cut -d: -f1 "$htpasswd" | tr '\n' ' ')"
+  [ -d "$data" ] && say "data: $data, $(du -sh "$data" 2>/dev/null | cut -f1) (limit $((max_size / 1024 / 1024 / 1024)) GiB)"
+  return $rc
+}
+
+cmd_uninstall() {
+  launchctl bootout "gui/$uid/$label" 2>/dev/null || true
+  rm -f "$plist"
+  say "LaunchAgent removed; data kept in $data"
+}
+
+case ${1:-} in
+  install) cmd_install ;;
+  add-user) shift; cmd_add_user "$@" ;;
+  status) cmd_status ;;
+  uninstall) cmd_uninstall ;;
+  -h|--help|help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

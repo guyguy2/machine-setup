@@ -54,8 +54,13 @@ its `systemd` step) and the Hermes install. They deliberately skip everything be
   `~/dev`. A `sudo raspberry-pi/backup/setup` (like agent-lab's `labvault-setup`) installs root-owned copies of
   `pi-backup-system`, its lists and the units into `/usr/local/lib/pi-backup/` and `/etc/systemd/system/`, with
   absolute paths. Root gets its own `/root/.config/rclone/rclone.conf`. Re-run `setup` after changing those files.
-- `guy`'s Drive token can delete the system repo too (`drive.file` sees everything the client created). Drive's trash
-  is the undo; note it in the runbook.
+- `guy`'s Drive token can delete the system repo too (`drive.file` sees everything the client created), and Drive
+  API deletes skip the trash, so the trash is no undo. The undo is a **second copy on the Mac** (2026-11-08, review
+  R-020): restic's rest-server with `--append-only --private-repos` on the Mac's tailnet IP; the Pi pushes with
+  `restic copy` and can't delete there. Left open: the Pi's SSH key into the Mac (R-017).
+- The root copy job's rest-server login lives root-only (`/root/.config/pi-backup/mac-repo`, vetted like the password
+  file) and is passed to restic with `--repository-file`, never on a command line; its errors are scrubbed of URL
+  credentials before they reach the journal.
 - `guy` is in `adm` and can read the system journal: the system job must not log file lists.
 - Staging dirs and the Hermes zip: mode 0700/0600, not under `~/.cache`, deleted after each run. The status JSON holds
   times, sizes, snapshot ids and ok/fail only.
@@ -85,6 +90,10 @@ Fixed 2026-11-06 before building. Change them here first, then in the code.
 | History (user side only) | `~/.local/state/pi-backup/history.jsonl`: one JSON line per real run (`host, started, finished, exit, phase, duration_s`; `phase` = where it was when it ended) | none yet |
 | Lock | `flock -n` on `<state dir>/lock`; a second run exits 1 with "already running" | same |
 | Role | `~/.config/pi-role`: one line, `main` or `worker` | |
+| Mac copy repo file | `~/.config/pi-backup/mac-repo` (0600): one line `rest:http://<host>-user:<password>@<mac tailnet ip>:8000/<host>-user/` (`PI_BACKUP_MAC_REPO_FILE`) | `/root/.config/pi-backup/mac-repo` (root 0600, vetted), same with `<host>-system` |
+| Mac copy units | `backup/systemd/pi-backup-copy.{service,timer}` (hourly :20), linked by `pi-backup copy-init` | `backup/systemd/pi-backup-system-copy.{service,timer}` (hourly :40), copied by `setup`, enabled by `copy-init` |
+| Mac copy state | `~/.local/state/pi-backup/copy.json` | `/var/lib/pi-backup/copy.json` (0644) |
+| Mac side | `backup/mac/pi-rest-server` (runs on the Mac: LaunchAgent, logins), `backup/mac/pi-copy-credentials` (runs on the Pi: makes both logins and repo files) | |
 
 `<host>` is `hostname -s`. restic always gets `--host <host>`, `--tag pi-backup`, `--password-file`, `-o rclone.program=<rclone>`.
 JSON is read and written with `/usr/bin/python3 -I` (no jq, no Homebrew tools on the root side). SQLite copies use
@@ -100,6 +109,7 @@ Python's `sqlite3` backup API, not the `sqlite3` CLI (that one is Homebrew's).
 | `PI_BACKUP_RCLONE` | Homebrew's rclone / `/usr/local/lib/pi-backup/rclone` |
 | `PI_BACKUP_STATE_DIR` | `~/.local/state/pi-backup` / `/var/lib/pi-backup` |
 | `PI_BACKUP_HOST` | `hostname -s` (whose repo; `pi-restore-state --host` sets it) |
+| `PI_BACKUP_MAC_REPO_FILE` | `~/.config/pi-backup/mac-repo` / `/root/.config/pi-backup/mac-repo` |
 
 A test points `PI_BACKUP_RESTIC` at a stub script and `PI_BACKUP_REPO` at a scratch path; nothing in the scripts
 may hard-code around these. The system unit's environment comes only from its root-owned unit file, so `guy` can't
@@ -182,6 +192,17 @@ incomplete (restic exit 3, or a staging item failed).
   false, else 1. No network.
 - `check`: `forget --prune` then `check`; updates `last_check`.
 - `list` (user side only): print `<group>\t<path>` for every resolved include (no staging, no network).
+- `copy-init`: needs the Mac repo file; creates the Mac repo if missing (`restic init --from-repo <Drive repo>
+  --copy-chunker-params`, same passphrase), then links/enables the copy timer.
+- `copy [--force]`: under the same lock as `run` (busy: "skipped", exit 0). Not due (no `last_ok` newer than the
+  last good copy, unless `--force`): exit 0. Mac not answering a TCP connect within 5 s: one line, `copy.json`
+  `result: offline`, exit **3** (the units have `SuccessExitStatus=3`). Else `restic copy --from-repo <Drive repo>
+  --host <host> --tag pi-backup` (stdout counted, never printed), then the Mac's snapshot count and `stats --mode
+  raw-data`. Exit 2 for a missing Mac repo or wrong password, 3 for the Mac or Drive dropping out mid-copy.
+- `copy-status [--json]`: exit 0 if the last good copy is under 72 h old and the Mac repo is under 30 GB. No network.
+  `copy.json`: `{"schema":1,"side","host","updated","last_attempt":{"time","result":"ok|offline|unreachable|failed",
+  "exit"},"last_ok":{"finished","copied","snapshots","newest" (Drive id of the newest copied snapshot),
+  "repo_bytes"}}`; no URLs, IPs or paths.
 - `--help` everywhere.
 
 `sudo raspberry-pi/backup/setup [--dry-run] [--check]`:
@@ -197,9 +218,12 @@ incomplete (restic exit 3, or a staging item failed).
 - `pi-backup-system` refuses to run (exit 2) if it, its list, its rclone or restic, or any parent directory of those,
   isn't owned by root or is group/other-writable.
 
-`pi-restore-state [--yes] [--snapshot ID] [--host HOST] [--only hermes,signins,data,system] [--target-home DIR]`:
+`pi-restore-state [--yes] [--snapshot ID] [--host HOST] [--only hermes,signins,data,system] [--target-home DIR]
+[--from-mac]`:
 - dry run by default: lists what each group would restore and replace. `--yes` writes.
 - `--snapshot` defaults to `latest`; `--host` defaults to `hostname -s` (sets `PI_BACKUP_HOST`, i.e. whose repo).
+- `--from-mac`: both repos are read from the Mac copy (`--repository-file` with the two Mac repo files) instead of
+  Drive.
 - `--target-home DIR` (drills): restores into DIR as `HOME` and `DIR/.hermes` as `HERMES_HOME`; Telegram always
   stripped, gateway never started, `system` not allowed.
 - Telegram is kept only when `~/.config/pi-role` is `main` **and** `--host` is this Pi's own name (a replacement

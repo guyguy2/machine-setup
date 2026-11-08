@@ -16,9 +16,11 @@ DOMAINS=(health services docker repos updates packages security agents backup dr
 # ---------- what this Pi is supposed to look like ----------
 # Always-on units and timers that must be active and enabled. MAIN_ONLY prefixes are skipped on a worker Pi
 # (~/.config/pi-role, as in restore.sh). hermes-gateway is the Telegram front door (the agents section reports it too).
-SYSTEM_UNITS=(ssh.service docker.service tailscaled.service dreambase-cert.timer pi-backup-system.timer)
+SYSTEM_UNITS=(ssh.service docker.service tailscaled.service dreambase-cert.timer pi-backup-system.timer
+  pi-backup-system-copy.timer)
 USER_UNITS=(pi-status.service hermes-gateway.service dreambase.service dreambase-proxy.service dreambase-photos.timer
-  rei.service rei-proxy.service rei-vault-sync.timer mail-sync.timer vault-index.timer pi-backup.timer)
+  rei.service rei-proxy.service rei-vault-sync.timer mail-sync.timer vault-index.timer pi-backup.timer
+  pi-backup-copy.timer)
 MAIN_ONLY=(dreambase rei mail hermes-gateway)
 role=$(tr -d '[:space:]' 2>/dev/null < "$HOME/.config/pi-role"); role=${role:-main}
 # Agent dashboards run one at a time (agent-lab), started and stopped from pi-status, so their units are disabled by
@@ -36,7 +38,7 @@ SITES_JSON=~/dev/websites/sites.json
 # Files holding credentials: must not be readable by group or others.
 SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev/pihole/.env ~/.config/gh/hosts.yml
   ~/.claude/.credentials.json ~/.config/gws/client_secret.json ~/.config/gws/credentials.enc
-  ~/.config/pi-backup/restic-password)
+  ~/.config/pi-backup/restic-password ~/.config/pi-backup/mac-repo)
 # Pi-hole settings changed outside compose (pihole.toml "### CHANGED" without "(env)") that are expected: dns.hosts is
 # the main Pi's local DNS record (restore.sh's pihole step writes it, checked below); webserver.api.pwhash is the hash of
 # FTLCONF_webserver_api_password (.env); files.macvendor is the image's own.
@@ -963,6 +965,15 @@ check_backup() {
   if (( rc == 0 )); then ok "system backup: $(head -1 <<<"$out")"
   else warn backup.system "system backup: $(grep -m1 . <<<"$out" | cut -c1-160)"; fi
   systemctl is-enabled -q pi-backup-system.timer 2>/dev/null || warn backup.timer "pi-backup-system.timer isn't enabled (sudo /usr/local/lib/pi-backup/pi-backup-system init)"
+
+  # Second copy on the Mac's append-only rest-server (R-020): `copy-status` exits 1 when the last good copy is over
+  # 3 days old (the Mac sleeps; the hourly copy timers catch up when it wakes) or the Mac repo needs a prune.
+  out=$("$bk/pi-backup" copy-status 2>&1); rc=$?
+  if (( rc == 0 )); then ok "Mac copy (user): $(grep -m1 'last good' <<<"$out" | tr -s ' ' | sed 's/^ //' | cut -c1-120)"
+  else warn backup.mac-copy "Mac copy (user): $(grep -m1 -E 'verdict|no copy' <<<"$out" | sed 's/^ *//' | cut -c1-160) (details: pi-backup copy-status)"; fi
+  out=$("$sys" copy-status 2>&1); rc=$?
+  if (( rc == 0 )); then ok "Mac copy (system): $(grep -m1 'last ok' <<<"$out" | tr -s ' ' | sed 's/^ //' | cut -c1-120)"
+  else warn backup.mac-copy "Mac copy (system): $(grep -m1 -E '^status|none yet|unknown command' <<<"$out" | cut -c1-160) (details: $sys copy-status)"; fi
 
   # Root runs installed copies; they must match the repo and Homebrew's rclone (re-run setup after changes).
   out=$("$bk/setup" --check 2>&1); rc=$?

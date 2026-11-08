@@ -1,0 +1,10 @@
+# Enabled by `pi-backup copy-init`. Hourly, so a Mac that was asleep at night gets the copy once it wakes.
+[Unit]
+Description=pi-backup copy to the Mac, hourly
+
+[Timer]
+OnCalendar=*-*-* *:20
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

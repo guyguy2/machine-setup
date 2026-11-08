@@ -203,12 +203,16 @@ schema and exit codes are in `MULTI-PI.md` ("Interfaces").
 Keeps 7 daily, 4 weekly, 6 monthly; `restic check` runs weekly. Never backed up: Tailscale state, `/etc/machine-id`,
 caches, DreamBase `photos/` (re-fetched from the album), the Pi-hole query log.
 
+Both repos also get a **second copy on the Mac** that the Pi can't delete: [below](#second-copy-on-the-mac-append-only).
+
 **Security**: root never runs anything `guy` can write. `sudo backup/setup` installs root-owned copies of the root
 side (and of Homebrew's static `rclone`) into `/usr/local/lib/pi-backup/`, after showing what changed and asking
 for `yes`; `pi-backup-system` refuses to run if those files aren't root-owned. Re-run `setup` after changing
 `pi-backup-system`, `system-includes.txt` or its units, or after Homebrew upgrades rclone (`setup --check`,
-`pi-checkup backup` and `upd` say when). `guy`'s Drive token can still delete either repo: Drive's trash (30 days)
-is the undo.
+`pi-checkup backup` and `upd` say when). Anything that can act as `guy` can still delete either Drive repo for
+good: the `gdrive-backup` token (it needs delete rights to prune), the gws token (full Drive scope) or `rclone`
+itself. Drive's trash is **not** an undo: API deletes (`files.delete`, emptying the trash) skip it. The undo is the
+append-only copy on the Mac.
 
 **Passphrases**: one per repo, master copies in the password manager. Each Pi keeps them in
 `~/.config/pi-backup/restic-password` and `/root/.config/pi-backup/restic-password` (0600). Without them nobody can
@@ -242,6 +246,9 @@ Replacing a Pi from its backup? Use [New Pi from backup](#new-pi-from-backup) in
 - `pi-backup status` (exit 0 = last good backup under 36 h old and the last check didn't fail);
   `/usr/local/lib/pi-backup/pi-backup-system status` for root's. The pi-status Overview has a Backup strip and
   lists problems under "Needs attention"; `pi-checkup backup` warns too; `upd` runs both checks.
+- The Mac copy: `pi-backup copy-status`, `/usr/local/lib/pi-backup/pi-backup-system copy-status` (exit 0 = last good
+  copy under 3 days old); `pi-checkup backup` warns (`backup.mac-copy`). Logs: `journalctl --user -u pi-backup-copy`,
+  `journalctl -u pi-backup-system-copy`.
 - Logs: `journalctl --user -u pi-backup`, `journalctl -u pi-backup-system` (no file lists are logged).
 - By hand: `pi-backup run [--dry-run]`, `pi-backup check`, `pi-backup list` (what's included).
 
@@ -249,7 +256,8 @@ Replacing a Pi from its backup? Use [New Pi from backup](#new-pi-from-backup) in
 
 `pi-restore-state` is a dry run; it lists what each group would restore and what it would replace. Add `--yes` to
 write. `--only hermes,signins,data,system`, `--snapshot ID`, `--host <other Pi>` (whose repo). Replaced files go to
-`~/.pi-restore-backup-<timestamp>/`. Hermes comes back through `hermes import`. Telegram is kept only when this is the main
+`~/.pi-restore-backup-<timestamp>/`. `--from-mac` reads the Mac copy instead of Drive (when Drive is gone; snapshot
+ids there differ from Drive's). Hermes comes back through `hermes import`. Telegram is kept only when this is the main
 Pi restoring its own backup; otherwise `TELEGRAM_*` is removed and the gateway stays off, so two Pis never poll
 one bot. `~/.ssh/authorized_keys` is merged, not replaced. The Pi-hole export is never imported automatically (it
 prints the command). Drill without touching anything live: `pi-restore-state --target-home <empty dir> --yes`.
@@ -267,7 +275,52 @@ share one.
 3. Write both passphrase files (password manager), then `sudo ~/dev/machine-setup/raspberry-pi/backup/setup`.
 4. `pi-restore-state` (dry run: check what it would restore), then `pi-restore-state --yes`.
 5. Only now: `pi-backup init` and `sudo /usr/local/lib/pi-backup/pi-backup-system init` (they enable the timers).
-6. The rest of section 4 (Tailscale, `restore.sh --only rei`, ...).
+6. The Mac copy: `backup/mac/pi-copy-credentials`, then `pi-backup copy-init` and
+   `sudo /usr/local/lib/pi-backup/pi-backup-system copy-init` (the Mac repos already exist; copies continue).
+7. The rest of section 4 (Tailscale, `restore.sh --only rei`, ...).
+
+Drive gone (deleted, or the Google account lost)? Restore from the Mac instead: join the tailnet first
+(`sudo tailscale up --ssh`) and make sure `ssh mac` works, run `backup/mac/pi-copy-credentials` (new passwords for
+the Mac logins), then step 4 with `pi-restore-state --from-mac`. Afterwards set up a new Drive remote and `pi-backup init --fresh` (the new Drive repo
+starts empty); the Mac repos keep their history.
+
+### Second copy on the Mac (append-only)
+
+Why: everything that can delete the Drive repos lives on the Pi as `guy` (see Security above). The Mac runs restic's
+[rest-server](https://github.com/restic/rest-server) with `--append-only`: a client can add snapshots but the server
+refuses every delete (`restic forget` and `prune` get 403 Forbidden), so neither the Pi's rest-server logins nor its
+Drive tokens can destroy this copy. **The hole that stays**: the Pi's SSH key logs into the Mac as the user and could
+delete the data directory itself (`~/restic-pi`); restricting that key is agent-lab review R-017.
+
+| Where | What |
+|---|---|
+| Mac | `rest-server` 0.14 (`go install`, in `~/go/bin`; not in Homebrew), LaunchAgent `local.pi-backup.rest-server` (RunAtLoad, KeepAlive) written by `backup/mac/pi-rest-server install`, listening only on the Mac's Tailscale IP, port 8000. `--private-repos`: login `<host>-user` may only use `/<host>-user/`, `<host>-system` only `/<host>-system/`. `--max-size` 40 GiB for all repos. Data `~/restic-pi`, logins (bcrypt) `~/.config/pi-rest-server/htpasswd`, log `~/Library/Logs/pi-rest-server.log` |
+| Pi, user | `pi-backup copy` from `pi-backup-copy.timer` (hourly at :20), repo file `~/.config/pi-backup/mac-repo` (0600), state `~/.local/state/pi-backup/copy.json` |
+| Pi, root | `pi-backup-system copy` from `pi-backup-system-copy.timer` (hourly at :40), repo file `/root/.config/pi-backup/mac-repo` (root 0600), state `/var/lib/pi-backup/copy.json` |
+
+Each copy job is `restic copy` of this host's snapshots from the Drive repo to the Mac repo (same passphrase; the Mac
+repos were created with `--copy-chunker-params`, so data dedupes). It only runs when a backup is newer than the last
+good copy, and first checks the Mac answers within 5 s: when the Mac is asleep or away it logs one line ("Mac copy
+skipped: ... not reachable") and exits 3, which the units treat as success, and the next hour tries again. A copy
+older than 3 days makes `copy-status` exit 1 and `pi-checkup backup` warn. The repo files hold the rest-server URL
+with its password and aren't backed up (`~/.config/pi-backup` is excluded); `pi-copy-credentials` makes new ones.
+
+Set up (once; the Mac must be awake and `ssh mac` must work):
+
+1. On the Mac: `/opt/homebrew/bin/brew install restic` and
+   `/opt/homebrew/bin/go install github.com/restic/rest-server/cmd/rest-server@v0.14.0`.
+2. From the Pi: `scp backup/mac/pi-rest-server mac:.local/bin/ && ssh mac .local/bin/pi-rest-server install`.
+3. `backup/mac/pi-copy-credentials` (both logins; passwords go to the Mac on stdin and are never shown).
+4. `sudo backup/setup` (installs the root copy units), then `pi-backup copy-init` and
+   `sudo /usr/local/lib/pi-backup/pi-backup-system copy-init` (create the Mac repos, enable the timers).
+5. First copies: `pi-backup copy` and `sudo /usr/local/lib/pi-backup/pi-backup-system copy`.
+
+The Mac copy is never pruned through the server (append-only means no deletes), so it grows by what each night adds
+(roughly 2 GB a month at today's ~75 MB a night); `copy-status` warns above 30 GB. To thin it, at the Mac's own terminal (the passphrases
+are in the password manager): `restic -r ~/restic-pi/<host>-user forget --keep-daily 7 --keep-weekly 8
+--keep-monthly 24 --prune` (and the same for `<host>-system`); `restic repair index` there also clears duplicate
+index entries left by any refused prune. Updating rest-server: re-run the `go install` with the new version, then
+`pi-rest-server install`. Check it: `ssh mac .local/bin/pi-rest-server status`.
 
 ## Pi lost or compromised: revoke everything
 
