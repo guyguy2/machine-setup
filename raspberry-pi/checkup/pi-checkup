@@ -102,6 +102,22 @@ pihole_dns_hosts() {
               while (match(line, /"[^"]*"/)) { print substr(line, RSTART + 1, RLENGTH - 2); line = substr(line, RSTART + RLENGTH) }
               if (done) in_h = 0 }'
 }
+# dns_fallback <nameserver...>: "ok" when this Pi's DNS has its own Pi-hole (127.0.0.1) and a public resolver to
+# fall back on (R-034; restore.sh's pihole step sets them), else what's missing.
+dns_fallback() {
+  local s lo=0 pub=0
+  for s in "$@"; do
+    case $s in 127.0.0.1) lo=1 ;; 8.8.8.8|8.8.4.4|1.1.1.1|1.0.0.1|9.9.9.9) pub=1 ;; esac
+  done
+  if (( lo && pub )); then echo ok
+  elif (( pub )); then echo "no Pi-hole (127.0.0.1)"
+  elif (( lo )); then echo "no public fallback resolver"
+  else echo "neither Pi-hole (127.0.0.1) nor a public fallback resolver"; fi
+}
+# dnssec_validates <dig flags line for example.com> <dig status for dnssec-failed.org>: true when Pi-hole sets the
+# AD flag on a signed answer and refuses a broken signature (SERVFAIL). Google's upstreams validate too, so
+# SERVFAIL alone doesn't show that Pi-hole does.
+dnssec_validates() { [[ $1 =~ flags:[a-z\ ]*\ ad[\ \;] && $2 == SERVFAIL ]]; }
 # days_until <date> [now epoch]: whole days from now until the date (any format `date -d` reads; negative when past)
 days_until() {
   local t now=${2:-$(date +%s)}
@@ -489,6 +505,22 @@ check_docker() {
     done < <(docker exec pihole pihole version 2>/dev/null)
     running_img=$(docker inspect -f '{{.Config.Image}}' pihole 2>/dev/null)
     [[ -n $pinned && $running_img != "$pinned" ]] && info "Pi-hole runs $running_img, compose pins $pinned: the next upd recreates the container (a DNS blip)"
+    # DNSSEC (R-034): FTLCONF_dns_dnssec in compose. The image has dig.
+    local flags status
+    flags=$(docker exec pihole dig +adflag +time=3 +tries=1 @127.0.0.1 example.com 2>/dev/null | grep -m1 '^;; flags:')
+    status=$(docker exec pihole dig +time=3 +tries=1 @127.0.0.1 dnssec-failed.org 2>/dev/null | sed -nE 's/.*status: ([A-Z]+).*/\1/p' | head -1)
+    if dnssec_validates "$flags" "$status"; then ok "Pi-hole validates DNSSEC (AD flag on example.com, SERVFAIL on dnssec-failed.org)"
+    else info "Pi-hole doesn't validate DNSSEC (example.com: '${flags#;; }', dnssec-failed.org: ${status:-no answer}; FTLCONF_dns_dnssec in ~/dev/pihole/docker-compose.yml)"; fi
+  fi
+  # This Pi's own DNS (R-034): MagicDNS forwards to NetworkManager's nameservers for the LAN connection; without a
+  # public one there, a dead Pi-hole also takes down the Pi's backups and alerts.
+  local dev ns fb
+  dev=$(ip -4 route show default 2>/dev/null | sed -nE 's/.* dev ([^ ]+).*/\1/p' | head -1)
+  if have nmcli && [[ -n $dev ]]; then
+    ns=$(nmcli -g IP4.DNS dev show "$dev" 2>/dev/null | tr -d '|')
+    fb=$(dns_fallback $ns)  # word-split on purpose
+    if [[ $fb == ok ]]; then ok "this Pi's DNS: Pi-hole with a public fallback ($(echo $ns) via MagicDNS)"
+    else warn docker.pi-dns "this Pi's DNS ($dev: ${ns:-none}) has $fb, so a Pi-hole outage stops its own lookups (fix: restore.sh --only pihole)"; fi
   fi
   # Newest release tag on Docker Hub (YYYY.MM.N); network, so skipped with --no-fetch.
   if (( fetch )) && [[ $pinned == *:20[0-9][0-9].* ]]; then

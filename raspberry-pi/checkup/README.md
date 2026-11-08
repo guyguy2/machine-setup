@@ -20,7 +20,7 @@
 
 health (load, temperature, throttling, RAM/swap, disks, kernel vs reboot, OOM, SD errors, unclean shutdown, journal), services
 (always-on units and timers, recurring failures, tailnet routes, websites and their certificates), docker (containers, compose
-services, unpinned `:latest` images, unused images, Pi-hole versions and image tag, Pi-hole settings set only in its UI, the main Pi's local DNS record), repos (git state of `~/dev`, untracked folders, broken links, venvs on a Homebrew Python, bogus
+services, unpinned `:latest` images, unused images, Pi-hole versions and image tag, Pi-hole settings set only in its UI, the main Pi's local DNS record, Pi-hole DNSSEC, this Pi's own DNS fallback), repos (git state of `~/dev`, untracked folders, broken links, venvs on a Homebrew Python, bogus
 lockfile entries), packages (`uv audit` per `~/dev` project, `npm audit` of openclaw_node's lockfile cached for a day,
 tools installed from two sources, npm `min-release-age`, `~/.cache` size), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
 listeners, listeners reachable on a global IPv6 address, root services running user-writable code, ad-hoc servers, rpcbind, the `table inet host` firewall, sshd, auto-updates, credential permissions, dead tailnet devices),

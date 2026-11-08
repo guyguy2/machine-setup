@@ -354,3 +354,23 @@ def test_local_bin_dups(tmp_path: Path):
     a.mkdir(); b.mkdir()
     (a / "hermes").touch(); (a / "yq").touch(); (b / "yq").touch()
     assert sh('local_bin_dups "$1" "$2"', str(a), str(b)) == f"yq: {a} and {b}\n"
+
+
+# ---------- R-034: the Pi's own DNS fallback, Pi-hole DNSSEC ----------
+
+def test_dns_fallback():
+    assert sh("dns_fallback 127.0.0.1 8.8.8.8 8.8.4.4") == "ok\n"
+    assert sh("dns_fallback 192.168.86.1") == "neither Pi-hole (127.0.0.1) nor a public fallback resolver\n"
+    assert sh("dns_fallback 127.0.0.1") == "no public fallback resolver\n"
+    assert sh("dns_fallback 8.8.8.8") == "no Pi-hole (127.0.0.1)\n"
+    assert sh("dns_fallback") == "neither Pi-hole (127.0.0.1) nor a public fallback resolver\n"
+
+
+def test_dnssec_validates():
+    on = ";; flags: qr rd ra ad; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1"
+    off = ";; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1"
+    ok = 'dnssec_validates "$1" "$2" && echo yes || echo no'
+    assert sh(ok, on, "SERVFAIL") == "yes\n"
+    assert sh(ok, off, "SERVFAIL") == "no\n"  # Google refusing it upstream isn't Pi-hole validating
+    assert sh(ok, on, "NOERROR") == "no\n"
+    assert sh(ok, "", "") == "no\n"

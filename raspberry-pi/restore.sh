@@ -351,6 +351,29 @@ pihole_local_dns() {
   fi
 }
 
+# pi_dns_fallback: this Pi's own DNS (agent-lab/reviews R-034). The Pi resolves through Tailscale's MagicDNS
+# (100.100.100.100), which answers tailnet names itself and forwards everything else to the nameservers
+# NetworkManager has for the LAN connection. By default those are the router's, and the router forwards to Pi-hole,
+# so a dead Pi-hole took the Pi's DNS (backups, alerts, docker pull) down with the house's. Instead: this Pi's
+# Pi-hole on 127.0.0.1 plus Google's 8.8.8.8/8.8.4.4 (Pi-hole's own upstreams), ignoring the router's. MagicDNS asks
+# all of them at once and takes the first answer, and a SERVFAIL or timeout just waits for another, so Pi-hole (a
+# millisecond away, blocklist answers instantly) normally wins and Google answers when it doesn't. pi-checkup
+# docker.pi-dns checks it. Changes the connection with `device reapply` (no link bounce).
+PI_DNS="127.0.0.1 8.8.8.8 8.8.4.4"
+pi_dns_fallback() {
+  local dev con cur
+  have nmcli || { echo "  Pi's DNS fallback: no NetworkManager (nmcli), skipped"; return 0; }
+  dev=$(ip -4 route show default 2>/dev/null | sed -nE 's/.* dev ([^ ]+).*/\1/p' | head -1)
+  con=$(nmcli -g GENERAL.CONNECTION dev show "$dev" 2>/dev/null)
+  [[ -n $dev && -n $con ]] || { echo "  Pi's DNS fallback: no default-route connection found, skipped"; return 0; }
+  cur=$(nmcli -g ipv4.dns,ipv4.ignore-auto-dns,ipv6.ignore-auto-dns con show "$con" 2>/dev/null | paste -sd'|')
+  if [[ $cur == "${PI_DNS// /,}|yes|yes" ]]; then echo "  Pi's DNS already Pi-hole + Google fallback ($con)"; return 0; fi
+  if would "nmcli con mod '$con' ipv4.dns '$PI_DNS' ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes; nmcli dev reapply $dev"; then
+    sudo nmcli con mod "$con" ipv4.dns "$PI_DNS" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes \
+      && sudo nmcli dev reapply "$dev" >/dev/null && echo "  Pi's DNS: $PI_DNS on '$con' (MagicDNS forwards to these)"
+  fi
+}
+
 if want pihole; then
   say "Pi-hole (docker compose in ~/dev/pihole; DNS on port 53, admin UI on 127.0.0.1:8081)"
   ph=$here/services/pihole
@@ -366,6 +389,7 @@ if want pihole; then
     if role_skips dreambase; then echo "  local DNS record: skipped (main only)"
     else pihole_local_dns "$ph/etc-pihole/pihole.toml"; fi
   fi
+  pi_dns_fallback
 fi
 
 if want agents; then
@@ -555,7 +579,9 @@ cat <<'MSG'
       Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
     - Agents: onboard each one the way ~/dev/agent-lab/agents.md records (they use the claude CLI login, no API keys).
     - REI dashboard: copy ~/dev/rei/inputs/ from the Mac, set up the rclone remote gdrive: (printed by the rei step).
-  - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it.
+  - Router: give this Pi a fixed IP (DHCP reservation for its new MAC) so devices using Pi-hole as DNS find it,
+    then its DNS (Google Home app > Wi-Fi > Settings > Advanced networking > DNS > Custom): primary this
+    Pi's LAN IP, secondary 8.8.8.8 (README.md, "The house's DNS").
   - Nightly backup (README.md), only after restoring state: pi-backup init and
     sudo /usr/local/lib/pi-backup/pi-backup-system init (they refuse on an unrestored Pi whose hostname has
     backups on Drive; --fresh starts over on purpose).

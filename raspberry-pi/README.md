@@ -110,7 +110,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    `~/dev/machine-setup/raspberry-pi/restore.sh --only rei` again to enable the sync timer. Start it with
    `systemctl --user start rei.service`; the pi-status REI tab shows whether it's up.
 7. **Router**: give the Pi a fixed IP (a DHCP reservation for the **new** MAC address). Devices that use Pi-hole for
-   DNS depend on it.
+   DNS depend on it. Then point the router's DNS at Pi-hole with Google as the secondary: [The house's DNS](#the-houses-dns-google-nest-wifi).
 8. **SSH keys**: `~/.ssh/` (keys, `authorized_keys`, `config`) comes back with `pi-restore-state`; without it, SSH
    access comes only from the key given to Imager in step 1. To allow another machine, append its public key to
    `~/.ssh/authorized_keys`. `gh` handles git over HTTPS.
@@ -158,6 +158,36 @@ Installed by restore.sh's `system` step from `host/` (since 2026-11-08):
 - **sshd:** keys only, no root, no X11, `AllowUsers guy`. **sysctl:** kptr/dmesg restricted, no ICMP redirects
   (ip_forward stays on for Docker and Tailscale). **unattended-upgrades:** Debian security updates only, no
   automatic reboot; everything else waits for `upd`.
+
+## DNS: Pi-hole and its fallbacks
+
+Pi-hole (`services/pihole/`) answers DNS for the house and for this Pi, forwards to Google (8.8.8.8, 8.8.4.4) and
+validates DNSSEC (`FTLCONF_dns_dnssec`: answers it checked carry the AD flag, a broken signature gets SERVFAIL).
+When Pi-hole is down, both the house and the Pi fall back to Google directly (since 2026-11-08, agent-lab/reviews R-034):
+
+- **This Pi** resolves through Tailscale's MagicDNS (`/etc/resolv.conf` is `100.100.100.100`), which answers tailnet
+  names itself and forwards everything else to NetworkManager's nameservers for the LAN connection. The `pihole`
+  step sets those to `127.0.0.1 8.8.8.8 8.8.4.4` (ignoring the router's). MagicDNS asks them all at once and takes the
+  first real answer; a timeout or SERVFAIL waits for the others. Pi-hole is a millisecond away and answers blocked
+  names from its list instantly, so it normally wins; when it's down, Google answers. Check: `pi-checkup docker`
+  (`docker.pi-dns`, and the DNSSEC line). Without Tailscale, glibc reads the same nameservers in order.
+- **The house** asks the router, which forwards to its DNS servers. Set them in the Google Home app (next section).
+
+### The house's DNS (Google Nest Wifi)
+
+In the **Google Home** app on the phone:
+
+1. Tap **Wi-Fi** (on the Favorites or Devices tab), then **Settings** (the gear, top right).
+2. **Advanced networking** → **DNS**.
+3. Choose **Custom**. **Primary server**: this Pi's LAN IP (on the Pi: `ip -4 route get 1.1.1.1`, the address after
+   `src`; it needs the DHCP reservation from section 4). **Secondary server**: `8.8.8.8`.
+4. **Save**. The network may restart (a minute without Wi-Fi).
+5. Check from the Mac on the Wi-Fi: `dig example.com` answers, and `dig doubleclick.net` usually gives `0.0.0.0`.
+
+Caveat: Nest Wifi doesn't keep the secondary only for when the primary fails. It spreads queries over both, so even
+with Pi-hole up some lookups go straight to Google: those aren't blocked or counted in Pi-hole's stats (more ads
+get through). For full blocking, leave the secondary empty and accept that the house loses DNS when Pi-hole does.
+On a second Pi (MULTI-PI.md), use the two Pis' LAN IPs instead and drop `8.8.8.8`.
 
 ## Nightly backup (restic)
 

@@ -20,6 +20,9 @@ services:
       FTLCONF_dns_listeningMode: "ALL"
       FTLCONF_webserver_paths_prefix: "/pihole"  # links carry the /pihole mount that tailscale serve strips
       FTLCONF_dns_upstreams: "8.8.8.8;8.8.4.4"
+      # Pi-hole validates DNSSEC itself and sets the AD flag (agent-lab/reviews R-034); a broken signature gives
+      # SERVFAIL. pi-checkup's docker.pihole-dnssec checks it (AD on example.com, SERVFAIL on dnssec-failed.org).
+      FTLCONF_dns_dnssec: "true"
       # The limit is per client and the router forwards the whole LAN as one client, so the default 1000/min
       # refused the whole house (and this Pi, whose DNS goes via the router) at busy moments
       FTLCONF_dns_rateLimit_count: "5000"
