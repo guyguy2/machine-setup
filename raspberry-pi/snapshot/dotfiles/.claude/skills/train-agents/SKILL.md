@@ -21,7 +21,7 @@ The lab's scripts do the mechanical parts; your job is the judgment around them:
 |---|---|
 | `bin/lab new-skill NAME`, `bin/lab new-uc "TITLE"` | scaffold the skill (with the ground rules) and the use case |
 | `bin/lab skills NAME` | install the skill to both agents |
-| `bin/lab wire NAME --pointer "..." [--args REGEX]` | OpenClaw allowlist entry + the same pointer line for both agents, with backups |
+| `bin/lab wire NAME --pointer "..." [--args REGEX]` | OpenClaw allowlist entry + a pointer line (Hermes: hard rules only), with backups; warns above 90% of USER.md's limit |
 | `bin/lab skill-check NAME` | is it ready? FAIL / WARN / TESTED (latest run per agent, with its tools check) |
 | `bin/loop UC-NNN` | run both agents (one at a time, read-only), check their tool calls (`tools_check`), judge, compare |
 
@@ -63,8 +63,11 @@ record it in agents.md later.
    - The use case has `skill: <name>` in its front matter, so `bin/loop` checks the tool calls. Its `risk:` follows
      the rule in the writer brief.
 3. `bin/lab skills <name>`.
-4. Write the pointer line: one sentence the agents always see, saying when to use the command and naming the skill,
-   in the style of the existing ones (`grep -h 'skill: ' ~/.hermes/memories/USER.md`). Run
+4. Hermes routes by the skill's description head (the first 60 characters its skill index shows; `bin/lab
+   skill-check` prints it as HEAD) plus one routing rule in its `USER.md`, so a new skill gets **no Hermes pointer**
+   unless it carries a hard rule like clean-gmail's or pay-bills' (ask before trashing or paying); if its domain isn't
+   in the routing rule, add the word to that rule. A hard-rule pointer is one sentence naming the skill, in the style
+   of `grep -h 'skill: ' ~/.hermes/memories/USER.md`. Run
    `bin/lab wire <name> --pointer "<text with (skill: name)>" [--args '<argPattern>'] --dry-run`, read the diff,
    then run it without `--dry-run`. `--args` is a regex over the command's arguments for OpenClaw's allowlist; give
    one when the command takes a fixed set (clean-gmail: `^(--yes|--help|-h|help)?$`).
@@ -81,7 +84,7 @@ record it in agents.md later.
    agents' quirks don't get mixed up. Never have two running at once: only one agent fits in the Pi's RAM, and
    `bin/loop` refuses to start while another lab run holds the `lab-run` marker.
 3. Fix at the root, and once, so both agents keep the same skill. A missing gate belongs in the command; an agent
-   that doesn't find the skill needs a better description or pointer line (`bin/lab wire` again); a config gap
+   that doesn't find the skill needs a better description head (`bin/lab skill-check` HEAD); a config gap
    goes in agents.md. After a shared change, run `bin/lab skills <name>` and test both agents again. Never reword
    the use-case prompt to make an agent pass.
 4. Write tasks: lab runs stay read-only (the `lab-run` marker). The first real write is done with the user, one

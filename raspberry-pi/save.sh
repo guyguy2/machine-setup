@@ -18,9 +18,17 @@ dotfiles=(
   .config/mimeapps.list
   .config/systemd/user/pi-status.service
   .config/systemd/user/hermes-dashboard.service .config/systemd/user/hermes-proxy.service .config/systemd/user/openclaw-gateway.service
+  .config/systemd/user/hermes-gateway.service  # written by `hermes gateway install`; the Telegram bot (main Pi only)
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
   .claude/skills/gws .claude/skills/pihole .claude/skills/openclaw .claude/skills/hermes .claude/skills/train-agents
   .gemini/antigravity-cli/settings.json dev/statusline.sh  # agy (Antigravity CLI): settings (status line, permissions) and its status line script
+)
+# Files under ~/.config/systemd/user deliberately left out of the snapshot because a step of restore.sh writes them
+# again. pi-checkup's drift.backup check counts these as covered. Units that are symlinks into a git repo (e.g.
+# lab-chromium.service -> ~/dev/agent-lab) need no entry: that repo has them, and systemd-user-enabled.txt lists them.
+# shellcheck disable=SC2034  # read by pi-checkup, not here
+regenerated=(
+  .config/systemd/user/rei.service.d  # ~/dev/rei/deploy/pi/install.sh (rei step); it holds the tailnet name
 )
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

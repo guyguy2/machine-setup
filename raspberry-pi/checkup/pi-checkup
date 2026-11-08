@@ -79,6 +79,8 @@ links_drift() {
   sed -nE -e "s#^  linked ([^ ]+) -> .*#\1 is missing#p" -e "s#^  ([^ ]+) exists and is not this repo's .*#\1 exists but isn't the repo's link#p" \
     | sed "s#^$HOME/#~/#"
 }
+# save_sh_lists <save.sh>: the text of its dotfiles=( ) and regenerated=( ) arrays (paths save.sh covers)
+save_sh_lists() { sed -n -e '/^dotfiles=(/,/^)/p' -e '/^regenerated=(/,/^)/p' "$1"; }
 # main_only <unit>: true when the unit is for the main Pi only (see MAIN_ONLY)
 main_only() { local p; for p in "${MAIN_ONLY[@]}"; do [[ $1 == "$p"* ]] && return 0; done; return 1; }
 
@@ -721,7 +723,7 @@ check_drift() {
 
   # User units and dotfiles that exist here but that save.sh doesn't back up.
   local listed
-  listed=$(sed -n '/^dotfiles=(/,/^)/p' "$pi/save.sh")
+  listed=$(save_sh_lists "$pi/save.sh")
   for f in "$HOME"/.config/systemd/user/*.{service,timer} "$HOME"/.config/systemd/user/*.d "$HOME"/.zprofile "$HOME"/.zshenv; do
     [[ -e $f ]] || continue
     # A symlink into a git repo is backed up by that repo (e.g. ~/dev/websites/systemd/user)

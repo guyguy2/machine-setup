@@ -20,7 +20,6 @@ Install each tool from exactly one source. Before installing, check `whence -a <
   missing the `anthropic` library, so Hermes crashed at startup. It's installed with its official installer
   (`curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash`, a git checkout in `~/.hermes/hermes-agent`,
   command in `~/.local/bin`) and updated with `hermes update --yes`. Switch back to brew if the formula is fixed.
-
 ## Python code intelligence
 
 The `pyright-lsp` Claude Code plugin (user scope) runs pyright on Python files: after each edit Claude sees new type
@@ -55,7 +54,7 @@ If a task needs a personal detail the store lacks, or `me get` returns CHOOSE/MI
 ## Updating
 
 `upd` (defined in `~/.zshrc`) updates everything: apt (packages + kernel), Pi bootloader status, Homebrew
-(including Claude Code), npm global packages, Hermes (its own `hermes update`), OpenClaw (skipped while it's listed in `~/dev/agent-lab/on-hold`), uv, Oh My Zsh, and `git pull --ff-only` for repos in `~/dev`. When adding a tool that
+(including Claude Code), npm global packages, Hermes (its own `hermes update`), OpenClaw (skipped while it's listed in `~/dev/agent-lab/on-hold`), uv, Oh My Zsh, and, every 5th run, `git pull --ff-only` for my own repos in `~/dev` (full history; a repo with uncommitted changes or a branch that has diverged from GitHub is skipped and reported). When adding a tool that
 `upd` doesn't already cover, add an update step for it to `upd`.
 
 ## Code over LLM judgment
