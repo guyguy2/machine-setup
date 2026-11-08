@@ -49,6 +49,14 @@ can_sudo() { sudo -n true 2>/dev/null; }
 days_since() { echo $(( ($(date +%s) - $1) / 86400 )); }
 gt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a > b) }'; }
 ts_name() { tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' | sed 's/\.$//'; }
+# drive_remotes_without_client <rclone.conf>: comma-separated names of type=drive remotes with no client_id
+drive_remotes_without_client() {
+  awk 'function flush() { if (name != "" && type == "drive" && !cid) out = out (out ? "," : "") name }
+       /^\[.*\]$/ { flush(); name = substr($0, 2, length($0) - 2); type = ""; cid = 0; next }
+       /^type *= *drive *$/ { type = "drive" }
+       /^client_id *= *[^ ]/ { cid = 1 }
+       END { flush(); print out }' "$1"
+}
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -417,6 +425,15 @@ check_agents() {
     else warn agents.gws-login "Google (gws) test call failed: $(grep -m1 -iE 'error|message' <<<"$out" | cut -c1-120)"; fi
   fi
   if have gh; then gh auth status >/dev/null 2>&1 && ok "GitHub (gh) login works" || warn agents.gh-login "gh is not signed in (gh auth login)"; fi
+  # rclone Drive remotes need their own OAuth client: rclone's shared one is being retired and hits quota limits.
+  # Reads only section names and whether client_id is set (never the tokens).
+  local rconf=~/.config/rclone/rclone.conf shared
+  if [[ -r $rconf ]]; then
+    shared=$(drive_remotes_without_client "$rconf")
+    if [[ -n $shared ]]; then
+      warn agents.rclone-client "rclone Drive remote(s) on rclone's shared OAuth client (being retired): $shared; re-sign: ~/dev/agent-lab/bin/rclone-login --remote NAME"
+    else ok "rclone Drive remotes use their own OAuth client"; fi
+  fi
   if have claude; then
     out=$(timeout 20 claude auth status 2>/dev/null | jq -r '.loggedIn // empty' 2>/dev/null)
     [[ $out == false ]] && warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
