@@ -74,13 +74,14 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `dotfiles` | copies `snapshot/dotfiles/` into `$HOME` | `snapshot/dotfiles/` |
 | `github` | `gh auth login` (device code) + `gh auth setup-git` | |
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
-| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills`; turns on this repo's pre-commit hook (`core.hooksPath .githooks`) | pi-checkup `drift.links` warns about any that are missing |
+| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state`, `pi-alert` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills`; turns on this repo's pre-commit hook (`core.hooksPath .githooks`) | pi-checkup `drift.links` warns about any that are missing |
 | `pihole` | asks for the admin password, then `docker-compose up -d`; on the main Pi adds the local DNS record `<LAN IP> <this Pi's tailnet name>` (read on the Pi at run time; only when Pi-hole has none) so home-network devices reach DreamBase without Tailscale | `services/pihole/` |
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data comes back with `pi-restore-state` (section 4), not this step | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
 | `rei` | the REI dashboard: clones the private repo to `~/dev/rei` (needs the `github` step), `uv sync`, its `deploy/pi/install.sh` (links and enables `rei.service` and `rei-proxy.service`; `rei-vault-sync.timer` only once the rclone remote `gdrive:` exists), then `tailscale serve --https=8446` (tailnet only). Prints its manual follow-ups (section 4) | `~/dev/rei` |
 | `mail` | the email sorter behind Home Base's Emails tab: clones the private repo to `~/dev/mail` (needs the `github` step), `uv sync`, links and enables `mail-sync.timer` (every hour). Needs the gws Gmail sign-in and Claude Code signed in; its data (`~/.local/share/mail`) comes back with `pi-restore-state`; without a backup, `uv run mail bootstrap` relearns the last two weeks | `~/dev/mail` |
 | `lab` | agent-lab's units: links `vault-index.{service,timer}` from `~/dev/agent-lab/tools/systemd` and enables the timer (hourly Obsidian vault index; needs the rclone remote from `pi-restore-state`); lab Chromium via agent-lab's `bin/browser install-service` | `~/dev/agent-lab` |
+| `alerts` | Telegram alerts ([Alerts](#alerts-telegram)): links `alert/user/` units and drop-ins into `~/.config/systemd/user`, root-owned copies of `alert/system/` into `/etc/systemd/system`, enables `pi-alert-digest.timer` and `pi-alert-watch.timer` | `alert/` |
 | `shell` | login shell → zsh | |
 | `systemd` | DreamBase (`~/dev/websites/install.sh`), then enables the user units that were enabled before and have a unit file here (pi-status, `hermes-gateway.service` on the main Pi only, ...; the agent dashboards stay off), lists enabled units that have no unit file, turns on linger | `snapshot/systemd-user-enabled.txt` |
 
@@ -127,6 +128,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |
 | `pi-backup status` | last good backup under 36 h old (after `pi-backup init`, the next night) |
+| `pi-alert status` | "Telegram: token and chat id found" (main Pi, after `pi-restore-state`); then `pi-alert test` arrives on the phone |
 | `upd` | runs to "All done." |
 
 ---
@@ -158,6 +160,31 @@ Installed by restore.sh's `system` step from `host/` (since 2026-11-08):
 - **sshd:** keys only, no root, no X11, `AllowUsers guy`. **sysctl:** kptr/dmesg restricted, no ICMP redirects
   (ip_forward stays on for Docker and Tailscale). **unattended-upgrades:** Debian security updates only, no
   automatic reboot; everything else waits for `upd`.
+
+## Alerts (Telegram)
+
+Problems come to the user's Telegram, from the Hermes bot (since 2026-11-08, agent-lab/reviews R-035). The code is
+`alert/`; `pi-alert` (on PATH) does the sending. The bot token and chat id are read at run time from `~/.hermes/.env`
+(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_HOME_CHANNEL`, else the one id in `TELEGRAM_ALLOWED_USERS`) and passed to curl on
+stdin, never on a command line. A worker Pi has no bot, so its alerts only reach the journal.
+
+| When | What you get | How |
+|---|---|---|
+| A service fails (user or system; after systemd's own restarts give up) | "raspberrypi: rei.service failed (user unit, exit-code)" with its last 8 log lines and the `journalctl` command | top-level drop-ins `service.d/10-pi-alert.conf` (`OnFailure=pi-alert@%n.service`) for every user service (`~/.config/systemd/user/service.d` links to `alert/user/service.d`) and every system service (root-owned copy in `/etc/systemd/system/service.d/`); `pi-alert@.service.d/` empties it for the alert unit itself. The system handler runs `pi-alert` as `guy`, not root |
+| Docker stops, a container stops or turns unhealthy, Pi-hole stops answering DNS (still so a minute later) | one message when it starts, "OK again: ..." when it ends | `pi-alert-watch.timer`, every 5 minutes |
+| Every day at 08:00 | pi-checkup warnings that weren't there at the last digest (numbers in them ignored, so "91% full" vs "92% full" isn't new) and units that failed in the last 24 h; **nothing at all** when there's neither | `pi-alert-digest.timer` (`pi-checkup --warn-only --no-fetch`; yesterday's warnings in `~/.local/state/pi-alert/digest-warnings.txt`) |
+
+- **No spam**: per unit (or watch problem), a repeat goes out 1 h after the first alert, then after 4 h, then once a
+  day while it keeps failing; each message says how many were held back. 48 h without one starts over.
+  Desktop helpers that fail on a headless Pi (`xdg-desktop-portal*`, `ssh-agent.service`) are ignored (`IGNORE_UNITS`).
+- **DNS or network down**: it retries through DNS-over-HTTPS at 8.8.8.8, then the last Telegram address that worked.
+  What still can't go is kept in `~/.local/state/pi-alert/unsent/` (up to 20) and sent, marked late, with the next
+  message that gets through. pi-checkup `services.alerts` warns about unsent ones and missing drop-ins.
+- **Commands**: `pi-alert test` (sends "pi-alert test: alerts are set up"), `pi-alert status` (rate limits, unsent,
+  last digest), `pi-alert "text"` or `pi-alert --key K "text"` (rate-limited per key) for scripts,
+  `pi-alert digest --dry-run` / `pi-alert watch --dry-run` (print instead of send). Logs:
+  `journalctl --user -u 'pi-alert*'`, `journalctl -u 'pi-alert@*'`.
+- Tests: `uvx pytest raspberry-pi/alert/tests` (the pre-commit hook and CI run them).
 
 ## DNS: Pi-hole and its fallbacks
 
@@ -360,6 +387,7 @@ raspberry-pi/
   save.sh                 refresh snapshot/ (upd runs it)
   IDEAS.md                backlog of things this Pi could do next (not set up)
   checkup/                pi-checkup command + /pi-checkup skill (own README)
+  alert/                  pi-alert: Telegram alerts, their systemd units and drop-ins (section "Alerts")
   docker/                 notes: Docker setup, adding a container, Caddy 2 later
   bin/                    agent launchers                    ~/dev/scripts -> here
   pi-status/              the status website (own README)    ~/dev/pi-status -> here

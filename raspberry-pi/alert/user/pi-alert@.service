@@ -1,0 +1,8 @@
+# OnFailure= handler for user services (service.d/10-pi-alert.conf): a Telegram message that %i failed.
+[Unit]
+Description=Telegram alert: %i failed
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pi-alert unit %i
+TimeoutStartSec=5min

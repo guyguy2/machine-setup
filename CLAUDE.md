@@ -175,7 +175,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 
 - `raspberry-pi/bootstrap.sh`: `curl | bash` entry point on a fresh image (installs git, clones, runs `restore.sh`).
 - `raspberry-pi/restore.sh [--dry-run] [--only steps]`: steps apt-sources apt system tailscale brew uv npm omzsh
-  dotfiles github repos links pihole agents pi-status rei mail lab shell systemd (an unknown name exits 2). Safe to re-run;
+  dotfiles github repos links pihole agents pi-status rei mail lab alerts shell systemd (an unknown name exits 2). Safe to re-run;
   failed npm/agents installs are listed at the end (exit 1).
 - `raspberry-pi/save.sh [--push]`: rewrites `raspberry-pi/snapshot/` (dotfiles, apt/Homebrew/uv/npm lists, units,
   `system.txt`, `repos.txt`) and commits only `snapshot/`; then warns about unpushed work in `~/dev`. `upd` runs it.
@@ -203,6 +203,9 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 - `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates packages security agents backup
   drift), OK/INFO/WARN lines, exit 1 on warnings. The `pi-checkup` skill (`checkup/skill/`) runs it and sends an agent per
   domain with warnings. Add mechanical checks here, not to the skill; accepted warnings go in its `ACCEPTED` list.
+- `raspberry-pi/alert/`: `pi-alert`, Telegram alerts from the Hermes bot (failed units via top-level `OnFailure=`
+  drop-ins, user and system; 08:00 digest of new pi-checkup warnings; 5-minute docker/Pi-hole watch). Tests in
+  `alert/tests` (pre-commit and CI run them). README.md "Alerts".
 - `save.sh --to DIR` writes a snapshot to a new DIR instead (pi-checkup's drift check compares it with `snapshot/`).
 - `raspberry-pi/IDEAS.md` is the backlog of possible new uses for the Pi (none set up yet). When one gets built, move
   it into the runbook and delete its row there.

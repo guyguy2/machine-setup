@@ -1,0 +1,7 @@
+[Unit]
+Description=Telegram alert when docker, a container or Pi-hole's DNS stops working (pi-alert watch)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pi-alert watch
+TimeoutStartSec=5min

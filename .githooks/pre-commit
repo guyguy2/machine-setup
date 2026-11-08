@@ -4,7 +4,8 @@
 # drift.hooks warns when it isn't set). Skip in an emergency: git commit --no-verify.
 #   1. gitleaks on the staged changes (brew install gitleaks)
 #   2. this Pi's tailnet name in the staged lines (save.sh checks the snapshot the same way; write <tailnet>)
-#   3. bash -n and shellcheck -S warning on staged bash scripts (snapshot/: bash -n only); the pi-checkup tests when checkup/ is staged
+#   3. bash -n and shellcheck -S warning on staged bash scripts (snapshot/: bash -n only); the pi-checkup tests when checkup/ is staged,
+#      the pi-alert tests when alert/ is
 # CI (.github/workflows/ci.yml) runs 1 and 3 on every push.
 set -e
 root=$(git rev-parse --show-toplevel)
@@ -38,6 +39,10 @@ done
 if git diff --cached --name-only | grep -q '^raspberry-pi/checkup/'; then
   if command -v uvx >/dev/null 2>&1; then uvx pytest -q "$root/raspberry-pi/checkup/tests" >&2 || fail=1
   else echo "pre-commit: uvx not found: pi-checkup tests skipped" >&2; fi
+fi
+if git diff --cached --name-only | grep -q '^raspberry-pi/alert/'; then
+  if command -v uvx >/dev/null 2>&1; then uvx pytest -q "$root/raspberry-pi/alert/tests" >&2 || fail=1
+  else echo "pre-commit: uvx not found: pi-alert tests skipped" >&2; fi
 fi
 
 [ "$fail" = 0 ] || { echo "pre-commit: fix the above, or commit with --no-verify to skip" >&2; exit 1; }

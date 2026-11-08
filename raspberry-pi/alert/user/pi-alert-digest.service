@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Telegram digest: new pi-checkup warnings and units that failed in the last 24 h
+
+[Service]
+Type=oneshot
+# pi-checkup needs the Homebrew CLIs (jq, gh, ...); user services get a minimal PATH.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin:/home/linuxbrew/.linuxbrew/bin
+ExecStart=%h/.local/bin/pi-alert digest
+TimeoutStartSec=20min
+Nice=10

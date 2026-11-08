@@ -4,7 +4,7 @@
 # backup (raspberry-pi/backup/) with pi-restore-state. What's left by hand is listed at the end.
 # Usage: restore.sh [--role main|worker] [--dry-run] [--only step,step,...]
 # Steps (run in this order): apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links
-#                            pihole agents pi-status rei mail lab shell systemd
+#                            pihole agents pi-status rei mail lab alerts shell systemd
 # --role: main (the default: every step) or worker (skips the main-only steps rei and mail, DreamBase and
 #   hermes-gateway in the systemd step, and Pi-hole's local DNS record; see MULTI-PI.md). The flag beats ~/.config/pi-role, which beats the default; a real run writes
 #   the role to ~/.config/pi-role so save.sh and upd know it. snapshot/ is the main Pi's: a worker restores from it.
@@ -13,7 +13,7 @@ set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 snap=$here/snapshot
-all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail lab shell systemd)
+all_steps=(apt-sources apt system tailscale brew uv npm omzsh dotfiles github repos links pihole agents pi-status rei mail lab alerts shell systemd)
 # The only per-role filter: what a worker skips. Step names, plus "dreambase" (~/dev/websites/install.sh in the
 # systemd step, and the Pi-hole local DNS record for it) and "hermes-gateway" (the Telegram bot: one per bot token).
 # The systemd step skips user units whose names start with one of these. Everything else runs on both, including
@@ -84,6 +84,12 @@ want() {
   return 1
 }
 need() { [[ -e $snap/$1 ]] || { echo "  missing snapshot/$1, skipping"; return 1; }; }
+# put_conf <src> <dest> <mode>: install a root-owned copy if different; returns 0 if it wrote the file.
+put_conf() {
+  if sudo cmp -s "$1" "$2" 2>/dev/null; then echo "  $2 already current"; return 1; fi
+  would "install $2" || return 1
+  sudo install -D -m "$3" "$1" "$2"
+}
 
 [[ -d $snap ]] || { echo "no snapshot/ next to restore.sh" >&2; exit 1; }
 echo "Role: $role ($role_src)"
@@ -158,12 +164,6 @@ if want system; then
   # unattended-upgrades, and the input firewall (nft table inet host; Docker's and Tailscale's tables untouched).
   # Test the firewall afterwards with bin/fw-test.
   hd="$here/host"
-  # put_conf <src> <dest> <mode>: copy if different; returns 0 if it wrote the file.
-  put_conf() {
-    if sudo cmp -s "$1" "$2" 2>/dev/null; then echo "  $2 already current"; return 1; fi
-    would "install $2" || return 1
-    sudo install -D -m "$3" "$1" "$2"
-  }
   if put_conf "$hd/sshd-10-hardening.conf" /etc/ssh/sshd_config.d/10-hardening.conf 600; then
     sudo sshd -t && sudo systemctl reload ssh
   fi
@@ -310,7 +310,7 @@ link_dir() {
 }
 
 if want links; then
-  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill, pi-backup, pi-restore-state"
+  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill, pi-backup, pi-restore-state, pi-alert"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
@@ -322,6 +322,7 @@ if want links; then
   # pi-checkup's drift.links check runs this step as a dry run and warns about any link it would make.
   link_dir "$here/backup/pi-backup" "$HOME/.local/bin/pi-backup"
   link_dir "$here/backup/pi-restore-state" "$HOME/.local/bin/pi-restore-state"
+  link_dir "$here/alert/pi-alert" "$HOME/.local/bin/pi-alert"  # Telegram alerts (alerts step)
   # This repo's pre-commit hook (gitleaks, the tailnet name, shellcheck): the repo is public. pi-checkup drift.hooks.
   if [[ $(git -C "$here" config core.hooksPath) == .githooks ]]; then echo "  machine-setup pre-commit hook already on"
   else run git -C "$here" config core.hooksPath .githooks; fi
@@ -511,6 +512,34 @@ if want lab; then
     elif ! have uv; then echo "  uv not installed (run the brew step): lab Chromium not set up"
     else run "$lab/bin/browser" install-service || step_failed lab
     fi
+  fi
+fi
+
+if want alerts; then
+  # Push alerts to Telegram from the Hermes bot (README.md, "Alerts"; agent-lab/reviews R-035).
+  say "alerts: Telegram message when a service fails (OnFailure= drop-ins, user and system), 08:00 digest, 5-minute docker/Pi-hole watch"
+  ad=$here/alert
+  ud=$HOME/.config/systemd/user
+  # User side: links into this repo (edit there; systemctl --user daemon-reload picks it up). service.d/ is a
+  # top-level drop-in for every user service; pi-alert@.service.d/ clears it again for the alert unit itself.
+  for f in service.d pi-alert@.service.d pi-alert@.service pi-alert-digest.service pi-alert-digest.timer \
+           pi-alert-watch.service pi-alert-watch.timer; do
+    link_dir "$ad/user/$f" "$ud/$f"
+  done
+  run systemctl --user daemon-reload
+  run systemctl --user enable --now pi-alert-digest.timer pi-alert-watch.timer
+  # System side: root-owned copies (root never runs anything this user can write); the handler unit runs
+  # pi-alert as this user, which reads the system journal through group adm.
+  sysu=$(mktemp); sed -e "s#@USER@#$USER#g" -e "s#@HOME@#$HOME#g" "$ad/system/pi-alert@.service" > "$sysu"
+  sa=0
+  put_conf "$sysu" /etc/systemd/system/pi-alert@.service 644 && sa=1
+  put_conf "$ad/system/service.d-10-pi-alert.conf" /etc/systemd/system/service.d/10-pi-alert.conf 644 && sa=1
+  put_conf "$ad/system/pi-alert@.service.d-10-pi-alert.conf" /etc/systemd/system/pi-alert@.service.d/10-pi-alert.conf 644 && sa=1
+  rm -f "$sysu"
+  (( sa )) && run sudo systemctl daemon-reload
+  if (( ! dry )); then
+    if "$ad/pi-alert" status | grep -q 'token and chat id found'; then echo "  Telegram bot found; send a test with: pi-alert test"
+    else echo "  no Telegram bot in ~/.hermes/.env (a worker, or state not restored yet): alerts only reach the journal"; fi
   fi
 fi
 

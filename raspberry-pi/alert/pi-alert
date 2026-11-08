@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+# pi-alert: push alerts to the user's Telegram from the Hermes bot (agent-lab/reviews R-035). README.md, "Alerts".
+#
+#   pi-alert [--key KEY] MESSAGE...    send MESSAGE (or stdin); with --key, rate-limited per KEY (see below)
+#   pi-alert unit [--system] UNIT      OnFailure= handler: "UNIT failed" with its last log lines (pi-alert@.service)
+#   pi-alert digest [--dry-run|--baseline]  daily: pi-checkup warnings that are new since the last digest, plus
+#                                      units that failed in the last 24 h; sends nothing when there are none
+#   pi-alert watch [--dry-run]         every 5 min: docker, containers, Pi-hole answering; alerts on a change
+#   pi-alert test                      sends "pi-alert test: alerts are set up"
+#   pi-alert status                    rate-limit state, unsent messages, the last digest
+#
+# Token and chat: TELEGRAM_BOT_TOKEN and TELEGRAM_HOME_CHANNEL (else the one TELEGRAM_ALLOWED_USERS id) from
+# ~/.hermes/.env, read at run time and never printed or put on a command line (curl reads them on stdin).
+# Rate limit per key: a repeat is sent 1 h after the first alert, then 4 h, then every 24 h while it keeps failing;
+# the ones held back are counted in the next message. After 48 h without one the key starts over.
+# DNS down: retries through DNS-over-HTTPS at 8.8.8.8, then the last address that worked. Still failing (no network):
+# the message waits in ~/.local/state/pi-alert/unsent and goes with the next alert, watch or digest that gets through.
+# PI_ALERT_DRY=1 prints messages instead of sending them (tests, --dry-run).
+set -uo pipefail
+
+ENV_FILE=${PI_ALERT_ENV:-$HOME/.hermes/.env}
+STATE=${PI_ALERT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pi-alert}
+API_HOST=api.telegram.org
+HOST=$(hostname -s 2>/dev/null || echo pi)
+# Units whose failures aren't worth a message: desktop-session helpers on a headless Pi (globs).
+IGNORE_UNITS=('xdg-desktop-portal*' 'ssh-agent.service' 'pi-alert@*')
+FAILED_ID=d9b373ed55a64feb8242e02dbe79a49c  # journal MESSAGE_ID of "<unit>: Failed with result ..."
+MAX_UNSENT=20
+dry=${PI_ALERT_DRY:-0}
+
+log() { echo "pi-alert: $*" >&2; }
+
+# env_value <file> <KEY>: KEY's value from a dotenv file, quotes stripped (as pi-checkup's).
+env_value() { sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$2=[\"']?([^\"']*)[\"']?[[:space:]]*$/\2/p" "$1" 2>/dev/null | tail -1; }
+
+# chat_id: TELEGRAM_HOME_CHANNEL, else the single TELEGRAM_ALLOWED_USERS entry (refuses a list: whose would it be?)
+chat_id() {
+  local c
+  c=$(env_value "$ENV_FILE" TELEGRAM_HOME_CHANNEL)
+  [[ -n $c ]] && { echo "$c"; return; }
+  c=$(env_value "$ENV_FILE" TELEGRAM_ALLOWED_USERS | tr ',' ' ')
+  read -ra ids <<<"$c"
+  (( ${#ids[@]} == 1 )) && echo "${ids[0]}"
+}
+
+# backoff_window <alerts already sent in this streak>: seconds before the key may alert again
+backoff_window() {
+  case $1 in 0) echo 0 ;; 1) echo 3600 ;; 2) echo 14400 ;; *) echo 86400 ;; esac
+}
+
+# rate_check <key> <now>: prints "send <suppressed>" or "hold", and updates the key's state file
+# (format: "<last sent epoch> <alerts in streak> <held back since>").
+rate_check() {
+  local f="$STATE/keys/$1" now=$2 last=0 n=0 held=0
+  mkdir -p "$STATE/keys"
+  [[ -f $f ]] && read -r last n held < "$f"
+  last=${last:-0} n=${n:-0} held=${held:-0}
+  (( now - last > 172800 )) && n=0
+  if (( now - last >= $(backoff_window "$n") )); then
+    echo "$now $((n + 1)) 0" > "$f"; echo "send $held"
+  else
+    echo "$last $n $((held + 1))" > "$f"; echo hold
+  fi
+}
+
+# keyname <text>: a file-safe key
+keyname() { printf %s "$1" | tr -c 'A-Za-z0-9_.@-' '_' | cut -c1-120; }
+
+# telegram_post <text file>: one sendMessage; exit 0 when Telegram said ok
+telegram_post() {
+  local file=$1 token chat out rc ip extra
+  token=$(env_value "$ENV_FILE" TELEGRAM_BOT_TOKEN); chat=$(chat_id)
+  if [[ -z $token || -z $chat ]]; then log "no Telegram bot token or chat id in $ENV_FILE (a worker Pi has no bot)"; return 2; fi
+  for extra in plain doh cached; do
+    local args=(-sS -m 20 -o "$STATE/.resp" -w '%{http_code} %{remote_ip}' -K - --data-urlencode "text@$file"
+                --data disable_web_page_preview=true)
+    case $extra in
+      doh) args+=(--doh-url https://8.8.8.8/dns-query) ;;  # Google's cert covers the IP: no DNS needed
+      cached) ip=$(cat "$STATE/api-ip" 2>/dev/null); [[ -n $ip ]] || continue
+              [[ $ip == *:* ]] && ip="[$ip]"; args+=(--resolve "$API_HOST:443:$ip") ;;
+    esac
+    out=$(printf 'url = "https://%s/bot%s/sendMessage"\ndata = "chat_id=%s"\n' "$API_HOST" "$token" "$chat" \
+          | curl "${args[@]}" 2>/dev/null); rc=$?
+    if (( rc == 0 )) && [[ ${out%% *} == 200 ]] && grep -q '"ok":true' "$STATE/.resp"; then
+      [[ -n ${out#* } ]] && echo "${out#* }" > "$STATE/api-ip"
+      rm -f "$STATE/.resp"; return 0
+    fi
+    log "send ($extra) failed: curl exit $rc, HTTP ${out%% *}"
+    # Telegram refusing the message (4xx other than 429: bad token, unknown chat) won't change by retrying.
+    if (( rc == 0 )) && [[ ${out%% *} == 4* && ${out%% *} != 429 ]]; then rm -f "$STATE/.resp"; return 3; fi
+    # Only a lookup failure (6) is worth another route.
+    (( rc == 6 )) || break
+  done
+  rm -f "$STATE/.resp"
+  return 1
+}
+
+# deliver <text>: send now (with any unsent ones first), or keep it in unsent/ for later
+deliver() {
+  local text=${1:0:4000} tmp f n rc  # Telegram's limit is 4096 characters
+  mkdir -p "$STATE/unsent"
+  if (( dry )); then printf -- '--- would send ---\n%s\n' "$text"; return 0; fi
+  exec 9>"$STATE/lock"; flock -w 120 9 || log "lock busy; sending anyway"
+  tmp=$(mktemp "$STATE/.msg.XXXXXX")
+  # Older messages that didn't get through go first, oldest first, marked as late.
+  for f in "$STATE"/unsent/*.txt; do
+    [[ -f $f ]] || continue
+    { printf '(late: from %s)\n' "$(date -d "@$(basename "$f" | cut -d- -f1)" '+%a %H:%M')"; cat "$f"; } > "$tmp"
+    telegram_post "$tmp"; rc=$?
+    if (( rc == 0 || rc == 3 )); then rm -f "$f"; else break; fi  # 3: refused for good, don't keep it
+  done
+  printf '%s\n' "$text" > "$tmp"
+  telegram_post "$tmp"; rc=$?
+  if (( rc == 0 )); then rm -f "$tmp"; return 0; fi
+  if (( rc == 1 )); then
+    mv "$tmp" "$STATE/unsent/$(date +%s)-$$.txt"
+    n=$(find "$STATE/unsent" -name '*.txt' | wc -l)
+    (( n > MAX_UNSENT )) && find "$STATE/unsent" -name '*.txt' | sort | head -n $((n - MAX_UNSENT)) | xargs -r rm -f
+    log "not sent; kept in $STATE/unsent for the next try"
+  else rm -f "$tmp"; fi
+  logger -t pi-alert -- "$(head -c 400 <<<"$text")" 2>/dev/null
+  return 1
+}
+
+# send_keyed <key> <text>: deliver, at most as often as the key's backoff allows
+send_keyed() {
+  local r held
+  r=$(rate_check "$(keyname "$1")" "$(date +%s)")
+  if [[ $r == hold ]]; then log "held back ($1: rate limit)"; return 0; fi
+  held=${r#send }
+  if (( held > 0 )); then deliver "$2"$'\n'"(and $held more since the last alert)"; else deliver "$2"; fi
+}
+
+ignored() {
+  local g
+  # shellcheck disable=SC2053  # $g is a glob on purpose
+  for g in "${IGNORE_UNITS[@]}"; do [[ $1 == $g ]] && return 0; done
+  return 1
+}
+
+cmd_unit() {
+  local scope=--user label="user unit" unit result lines
+  [[ ${1:-} == --system ]] && { scope=--system; label="system unit"; shift; }
+  unit=${1:?usage: pi-alert unit [--system] UNIT}
+  if ignored "$unit"; then log "$unit failed (ignored)"; return 0; fi
+  if [[ $scope == --system ]]; then
+    result=$(systemctl show -p Result --value "$unit" 2>/dev/null)
+    lines=$(journalctl -u "$unit" -n 8 -o cat --no-pager 2>/dev/null)
+  else
+    result=$(systemctl --user show -p Result --value "$unit" 2>/dev/null)
+    lines=$(journalctl --user -u "$unit" -n 8 -o cat --no-pager 2>/dev/null)
+  fi
+  local jflag=; [[ $scope == --user ]] && jflag=" --user"
+  send_keyed "unit-${scope#--}-$unit" "$(printf '%s: %s failed (%s, %s)\n\n%s\n\nLogs: journalctl%s -u %s' \
+    "$HOST" "$unit" "$label" "${result:-unknown}" "$(cut -c1-300 <<<"$lines" | tail -8)" "$jflag" "$unit")"
+}
+
+# warn_lines < pi-checkup output: the WARN lines, without colour codes and the "WARN" label
+warn_lines() { sed -E 's/\x1b\[[0-9;]*m//g' | sed -nE 's/^[[:space:]]*WARN[[:space:]]+//p'; }
+# normalize: what makes a warning "the same" from one day to the next (numbers vary: ages, counts, sizes)
+normalize() { sed -E 's/[0-9]+/#/g'; }
+# new_warnings <yesterday's normalized file> < today's warn lines: those whose normalized form is new
+new_warnings() {
+  local line
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    grep -qxF -- "$(normalize <<<"$line")" "$1" 2>/dev/null || printf '%s\n' "$line"
+  done
+}
+# failed_units_24h: "unit (scope) xN" for units that failed in the last 24 h, ignored ones left out
+failed_units_24h() {
+  journalctl --since -24h "MESSAGE_ID=$FAILED_ID" -o export --output-fields=UNIT,USER_UNIT --no-pager 2>/dev/null \
+    | sed -nE 's/^UNIT=(.+)/\1 (system)/p; s/^USER_UNIT=(.+)/\1 (user)/p' | sort | uniq -c | sort -rn \
+    | while read -r count unit scope; do
+        ignored "$unit" && continue
+        if (( count > 1 )); then echo "$unit $scope x$count"; else echo "$unit $scope"; fi
+      done
+}
+
+cmd_digest() {
+  local mode=${1:-} out rc warns new failed msg prev="$STATE/digest-warnings.txt"
+  mkdir -p "$STATE"
+  out=$(pi-checkup --warn-only --no-fetch 2>&1); rc=$?
+  if (( rc > 1 )) || ! grep -qE 'ALL OK|WARNINGS' <<<"$out"; then
+    send_keyed digest-broken "$HOST: the daily check didn't run (pi-checkup exit $rc): $(tail -3 <<<"$out" | cut -c1-200)"
+    return 1
+  fi
+  warns=$(warn_lines <<<"$out")
+  if [[ $mode == --baseline ]]; then normalize <<<"$warns" > "$prev"; echo "baseline saved: $(grep -c . <<<"$warns") warnings"; return 0; fi
+  new=$(new_warnings "$prev" <<<"$warns")
+  failed=$(failed_units_24h)
+  if [[ -z $new && -z $failed ]]; then
+    log "digest: nothing new"
+  else
+    msg="$HOST daily check"
+    [[ -n $new ]] && msg+=$'\n\n'"New warnings ($(grep -c . <<<"$new")):"$'\n'"$(sed 's/^/- /' <<<"$new")"
+    [[ -n $failed ]] && msg+=$'\n\n'"Failed in the last 24 h:"$'\n'"$(sed 's/^/- /' <<<"$failed")"
+    msg+=$'\n\n'"All warnings: pi-checkup --warn-only (or /pi-checkup in Claude Code)"
+    [[ $mode == --dry-run ]] && dry=1
+    deliver "$msg" || return 1
+  fi
+  [[ $mode == --dry-run ]] || normalize <<<"$warns" > "$prev"
+}
+
+# ---------- watch: things that fail without a systemd unit failing ----------
+# watch_checks: "name|problem" for each problem now (nothing when all is well)
+watch_checks() {
+  if ! systemctl is-active -q docker; then echo "docker|docker.service is $(systemctl is-active docker)"; return; fi
+  local name state status
+  while IFS='|' read -r name state status; do
+    [[ -n $name ]] || continue
+    if [[ $state != running ]]; then echo "container-$name|container $name is $state ($status)"
+    elif [[ $status == *unhealthy* ]]; then echo "container-$name|container $name is unhealthy ($status)"; fi
+  done < <(timeout 20 docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}' 2>/dev/null)
+  if timeout 20 docker ps --format '{{.Names}}' 2>/dev/null | grep -qx pihole; then
+    timeout 15 docker exec pihole dig +short +time=3 +tries=2 @127.0.0.1 example.com 2>/dev/null | grep -q . \
+      || echo "pihole-dns|Pi-hole doesn't answer DNS (example.com); the house falls back to the router's secondary, this Pi to Google"
+  fi
+}
+
+cmd_watch() {
+  local mode=${1:-} now confirmed name problem f
+  [[ $mode == --dry-run ]] && dry=1
+  mkdir -p "$STATE/watch"
+  now=$(watch_checks)
+  # A problem must still be there a minute later (upd recreating Pi-hole takes about 40 s).
+  if [[ -n $now && $mode != --dry-run ]]; then sleep "${PI_ALERT_CONFIRM_SECS:-60}"; confirmed=$(watch_checks)
+  else confirmed=$now; fi
+  while IFS='|' read -r name problem; do
+    [[ -n $name ]] || continue
+    grep -q "^$name|" <<<"$now" || continue
+    f="$STATE/watch/$(keyname "$name")"
+    [[ -f $f ]] || send_keyed "watch-$name" "$HOST: $problem"
+    echo "$problem" > "$f"
+  done <<<"$confirmed"
+  for f in "$STATE"/watch/*; do
+    [[ -f $f ]] || continue
+    name=$(basename "$f")
+    grep -q "^$name|" <<<"$confirmed" && continue
+    deliver "$HOST: OK again: $(cat "$f")" && rm -f "$f"
+  done
+}
+
+cmd_status() {
+  local f last n held
+  echo "state: $STATE"
+  for f in "$STATE"/keys/*; do
+    [[ -f $f ]] || continue
+    read -r last n held < "$f"
+    printf '  %-50s last alert %s, %s in streak, %s held back\n' "$(basename "$f")" "$(date -d "@$last" '+%F %H:%M')" "$n" "$held"
+  done
+  echo "unsent: $(find "$STATE/unsent" -name '*.txt' 2>/dev/null | wc -l)"
+  echo "open watch problems: $(cat "$STATE"/watch/* 2>/dev/null | paste -sd';' | sed 's/;/; /g')"
+  [[ -f $STATE/digest-warnings.txt ]] && echo "last digest: $(date -r "$STATE/digest-warnings.txt" '+%F %H:%M'), $(grep -c . "$STATE/digest-warnings.txt") warnings then"
+  if [[ -n $(env_value "$ENV_FILE" TELEGRAM_BOT_TOKEN) && -n $(chat_id) ]]; then echo "Telegram: token and chat id found"
+  else echo "Telegram: no token or chat id in $ENV_FILE"; fi
+}
+
+# Sourced (tests): define the functions only.
+(return 0 2>/dev/null) && return 0
+mkdir -p "$STATE" && chmod 700 "$STATE"
+case ${1:-} in
+  unit) shift; cmd_unit "$@" ;;
+  digest) shift; cmd_digest "$@" ;;
+  watch) shift; cmd_watch "$@" ;;
+  status) cmd_status ;;
+  test) deliver "pi-alert test: alerts are set up ($HOST)" && echo sent ;;
+  -h|--help|"") sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; [[ -n ${1:-} ]] ;;
+  --key) key=${2:?--key needs a value}; shift 2
+         if (( $# )); then text="$*"; else text=$(cat); fi
+         send_keyed "$key" "$text" ;;
+  -*) echo "pi-alert: unknown option $1" >&2; exit 2 ;;
+  *) if (( $# )); then text="$*"; else text=$(cat); fi
+     deliver "$text" ;;
+esac

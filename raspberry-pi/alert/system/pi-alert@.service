@@ -1,0 +1,11 @@
+# OnFailure= handler for system services (/etc/systemd/system/service.d/10-pi-alert.conf). restore.sh's alerts step
+# installs a root-owned copy with @USER@/@HOME@ filled in. It runs pi-alert as that user, not root: root never runs
+# code the user can write (README.md, "Nightly backup", Security). The user is in group adm, so it reads the journal.
+[Unit]
+Description=Telegram alert: %i failed (system unit)
+
+[Service]
+Type=oneshot
+User=@USER@
+ExecStart=@HOME@/.local/bin/pi-alert unit --system %i
+TimeoutStartSec=5min

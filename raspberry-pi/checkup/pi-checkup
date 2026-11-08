@@ -20,7 +20,7 @@ SYSTEM_UNITS=(ssh.service docker.service tailscaled.service dreambase-cert.timer
   pi-backup-system-copy.timer)
 USER_UNITS=(pi-status.service hermes-gateway.service dreambase.service dreambase-proxy.service dreambase-photos.timer
   rei.service rei-proxy.service rei-vault-sync.timer mail-sync.timer vault-index.timer pi-backup.timer
-  pi-backup-copy.timer)
+  pi-backup-copy.timer pi-alert-digest.timer pi-alert-watch.timer)
 MAIN_ONLY=(dreambase rei mail hermes-gateway)
 role=$(tr -d '[:space:]' 2>/dev/null < "$HOME/.config/pi-role"); role=${role:-main}
 # Agent dashboards run one at a time (agent-lab), started and stopped from pi-status, so their units are disabled by
@@ -396,6 +396,18 @@ check_services() {
     state=$(systemctl --user is-active "$u" 2>/dev/null); en=$(systemctl --user is-enabled "$u" 2>/dev/null)
     if [[ $state == active && $en == enabled ]]; then ok "$u (user) active"; else warn services.unit "$u (user) is $state / $en (should be active / enabled)"; fi
   done
+
+  # Push alerts (R-035, machine-setup alert/): every service's failure goes to pi-alert, and messages get through.
+  local of_user of_sys unsent
+  of_user=$(systemctl --user show -p OnFailure --value pi-status.service 2>/dev/null)
+  of_sys=$(systemctl show -p OnFailure --value docker.service 2>/dev/null)
+  if [[ $of_user == pi-alert@* && $of_sys == pi-alert@* ]]; then ok "failed services send a Telegram alert (OnFailure= pi-alert, user and system)"
+  else warn services.alerts "failed services don't alert ($([[ $of_user == pi-alert@* ]] || echo -n 'user '; [[ $of_sys == pi-alert@* ]] || echo -n 'system ')drop-in missing; fix: restore.sh --only alerts)"; fi
+  unsent=$(find "${XDG_STATE_HOME:-$HOME/.local/state}/pi-alert/unsent" -name '*.txt' 2>/dev/null | wc -l)
+  (( unsent )) && warn services.alerts "$unsent alert(s) not sent to Telegram yet, kept for the next try (pi-alert status; journalctl --user -t pi-alert)"
+  if [[ $role == main ]] && ! grep -qE '^[[:space:]]*TELEGRAM_BOT_TOKEN=.' ~/.hermes/.env 2>/dev/null; then
+    warn services.alerts "pi-alert has no Telegram bot token (~/.hermes/.env), so alerts only reach the journal"
+  fi
 
   # Units that keep failing, even if the latest run worked (a timer that fails every 15 minutes stays "inactive").
   # "<count> <unit> <epoch of last failure>"

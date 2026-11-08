@@ -1,5 +1,5 @@
 # Minimal CI for this public repo (agent-lab/reviews R-048): secret scan of the whole history, syntax and
-# shellcheck on the bash scripts, and the pi-checkup tests. The pre-commit hook (.githooks/pre-commit) runs the
+# shellcheck on the bash scripts, the pi-checkup and pi-alert tests. The pre-commit hook (.githooks/pre-commit) runs the
 # same checks locally on staged changes.
 name: ci
 on:
@@ -43,3 +43,5 @@ jobs:
           exit $fail
       - name: pi-checkup tests
         run: pipx run pytest -q raspberry-pi/checkup/tests
+      - name: pi-alert tests
+        run: pipx run pytest -q raspberry-pi/alert/tests
