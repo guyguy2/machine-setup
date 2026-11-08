@@ -13,11 +13,16 @@ pi=${here%/checkup}  # machine-setup/raspberry-pi
 DOMAINS=(health services docker repos updates security agents backup drift)
 
 # ---------- what this Pi is supposed to look like ----------
-SYSTEM_UNITS=(ssh.service docker.service tailscaled.service)
-USER_UNITS=(pi-status.service dreambase.service dreambase-proxy.service dreambase-photos.timer)
-# Agents run one at a time (agent-lab), started and stopped from pi-status, so their units are disabled by design.
-# name|units|port
-AGENTS=("Hermes|hermes-dashboard.service hermes-proxy.service|9119" "OpenClaw|openclaw-gateway.service|18789")
+# Always-on units and timers that must be active and enabled. MAIN_ONLY prefixes are skipped on a worker Pi
+# (~/.config/pi-role, as in restore.sh). hermes-gateway is the Telegram front door (the agents section reports it too).
+SYSTEM_UNITS=(ssh.service docker.service tailscaled.service dreambase-cert.timer pi-backup-system.timer)
+USER_UNITS=(pi-status.service hermes-gateway.service dreambase.service dreambase-proxy.service dreambase-photos.timer
+  rei.service rei-proxy.service rei-vault-sync.timer mail-sync.timer vault-index.timer pi-backup.timer)
+MAIN_ONLY=(dreambase rei mail hermes-gateway)
+role=$(tr -d '[:space:]' 2>/dev/null < "$HOME/.config/pi-role"); role=${role:-main}
+# Agent dashboards run one at a time (agent-lab), started and stopped from pi-status, so their units are disabled by
+# design. name|units (the first is the main one). Their ports come from the units themselves (agent_ports).
+AGENTS=("Hermes|hermes-dashboard.service hermes-proxy.service" "OpenClaw|openclaw-gateway.service")
 # Ports meant to be reachable from the LAN; everything else should listen on 127.0.0.1 or the tailnet.
 LAN_PORTS=(22 53 8090 8091)
 # Pages on the LAN to probe, name|url; {ts} is this Pi's tailnet DNS name (connections go to 127.0.0.1). This repo is
@@ -71,6 +76,48 @@ links_drift() {
   sed -nE -e "s#^  linked ([^ ]+) -> .*#\1 is missing#p" -e "s#^  ([^ ]+) exists and is not this repo's .*#\1 exists but isn't the repo's link#p" \
     | sed "s#^$HOME/#~/#"
 }
+# main_only <unit>: true when the unit is for the main Pi only (see MAIN_ONLY)
+main_only() { local p; for p in "${MAIN_ONLY[@]}"; do [[ $1 == "$p"* ]] && return 0; done; return 1; }
+
+# unit_ports < unit text (+ any config file it loads): the local ports it serves, first-seen order, one per line.
+# Matches 127.0.0.1:N / localhost:N / http://:N (Caddyfile site address) / --port N; not tailnet ports (--https=N).
+unit_ports() {
+  grep -oE '(127\.0\.0\.1|localhost|//):[0-9]{2,5}|--port[ =][0-9]{2,5}' | grep -oE '[0-9]+$' | awk '!seen[$0]++'
+}
+# agent_unit_text <unit...>: each user unit's text, plus the file its ExecStart passes to --config (e.g. a Caddyfile)
+agent_unit_text() {
+  local u text cfg
+  for u in "$@"; do
+    text=$(systemctl --user cat "$u" 2>/dev/null) || continue
+    printf '%s\n' "$text"
+    cfg=$(sed -nE 's/^ExecStart=.*--config[ =]([^ ]+).*/\1/p' <<<"$text" | head -1); cfg=${cfg//%h/$HOME}
+    [[ -n $cfg && -r $cfg ]] && cat "$cfg"
+  done
+}
+# agent_ports: fill AGENT_PORTS[name]="port ..." (the first is the main unit's) from each agent's units.
+declare -A AGENT_PORTS=()
+agent_ports() {
+  local spec name units u ports
+  for spec in "${AGENTS[@]}"; do
+    IFS='|' read -r name units <<<"$spec"; ports=""
+    for u in $units; do ports+=" $(agent_unit_text "$u" | unit_ports | paste -sd ' ')"; done
+    AGENT_PORTS[$name]=$(tr ' ' '\n' <<<"$ports" | awk 'NF && !seen[$0]++' | paste -sd ' ')
+  done
+}
+# route_agent <proxy URL>: the agent whose units serve that URL's port (empty if none)
+route_agent() {
+  local port=${1#*://} name
+  port=${port#*:}; port=${port%%/*}
+  for name in "${!AGENT_PORTS[@]}"; do [[ " ${AGENT_PORTS[$name]} " == *" $port "* ]] && { echo "$name"; return 0; }; done
+  return 0
+}
+# serve_routes < `tailscale serve status --json`: "host path proxy" per route
+serve_routes() {
+  jq -r '.Web // {} | to_entries[] | .key as $h | .value.Handlers | to_entries[] | "\($h) \(.key) \(.value.Proxy // "")"'
+}
+# shutdown_was_clean < the last lines of the previous boot's journal (journalctl -b -1 -o cat)
+shutdown_was_clean() { grep -qE 'Journal stopped|Syncing filesystems and block devices|systemd-shutdown'; }
+
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -123,6 +170,16 @@ check_health() {
   mmc=$(S dmesg | grep -ciE 'mmc[0-9].*(error|timeout|crc)|I/O error')
   if (( mmc )); then warn health.sdcard "$mmc SD card / I/O errors in dmesg since boot (sudo dmesg | grep -iE 'mmc|I/O error')"
   else ok "no SD card or I/O errors since boot"; fi
+  # A power cut or pulled cable on an SD-card root (no shutdown lines at the end of the previous boot)
+  local prev last
+  prev=$(S journalctl -b -1 -n 50 -q -o cat)
+  if [[ -n $prev ]]; then
+    last=$(S journalctl -b -1 -n 1 -q -o short-unix | cut -d. -f1)
+    if shutdown_was_clean <<<"$prev"; then ok "the previous boot shut down cleanly"
+    elif [[ -n $last ]] && (( $(days_since "$last") <= 7 )); then
+      warn health.unclean-shutdown "the previous boot ended without a shutdown at $(date -d @"$last" '+%a %F %R') (power cut, pulled cable, PSU?): check the power; a UPS HAT would cover it"
+    else info "the previous boot ended without a clean shutdown${last:+ ($(date -d @"$last" +%F))}, over a week ago"; fi
+  fi
   if [[ -d /var/log/journal ]]; then ok "journal is persistent ($(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMG]'))"
   else warn health.journal "journal is in RAM only: logs of a crashed boot are lost (restore.sh system step fixes it)"; fi
 
@@ -142,10 +199,12 @@ check_services() {
   if [[ -n ${f//[$'\n ']/} ]]; then warn services.failed "failed units: $(echo $f)"; else ok "no failed units (system or user)"; fi
 
   for u in "${SYSTEM_UNITS[@]}"; do
+    [[ $role != main ]] && main_only "$u" && continue
     state=$(systemctl is-active "$u" 2>/dev/null); en=$(systemctl is-enabled "$u" 2>/dev/null)
     if [[ $state == active && $en == enabled ]]; then ok "$u active"; else warn services.unit "$u is $state / $en (should be active / enabled)"; fi
   done
   for u in "${USER_UNITS[@]}"; do
+    [[ $role != main ]] && main_only "$u" && continue
     state=$(systemctl --user is-active "$u" 2>/dev/null); en=$(systemctl --user is-enabled "$u" 2>/dev/null)
     if [[ $state == active && $en == enabled ]]; then ok "$u (user) active"; else warn services.unit "$u (user) is $state / $en (should be active / enabled)"; fi
   done
@@ -166,20 +225,24 @@ check_services() {
   done <<<"$fails"
 
   # Every `tailscale serve` route should have a backend that answers.
-  local host path proxy code spec agent_off
+  local host path proxy code spec agent agent_off
+  agent_ports
   while read -r host path proxy; do
     [[ -n $proxy ]] || continue
     code=$(http_code "$proxy")
-    agent_off=""
-    for spec in "${AGENTS[@]}"; do  # an agent's route is down whenever the agent is (one runs at a time)
-      [[ $proxy == *":${spec##*|}"* ]] && ! systemctl --user is-active -q "$(cut -d'|' -f2 <<<"$spec" | cut -d' ' -f1)" && agent_off=${spec%%|*}
-    done
+    # an agent's route is down whenever the agent is (one runs at a time)
+    agent_off="" agent=$(route_agent "$proxy")
+    if [[ -n $agent ]]; then
+      for spec in "${AGENTS[@]}"; do
+        [[ ${spec%%|*} == "$agent" ]] || continue
+        spec=${spec#*|}; systemctl --user is-active -q "${spec%% *}" || agent_off=$agent
+      done
+    fi
     if [[ $code == 000 || $code == 5* ]]; then
       if [[ -n $agent_off ]]; then info "tailnet :${host##*:}$path down while $agent_off is off"
       else warn services.route "tailnet https://…:${host##*:}$path -> $proxy: backend not answering (HTTP $code)"; fi
     else ok "tailnet :${host##*:}$path -> $proxy (HTTP $code)"; fi
-  done < <(tailscale serve status --json 2>/dev/null \
-    | jq -r '.Web // {} | to_entries[] | .key as $h | .value.Handlers | to_entries[] | "\($h) \(.key) \(.value.Proxy // "")"')
+  done < <(tailscale serve status --json 2>/dev/null | serve_routes)
 
   # LAN websites: answer, and their certificate isn't about to expire.
   local ts name url hp end left
@@ -433,13 +496,16 @@ check_security() {
 # ---------- agents: Hermes and OpenClaw ----------
 check_agents() {
   local spec name units port u state up=0 code
+  agent_ports
   for spec in "${AGENTS[@]}"; do
-    IFS='|' read -r name units port <<<"$spec"
+    IFS='|' read -r name units <<<"$spec"
+    port=${AGENT_PORTS[$name]%% *}
     state=$(systemctl --user is-active ${units%% *} 2>/dev/null)
     if [[ $state == active ]]; then
       up=$((up + 1))
       code=$(http_code "http://127.0.0.1:$port/")
-      if [[ $code == 000 || $code == 5* ]]; then warn agents.port "$name is running but 127.0.0.1:$port does not answer (HTTP $code)"
+      if [[ -z $port ]]; then warn agents.port "$name is running but no port found in ${units%% *} (pi-checkup's agent_ports)"
+      elif [[ $code == 000 || $code == 5* ]]; then warn agents.port "$name is running but 127.0.0.1:$port does not answer (HTTP $code)"
       else ok "$name running, 127.0.0.1:$port answers (HTTP $code)"; fi
       for u in ${units#* }; do
         [[ $u == "${units%% *}" ]] && continue
@@ -448,7 +514,13 @@ check_agents() {
     elif [[ $state == failed ]]; then warn agents.failed "$name's ${units%% *} failed (journalctl --user -u ${units%% *} -n 50)"
     else info "$name off (${units%% *} $state; start it from pi-status when needed)"; fi
   done
-  (( up )) || info "no agent running"
+  (( up )) || info "no agent dashboard running"
+  # Hermes' Telegram gateway is always on (services.unit warns when it isn't), separate from the dashboards above.
+  if [[ $role == main ]]; then
+    if systemctl --user is-active -q hermes-gateway.service; then
+      ok "Hermes Telegram gateway up (hermes-gateway.service since $(systemctl --user show -p ActiveEnterTimestamp --value hermes-gateway.service | cut -d' ' -f2-3))"
+    else info "Hermes Telegram gateway is $(systemctl --user is-active hermes-gateway.service) (see services.unit)"; fi
+  fi
 
   # Shared skills (agent-lab/skills) installed and current in every agent not on hold.
   local lab=$HOME/dev/agent-lab/bin/lab

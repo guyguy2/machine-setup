@@ -63,3 +63,74 @@ def test_links_drift():
 
 def test_links_drift_clean():
     assert sh("links_drift", stdin="  /home/x/dev/scripts already linked\n") == ""
+
+
+# ---------- R-036: tailnet routes map to agents by the ports their units serve ----------
+
+SERVE_STATUS = """{"TCP": {}, "Web": {
+  "pi.example.ts.net:443":  {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}},
+  "pi.example.ts.net:8443": {"Handlers": {"/hermes": {"Proxy": "http://127.0.0.1:9120/hermes"}}},
+  "pi.example.ts.net:8444": {"Handlers": {"/openclaw": {"Proxy": "http://127.0.0.1:18789/openclaw"}}},
+  "pi.example.ts.net:8445": {"Handlers": {"/pihole": {"Proxy": "http://127.0.0.1:8081"}}}
+}}"""
+
+UNITS = {
+    "hermes-dashboard.service": (
+        "[Unit]\nDescription=Hermes web dashboard on 127.0.0.1:9119 (HTTPS via hermes-proxy.service)\n"
+        "[Service]\nExecStart=%h/.local/bin/hermes dashboard --no-open\n"
+    ),
+    "hermes-proxy.service": (
+        "[Unit]\nDescription=Caddy: serves the Hermes dashboard under /hermes; HTTPS via "
+        "`tailscale serve --bg --https=8443 --set-path /hermes`\n"
+        "[Service]\nExecStart=/usr/bin/caddy run --config %h/Caddyfile --adapter caddyfile\n"
+    ),
+    "openclaw-gateway.service": (
+        "[Unit]\nDescription=OpenClaw Gateway + Control UI on 127.0.0.1:18789\n"
+        "[Service]\nExecStart=%h/openclaw gateway run\n"
+    ),
+}
+CADDYFILE = "{\n\tadmin off\n}\nhttp://:9120 {\n\tbind 127.0.0.1\n\treverse_proxy 127.0.0.1:9119\n}\n"
+
+
+def fake_units(tmp_path: Path) -> str:
+    """bash that makes `systemctl --user cat <unit>` read fixtures and %h point at tmp_path."""
+    for name, text in UNITS.items():
+        (tmp_path / name).write_text(text)
+    (tmp_path / "Caddyfile").write_text(CADDYFILE)
+    return f'HOME={tmp_path}; systemctl() {{ cat "$HOME/$3" 2>/dev/null; }}; '
+
+
+def test_agent_ports_from_units(tmp_path: Path):
+    out = sh(fake_units(tmp_path) + 'agent_ports; for a in Hermes OpenClaw; do echo "$a=${AGENT_PORTS[$a]}"; done')
+    # the dashboard's own port first (agents check), then the Caddy proxy's 9120 that tailscale serve points at
+    assert out.splitlines() == ["Hermes=9119 9120", "OpenClaw=18789"]
+
+
+def test_route_block_maps_hermes_route_to_hermes(tmp_path: Path):
+    """Regression: the /hermes route goes to 9120 (hermes-proxy), not the dashboard's 9119, and was a false WARN."""
+    code = fake_units(tmp_path) + (
+        'agent_ports; serve_routes | while read -r host path proxy; do echo "${host##*:}$path=$(route_agent "$proxy")"; done'
+    )
+    assert sh(code, stdin=SERVE_STATUS).splitlines() == [
+        "443/=", "8443/hermes=Hermes", "8444/openclaw=OpenClaw", "8445/pihole=",
+    ]
+
+
+def test_unit_ports_ignores_tailnet_ports():
+    assert sh("unit_ports", stdin="tailscale serve --https=8443 http://127.0.0.1:9120/hermes --port 7000\n").split() == [
+        "9120", "7000",
+    ]
+
+
+def test_main_only():
+    assert sh('for u in rei.service mail-sync.timer hermes-gateway.service pi-status.service; do '
+              'main_only "$u" && echo "$u"; done; true') == "rei.service\nmail-sync.timer\nhermes-gateway.service\n"
+
+
+# ---------- R-036: health.unclean-shutdown ----------
+
+def test_shutdown_was_clean():
+    clean = "Stopped target\nSyncing filesystems and block devices.\nJournal stopped\n"
+    cut = "Finished vault-index.service\nmagicsock: disco: node now using 192.0.2.1\n"
+    assert sh('shutdown_was_clean && echo clean || echo unclean', stdin=clean) == "clean\n"
+    assert sh('shutdown_was_clean && echo clean || echo unclean', stdin=cut) == "unclean\n"
