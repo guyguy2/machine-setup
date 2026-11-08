@@ -1,0 +1,5 @@
+#!/bin/sh
+# NetworkManager dispatcher: re-read eth0's global IPv6 prefix into the firewall's lan6 set.
+[ "$1" = eth0 ] || exit 0
+case "$2" in up|dhcp6-change|dhcp4-change|connectivity-change) /usr/local/sbin/host-firewall refresh ;; esac
+exit 0

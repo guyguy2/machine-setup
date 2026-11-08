@@ -1,0 +1,17 @@
+[Unit]
+Description=Host input firewall (nft table inet host; Docker and Tailscale keep their own tables)
+Documentation=file:///etc/host-firewall/host.nft
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/host-firewall load
+ExecReload=/usr/local/sbin/host-firewall load
+ExecStop=/usr/local/sbin/host-firewall unload
+
+[Install]
+WantedBy=sysinit.target

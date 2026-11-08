@@ -129,7 +129,7 @@ fi
 snapshot_value() { sed -n "s/^$1: //p" "$snap/system.txt" 2>/dev/null; }
 
 if want system; then
-  say "system: hostname, timezone, docker group, persistent journal, sshd root logins, rpcbind"
+  say "system: hostname, timezone, docker group, persistent journal, host hardening + firewall, rpcbind"
   if need system.txt; then
     h=$(snapshot_value hostname); tz=$(snapshot_value timezone)
     if [[ -n $h && $h != "$(hostname)" ]]; then
@@ -154,14 +154,39 @@ if want system; then
     sudo mkdir -p "${jconf%/*}" && printf '%s\n' "$jwant" | sudo tee "$jconf" >/dev/null
     sudo systemctl restart systemd-journald && sudo journalctl --flush
   fi
-  # No root logins over SSH, even with a key (the OpenSSH default, prohibit-password, allows key logins).
-  sconf=/etc/ssh/sshd_config.d/10-hardening.conf
-  swant=$(printf '%s\n' '# No root logins over SSH, even with a key (the OpenSSH default allows key logins).' \
-    '# Written by machine-setup/raspberry-pi/restore.sh (system step).' 'PermitRootLogin no')
-  if [[ $(sudo cat "$sconf" 2>/dev/null) == "$swant" ]]; then echo "  sshd already refuses root logins"
-  elif would "write $sconf (PermitRootLogin no), reload ssh"; then
-    printf '%s\n' "$swant" | sudo tee "$sconf" >/dev/null && sudo chmod 600 "$sconf"
+  # Host hardening from host/: sshd (keys only, no root, no X11, AllowUsers), kernel sysctls, security-only
+  # unattended-upgrades, and the input firewall (nft table inet host; Docker's and Tailscale's tables untouched).
+  # Test the firewall afterwards with bin/fw-test.
+  hd="$here/host"
+  # put_conf <src> <dest> <mode>: copy if different; returns 0 if it wrote the file.
+  put_conf() {
+    if sudo cmp -s "$1" "$2" 2>/dev/null; then echo "  $2 already current"; return 1; fi
+    would "install $2" || return 1
+    sudo install -D -m "$3" "$1" "$2"
+  }
+  if put_conf "$hd/sshd-10-hardening.conf" /etc/ssh/sshd_config.d/10-hardening.conf 600; then
     sudo sshd -t && sudo systemctl reload ssh
+  fi
+  if put_conf "$hd/sysctl-90-hardening.conf" /etc/sysctl.d/90-hardening.conf 644; then
+    sudo sysctl -q -p /etc/sysctl.d/90-hardening.conf
+  fi
+  if dpkg -s unattended-upgrades >/dev/null 2>&1; then
+    put_conf "$hd/apt-52unattended-upgrades-local" /etc/apt/apt.conf.d/52unattended-upgrades-local 644 || true
+    put_conf "$hd/apt-20auto-upgrades" /etc/apt/apt.conf.d/20auto-upgrades 644 || true
+  else echo "  unattended-upgrades not installed (apt step); skipping its config"; fi
+  fw=0
+  put_conf "$hd/host.nft" /etc/host-firewall/host.nft 644 && fw=1
+  put_conf "$hd/host-firewall" /usr/local/sbin/host-firewall 755 && fw=1
+  put_conf "$hd/90-host-firewall" /etc/NetworkManager/dispatcher.d/90-host-firewall 755 || true
+  for u in host-firewall.service host-firewall-refresh.service host-firewall-refresh.timer; do
+    put_conf "$hd/$u" "/etc/systemd/system/$u" 644 && fw=1
+  done
+  if (( fw )) && would "enable host-firewall + refresh timer and (re)load the rules"; then
+    sudo nft -c -f /etc/host-firewall/host.nft
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now host-firewall.service host-firewall-refresh.timer
+    sudo systemctl reload host-firewall.service
+    echo "  firewall loaded; check it with bin/fw-test (and from a phone on cellular, see its header)"
   fi
   # rpcbind comes with nfs-common (required by the desktop's rpd-common) and listens on the LAN on port 111.
   # NFS isn't used, so mask it rather than purge it (that would remove rpd-common). Unmask to mount NFS.

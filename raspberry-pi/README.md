@@ -140,6 +140,25 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 - It then lists any `~/dev` repo with uncommitted or unpushed work. Code (pi-status, scripts, agent-lab) is never
   committed automatically; commit it yourself, or a restore won't have it.
 
+## Host firewall and hardening (host/)
+
+Installed by restore.sh's `system` step from `host/` (since 2026-11-08):
+
+- **Firewall:** nftables table `inet host` (`host/host.nft`), loaded at boot by `host-firewall.service`. It drops
+  unsolicited input except from the LAN (192.168.86.0/24, link-local, ULA and eth0's current global IPv6 /64, which
+  `host-firewall refresh` reads from the router's RA via a NetworkManager dispatcher hook and a 10-minute timer),
+  `tailscale0`, Docker bridges and Tailscale's UDP port. LAN gets SSH, DNS, mDNS and DreamBase (8090/8091).
+  Outbound is untouched. Docker's and Tailscale's own iptables-nft tables are left alone: never use Debian's
+  `/etc/nftables.conf` (it starts with `flush ruleset`).
+- **Test:** `bin/fw-test` (from the Mac on the LAN over `ssh mac`; every line PASS). From the internet: a phone
+  on cellular with Wi-Fi and Tailscale off must time out on `http://[<global IPv6>]:8090/`.
+- **What it blocked:** `sudo journalctl -k -g host-fw` (rate-limited log of drops). To open a port to the LAN, add
+  it to the `lan` chain in `host/host.nft`, run `./restore.sh --only system`, then `bin/fw-test`.
+  Emergency off until the next boot: `sudo systemctl stop host-firewall`.
+- **sshd:** keys only, no root, no X11, `AllowUsers guy`. **sysctl:** kptr/dmesg restricted, no ICMP redirects
+  (ip_forward stays on for Docker and Tailscale). **unattended-upgrades:** Debian security updates only, no
+  automatic reboot; everything else waits for `upd`.
+
 ## Nightly backup (restic)
 
 Everything git can't hold (secrets and sign-ins, `~/.hermes`, the `me` store, app data) goes, encrypted, to Google

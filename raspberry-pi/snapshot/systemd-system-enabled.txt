@@ -26,6 +26,8 @@ e2scrub_reap.service
 fstrim.timer
 getty@.service
 glamor-test.service
+host-firewall-refresh.timer
+host-firewall.service
 keyboard-setup.service
 lightdm.service
 logrotate.timer
@@ -46,5 +48,6 @@ systemd-pstore.service
 systemd-timesyncd.service
 tailscaled.service
 udisks2.service
+unattended-upgrades.service
 wayvnc-control.service
 wpa_supplicant.service

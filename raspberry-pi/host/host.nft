@@ -1,0 +1,39 @@
+# Host input firewall for the Pi (loaded by /usr/local/sbin/host-firewall; source: machine-setup raspberry-pi/host/).
+# Own table: Docker's and Tailscale's iptables-nft tables are left alone. Never `flush ruleset`.
+table inet host
+delete table inet host
+table inet host {
+  set lan4 { type ipv4_addr; flags interval; elements = { 192.168.86.0/24 } }
+  # Link-local + ULA always; host-firewall adds eth0's current global /64 (from the router's RA) at load time.
+  set lan6 { type ipv6_addr; flags interval; elements = { fe80::/10, fc00::/7 } }
+
+  chain input {
+    type filter hook input priority filter + 10; policy drop;
+    ct state established,related accept
+    ct state invalid drop
+    iif "lo" accept
+    iifname "tailscale0" accept                     # tailnet: SSH, pi-status, rei, DreamBase, Pi-hole admin
+    iifname "docker0" accept                        # containers talking to the host
+    iifname "br-*" accept
+    udp dport 41641 accept                          # Tailscale direct (WireGuard)
+    meta l4proto icmp accept
+    meta l4proto ipv6-icmp accept                   # RA/ND: IPv6 breaks without it
+    ip6 saddr fe80::/10 udp dport 546 accept        # DHCPv6 client
+    udp sport 67 udp dport 68 accept                # DHCPv4 client
+    ip saddr @lan4 jump lan
+    ip6 saddr @lan6 jump lan
+    limit rate 10/minute log prefix "host-fw drop: " level info
+    counter drop comment "everything else"
+  }
+
+  chain lan {
+    tcp dport { 22, 53, 8090, 8091 } accept         # SSH, Pi-hole DNS, DreamBase (Caddy)
+    udp dport { 53, 5353, 8091 } accept             # DNS, mDNS (raspberrypi.local), Caddy HTTP/3
+  }
+
+  chain forward_dns {
+    # IPv4 :53 is DNAT'd by Docker to Pi-hole, so it passes FORWARD, not INPUT.
+    type filter hook forward priority filter - 10; policy accept;
+    iifname "eth0" ip saddr != @lan4 meta l4proto { tcp, udp } th dport 53 drop
+  }
+}

@@ -234,6 +234,7 @@ tar
 tzdata
 udev
 udisks2
+unattended-upgrades
 unzip
 usb-modeswitch
 usbutils

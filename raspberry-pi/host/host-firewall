@@ -1,0 +1,20 @@
+#!/bin/sh
+# host-firewall load|refresh|unload|status  (root). Rules: /etc/host-firewall/host.nft
+set -eu
+RULES=/etc/host-firewall/host.nft
+NFT=/usr/sbin/nft
+IF=eth0
+prefixes() { /usr/sbin/ip -6 route show dev "$IF" proto ra 2>/dev/null | awk '$1 ~ /^[23][0-9a-f]*:.*\/(4[89]|5[0-9]|6[0-4])$/ {print $1}'; }
+refresh() {
+  $NFT list table inet host >/dev/null 2>&1 || exit 0
+  $NFT flush set inet host lan6
+  $NFT add element inet host lan6 '{ fe80::/10, fc00::/7 }'
+  for p in $(prefixes); do $NFT add element inet host lan6 "{ $p }"; done
+}
+case "${1:-}" in
+  load)    $NFT -c -f "$RULES" && $NFT -f "$RULES" && refresh ;;
+  refresh) refresh ;;
+  unload)  $NFT delete table inet host 2>/dev/null || true ;;
+  status)  $NFT list table inet host ;;
+  *) echo "usage: host-firewall load|refresh|unload|status" >&2; exit 2 ;;
+esac

@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh the host firewall's LAN IPv6 prefix (lan6 set) from eth0's router advertisements
+After=host-firewall.service
+Requisite=host-firewall.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/host-firewall refresh

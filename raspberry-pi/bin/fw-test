@@ -1,0 +1,33 @@
+#!/bin/sh
+# fw-test: smoke test for the host firewall (host/host.nft). Run on the Pi after changing the rules.
+# Uses `ssh mac` (a Mac on the same LAN, key login) as the outside client; every line should say PASS.
+# The internet side can't be tested from here: from a phone on cellular (Wi-Fi and Tailscale off), open
+# http://[<the Pi's global IPv6>]:8090/ — it must time out.
+PI=$(ip -4 -o addr show dev eth0 | awk '{sub(/\/.*/,"",$4); print $4; exit}')
+ROUTER=$(ip -4 route show default dev eth0 | awk '{print $3; exit}')
+V6=$(ip -6 -o addr show dev eth0 scope global -deprecated | awk '$4 ~ /^2/ {sub(/\/.*/,"",$4); print $4; exit}')
+TS=$(tailscale ip -4)
+ok() { if eval "$2" >/dev/null 2>&1; then echo "PASS  $1"; else echo "FAIL  $1"; fi; }
+echo "== from the Mac (LAN + tailnet) =="
+ssh -o BatchMode=yes -o ConnectTimeout=8 mac "
+t() { if eval \"\$2\" >/dev/null 2>&1; then echo \"PASS  \$1\"; else echo \"FAIL  \$1\"; fi; }
+t 'LAN v4 SSH :22'            'nc -z -G 4 $PI 22'
+t 'LAN v4 DreamBase :8091'    'nc -z -G 4 $PI 8091'
+t 'LAN v4 DNS (Pi-hole)'      'dig +time=3 +tries=1 @$PI example.com | grep -q NOERROR'
+t 'LAN DNS via router'        'dig +time=3 +tries=1 @$ROUTER example.com | grep -q NOERROR'
+t 'LAN v6 SSH :22'            'nc -6 -z -G 4 $V6 22'
+t 'LAN v6 DNS'                'dig +time=3 +tries=1 @$V6 example.com | grep -q NOERROR'
+t 'mDNS raspberrypi.local'    'ping -c1 -t3 raspberrypi.local'
+t 'tailnet SSH :22'           'nc -z -G 4 $TS 22'
+t 'tailnet rei :8446'         'nc -z -G 4 $TS 8446'
+t 'tailnet pi-status :443'    'nc -z -G 4 $TS 443'
+t 'blocked: LAN v4 :8080'     '! nc -z -G 3 $PI 8080'
+"
+echo "== on the Pi =="
+ok "outbound HTTPS (github)"     "curl -fsS -m 8 -o /dev/null https://api.github.com"
+ok "DNS lookup"                  "getent hosts example.com"
+ok "Tailscale online"            "tailscale status --peers=false"
+ok "Pi-hole container healthy"   "docker inspect -f '{{.State.Health.Status}}' pihole | grep -q healthy"
+ok "Pi-hole answers (in container)" "docker exec pihole dig +time=3 +tries=1 @127.0.0.1 example.com | grep -q NOERROR"
+ok "IPv6 outbound"               "curl -6 -fsS -m 8 -o /dev/null https://www.google.com"
+ok "lab browser CDP"             "curl -fsS -m 3 -o /dev/null http://127.0.0.1:9222/json/version"
