@@ -315,3 +315,42 @@ def test_npm_upgrades_skips_downgrades():
       "missing": {"wanted": "2.0.0", "latest": "2.0.0"}
     }"""
     assert sh("npm_upgrades", stdin=outdated).splitlines() == ["pyright 1.1.400->1.1.402", "tool 1.9.0->1.10.0"]
+
+
+# ---------- R-091: packages ----------
+
+def test_uv_audit_result():
+    clean = "warning: `uv audit` is experimental\nFound no known vulnerabilities and no adverse project statuses in 6 packages\n"
+    assert sh('uv_audit_result "$1"', clean) == "ok\n"
+    found = "warning: experimental\nidna 3.6: GHSA-xxxx\nFound 1 known vulnerability in 6 packages\n"
+    assert sh('uv_audit_result "$1"', found) == "Found 1 known vulnerability in 6 packages\n"
+    assert sh('uv_audit_result "$1"', "warning: x\nerror: failed to fetch\n") == "failed: error: failed to fetch\n"
+
+
+def test_npm_audit_counts():
+    js = '{"metadata": {"vulnerabilities": {"info": 0, "low": 0, "moderate": 34, "high": 4, "critical": 0, "total": 38}}}'
+    assert sh("npm_audit_counts", stdin=js) == "4 0 38\n"
+    assert sh("npm_audit_counts", stdin='{"error": {"code": "ENOLOCK"}}') == ""
+
+
+def test_install_dups(tmp_path: Path):
+    prefix = tmp_path / "brew"
+    (prefix / "bin").mkdir(parents=True)
+    for pkg, cmd in [("gh", "gh"), ("node", "node"), ("ripgrep", "rg")]:
+        (prefix / "Cellar" / pkg / "1.0" / "bin").mkdir(parents=True)
+        (prefix / "bin" / cmd).symlink_to(f"../Cellar/{pkg}/1.0/bin/{cmd}")
+    (prefix / "Caskroom" / "claude-code" / "2.1").mkdir(parents=True)
+    (prefix / "bin" / "claude").symlink_to(prefix / "Caskroom" / "claude-code" / "2.1" / "claude")
+    usr = tmp_path / "usr-bin"
+    usr.mkdir()
+    for c in ["gh", "node", "claude"]:  # node: a dependency formula behind /usr/bin on purpose, not a leaf
+        (usr / c).touch()
+    out = sh('install_dups "$1" "gh ripgrep" "$2"', str(prefix), str(usr)).splitlines()
+    assert out == [f"claude: brew cask:claude-code and {usr}", f"gh: brew gh and {usr}"]
+
+
+def test_local_bin_dups(tmp_path: Path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(); b.mkdir()
+    (a / "hermes").touch(); (a / "yq").touch(); (b / "yq").touch()
+    assert sh('local_bin_dups "$1" "$2"', str(a), str(b)) == f"yq: {a} and {b}\n"

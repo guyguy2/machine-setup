@@ -196,7 +196,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 - After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
 - `raspberry-pi/docker/README.md`: notes on the Docker setup, how to add a container service, and Caddy 2 as a
   possible single reverse proxy later.
-- `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates security agents backup
+- `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates packages security agents backup
   drift), OK/INFO/WARN lines, exit 1 on warnings. The `pi-checkup` skill (`checkup/skill/`) runs it and sends an agent per
   domain with warnings. Add mechanical checks here, not to the skill; accepted warnings go in its `ACCEPTED` list.
 - `save.sh --to DIR` writes a snapshot to a new DIR instead (pi-checkup's drift check compares it with `snapshot/`).

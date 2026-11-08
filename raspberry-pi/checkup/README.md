@@ -9,7 +9,7 @@
 
 ## Which to run when
 
-- **Quick look, no AI (about 20s, free):** `pi-checkup` in a terminal. Only problems: `pi-checkup --warn-only`.
+- **Quick look, no AI (about 30s, free):** `pi-checkup` in a terminal. Only problems: `pi-checkup --warn-only`.
   One area: `pi-checkup security` (domains: `pi-checkup --list`). Offline or in a hurry: `--no-fetch`.
 - **Full scan with explanations and fixes:** in Claude Code, type `/pi-checkup` (or ask "scan the Pi"). It costs
   agent tokens only for domains that have warnings.
@@ -21,7 +21,8 @@
 health (load, temperature, throttling, RAM/swap, disks, kernel vs reboot, OOM, SD errors, unclean shutdown, journal), services
 (always-on units and timers, recurring failures, tailnet routes, websites and their certificates), docker (containers, compose
 services, unpinned `:latest` images, unused images, Pi-hole versions and image tag, Pi-hole settings set only in its UI, the main Pi's local DNS record), repos (git state of `~/dev`, untracked folders, broken links, venvs on a Homebrew Python, bogus
-lockfile entries), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
+lockfile entries), packages (`uv audit` per `~/dev` project, `npm audit` of openclaw_node's lockfile cached for a day,
+tools installed from two sources, npm `min-release-age`, `~/.cache` size), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
 listeners, listeners reachable on a global IPv6 address, root services running user-writable code, ad-hoc servers, rpcbind, the `table inet host` firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
 agents (Hermes/OpenClaw dashboards up and answering, the Hermes Telegram gateway, shared skills, gws/gh/Claude logins; credential probes: Claude login under 3 days from expiry, gh token and Tailscale node key under 14 days, Anthropic API key, Telegram bot token, WhatsApp (wacli), Todoist (td), gcloud signed in as INFO; tokens are passed to curl on stdin, never printed), backup (`pi-backup status` for both
 restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days),

@@ -2,7 +2,8 @@
 # Read-only checkup of this Pi, one domain per section: prints OK / INFO / WARN lines and exits 1 if anything warns.
 # Usage: pi-checkup [--warn-only] [--no-fetch] [domain...]     pi-checkup --list
 # The /pi-checkup Claude Code skill runs this, then sends one agent per domain with warnings to investigate.
-# It changes nothing, apart from `git fetch` in the repos domain (skip with --no-fetch).
+# It changes nothing, apart from `git fetch` in the repos domain (skip with --no-fetch) and a once-a-day npm audit
+# result cached in ~/.cache/pi-checkup (packages domain).
 # When a scan turns up something mechanical that this misses, add a check here rather than leaving it to an agent.
 # shellcheck disable=SC2088  # "~/..." in messages is display text, not a path
 set -uo pipefail
@@ -10,7 +11,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 pi=${here%/checkup}  # machine-setup/raspberry-pi
 
-DOMAINS=(health services docker repos updates security agents backup drift)
+DOMAINS=(health services docker repos updates packages security agents backup drift)
 
 # ---------- what this Pi is supposed to look like ----------
 # Always-on units and timers that must be active and enabled. MAIN_ONLY prefixes are skipped on a worker Pi
@@ -129,6 +130,41 @@ npm_upgrades() {
         [[ -n $cur && -n $new && $cur != "$new" ]] || continue
         [[ $(printf '%s\n' "$cur" "$new" | sort -V | tail -1) == "$new" ]] && echo "$name $cur->$new"
       done
+}
+# uv_audit_result <output of uv audit>: "ok", or the summary line when it found something, or "failed: <line>"
+uv_audit_result() {
+  local out=$1 line
+  if grep -q 'Found no known vulnerabilities' <<<"$out"; then echo ok; return; fi
+  line=$(grep -v '^warning:' <<<"$out" | grep -m1 -iE 'found .*(vulnerab|adverse)')
+  if [[ -n $line ]]; then echo "$line"; else echo "failed: $(grep -v '^warning:' <<<"$out" | grep -m1 . | cut -c1-100)"; fi
+}
+# npm_audit_counts < `npm audit --json`: "<high> <critical> <total>" (empty when the JSON has no counts)
+npm_audit_counts() { jq -r '.metadata.vulnerabilities // empty | "\(.high // 0) \(.critical // 0) \(.total // 0)"' 2>/dev/null; }
+# install_dups <brew prefix> <leaves, space-separated> <dir...>: "<name>: brew <formula|cask:name> and <dir>" for each
+# command that a Homebrew leaf formula or cask installs and that also exists in one of the dirs (another source).
+# Formulae installed only as dependencies are skipped: they sit behind /usr/bin on purpose (~/.claude/CLAUDE.md).
+install_dups() {
+  local prefix=$1 leaves=" $2 " f t pkg n d; shift 2
+  for f in "$prefix"/bin/*; do
+    t=$(readlink "$f") || continue
+    case $t in
+      *Cellar/*) pkg=${t#*Cellar/}; pkg=${pkg%%/*}; [[ $leaves == *" $pkg "* ]] || continue ;;
+      *Caskroom/*) pkg=${t#*Caskroom/}; pkg=cask:${pkg%%/*} ;;
+      *) continue ;;
+    esac
+    n=${f##*/}
+    for d in "$@"; do [[ -e $d/$n ]] && echo "$n: brew $pkg and $d"; done
+  done
+  return 0
+}
+# local_bin_dups <dir> <dir...>: "<name>: <dir> and <other>" for each command in the first dir also in another
+local_bin_dups() {
+  local first=$1 f n d; shift
+  for f in "$first"/*; do
+    [[ -e $f ]] || continue; n=${f##*/}
+    for d in "$@"; do [[ -e $d/$n ]] && echo "$n: $first and $d"; done
+  done
+  return 0
 }
 # save_sh_lists <save.sh>: the text of its dotfiles=( ) and regenerated=( ) arrays (paths save.sh covers)
 save_sh_lists() { sed -n -e '/^dotfiles=(/,/^)/p' -e '/^regenerated=(/,/^)/p' "$1"; }
@@ -590,6 +626,72 @@ check_updates() {
   fi
 }
 
+# ---------- packages: known vulnerabilities, one source per tool, npm hardening, caches (R-091) ----------
+# Unpinned compose images are in docker (docker.unpinned) and venvs on a Homebrew Python in repos (repos.venv-python).
+check_packages() {
+  local lock d rel out r leaves
+  leaves=$(mktemp); trap 'rm -f "$leaves"; trap - RETURN' RETURN
+  have brew && { HOMEBREW_NO_AUTO_UPDATE=1 brew leaves 2>/dev/null | sed 's#.*/##' | paste -sd ' ' > "$leaves"; } &  # 1.5 s
+  # uv audit (OSV lookup, network; about 0.4 s per project) for every ~/dev project with a uv.lock.
+  if (( fetch )) && have uv; then
+    for lock in "$HOME"/dev/*/uv.lock; do
+      [[ -f $lock ]] || continue
+      d=${lock%/uv.lock}; rel="~/${d#"$HOME"/}"
+      out=$(cd "$d" && timeout 30 uv audit --frozen 2>&1); r=$(uv_audit_result "$out")
+      case $r in
+        ok) ok "uv audit $rel: no known vulnerabilities" ;;
+        failed:*) info "uv audit $rel ${r}" ;;
+        *) warn packages.uv-audit "uv audit $rel: $r (cd $rel && uv audit --frozen; then uv lock --upgrade-package NAME)" ;;
+      esac
+    done
+  fi
+
+  # npm audit of openclaw_node's lockfile: about 6 s, so cached for a day (and redone when the lockfile changes).
+  local nlock=$HOME/dev/openclaw_node/package-lock.json cache=${XDG_CACHE_HOME:-$HOME/.cache}/pi-checkup/npm-audit-openclaw_node.json counts high crit total
+  if [[ -f $nlock ]] && have npm; then
+    if (( fetch )) && { [[ ! -s $cache ]] || [[ $nlock -nt $cache ]] || (( $(days_since "$(stat -c %Y "$cache")") >= 1 )); }; then
+      mkdir -p "${cache%/*}"
+      (cd "${nlock%/*}" && timeout 60 npm audit --package-lock-only --json 2>/dev/null) > "$cache.new"
+      if [[ -n $(npm_audit_counts < "$cache.new") ]]; then mv "$cache.new" "$cache"; else rm -f "$cache.new"; fi
+    fi
+    counts=$(npm_audit_counts < "$cache" 2>/dev/null)
+    if [[ -z $counts ]]; then info "npm audit of ~/dev/openclaw_node: no result yet (needs the network)"
+    else
+      read -r high crit total <<<"$counts"
+      if (( high + crit == 0 )); then ok "npm audit ~/dev/openclaw_node: $total advisories, none high or critical"
+      elif grep -qx openclaw "$HOME/dev/agent-lab/on-hold" 2>/dev/null; then
+        info "npm audit ~/dev/openclaw_node: $total advisories ($high high, $crit critical); OpenClaw is on hold, so update openclaw_node before lifting the hold"
+      else warn packages.npm-audit "npm audit ~/dev/openclaw_node: $total advisories ($high high, $crit critical) (cd ~/dev/openclaw_node && npm audit; update openclaw)"; fi
+    fi
+  fi
+
+  # One source per tool (~/.claude/CLAUDE.md): a Homebrew leaf or cask that apt, npm -g (/usr/bin) or ~/.local/bin
+  # also provides, and ~/.local/bin (uv tools, Hermes) shadowing apt.
+  local dups=() line
+  wait
+  if have brew && [[ -s $leaves ]]; then
+    while read -r line; do [[ -n $line ]] && dups+=("$line"); done < <(install_dups /home/linuxbrew/.linuxbrew \
+      "$(<"$leaves")" /usr/bin /usr/local/bin "$HOME/.local/bin")
+  fi
+  while read -r line; do [[ -n $line ]] && dups+=("$line"); done < <(local_bin_dups "$HOME/.local/bin" /usr/bin /usr/local/bin)
+  if (( ${#dups[@]} )); then warn packages.duplicates "installed from two sources (keep one, see ~/.claude/CLAUDE.md): $(printf '%s; ' "${dups[@]}" | sed 's/; $//')"
+  else ok "each user tool comes from one source (brew, apt, npm -g, uv)"; fi
+
+  # npm hardening for `sudo npm install -g` (upd, restore.sh): only releases at least a week old (R-083). The
+  # install-script allowlist was left out on purpose, so it isn't checked.
+  if have npm; then
+    out=$(S npm config get min-release-age); [[ -n $out ]] || out=$(npm config get min-release-age 2>/dev/null)
+    if [[ $out =~ ^[0-9]+$ ]] && (( out >= 7 )); then ok "npm min-release-age is $out days (root's config)"
+    else warn packages.npm-hardening "npm min-release-age is ${out:-unset} (want 7+): sudo npm config set min-release-age 7 --location=global"; fi
+  fi
+
+  # Caches: INFO only (R-090 is the clean-up).
+  local kb
+  kb=$(du -sk "$HOME/.cache" 2>/dev/null | cut -f1)
+  if [[ -n $kb ]] && (( kb > 3 * 1024 * 1024 )); then info "~/.cache is $(( kb / 1024 / 1024 )) GB (brew cleanup --prune=all, uv cache prune, npm cache clean --force)"
+  else ok "~/.cache is $(( ${kb:-0} / 1024 )) MB"; fi
+}
+
 # ---------- security: exposure, firewall, ssh, secrets, tailnet ----------
 check_security() {
   # Listeners (TCP and UDP) on every interface (or the LAN address) that aren't meant for the LAN.
@@ -747,10 +849,25 @@ check_agents() {
 
 # Credential expiry and liveness probes (R-024). Read-only: each makes one read call or reads a status, with a
 # timeout. Tokens go to curl on stdin (curl_k), never in argv or output; only ok/expiry/HTTP status is printed.
+# The network probes run in parallel (about 2 s in all), then are reported in order.
 check_credentials() {
-  local out exp code tok
+  local p exp code out henv=~/.hermes/.env
+  p=$(mktemp -d); trap 'rm -rf "$p"; trap - RETURN' RETURN
+  have gh && { timeout 15 gh api -i /user 2>/dev/null | tr -d '\r' \
+    | sed -nE 's/^github-authentication-token-expiration: *//Ip' | head -1 > "$p/gh"; } &
+  if [[ -r $henv ]]; then
+    { tok=$(env_value "$henv" ANTHROPIC_API_KEY); [[ -n $tok ]] && printf 'url = "https://api.anthropic.com/v1/models?limit=1"\nheader = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$tok" \
+        | curl_k -o /dev/null -w '%{http_code}' > "$p/anthropic"; } &
+    [[ $role == main ]] && { tok=$(env_value "$henv" TELEGRAM_BOT_TOKEN); [[ -n $tok ]] && printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$tok" \
+        | curl_k > "$p/telegram"; } &
+  fi
+  have wacli && { timeout 15 wacli --read-only --json auth status > "$p/wacli" 2>/dev/null; } &
+  have td && { timeout 20 td auth status > "$p/td" 2>/dev/null; } &
+  have gcloud && { timeout 15 gcloud auth list --format='value(account)' 2>/dev/null | grep -c . > "$p/gcloud"; } &
+  wait
+
   if have gh; then
-    exp=$(timeout 15 gh api -i /user 2>/dev/null | tr -d '\r' | sed -nE 's/^github-authentication-token-expiration: *//Ip' | head -1)
+    exp=$(<"$p/gh")
     if [[ -n $exp ]]; then expiry_check agents.gh-expiry "GitHub token (gh)" "$exp" 14 "make a new fine-grained token, then gh auth login"
     else info "GitHub token (gh): no expiry header (classic token, or the call failed)"; fi
   fi
@@ -759,41 +876,34 @@ check_credentials() {
     if [[ -n $exp ]]; then expiry_check agents.tailscale-expiry "Tailscale node key" "$exp" 14 "renew: admin console > Machines > this Pi > Renew key, or disable key expiry"
     else info "Tailscale node key: no expiry (disabled) or not signed in"; fi
   fi
-  local henv=~/.hermes/.env
-  if [[ -r $henv ]]; then
-    tok=$(env_value "$henv" ANTHROPIC_API_KEY)
-    if [[ -n $tok ]]; then
-      code=$(printf 'url = "https://api.anthropic.com/v1/models?limit=1"\nheader = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$tok" \
-        | curl_k -o /dev/null -w '%{http_code}')
-      case $code in
-        200) ok "Anthropic API key (Hermes) works" ;;
-        401|403) warn agents.anthropic-key "Anthropic API key in ~/.hermes/.env is rejected (HTTP $code): revoked or wrong; make a new one in the console" ;;
-        *) warn agents.anthropic-key "Anthropic API key probe failed (HTTP ${code:-none}; network or API trouble)" ;;
-      esac
-    fi
-    tok=$(env_value "$henv" TELEGRAM_BOT_TOKEN)
-    if [[ -n $tok && $role == main ]]; then
-      out=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$tok" | curl_k)
-      if [[ $(jq -r '.ok // empty' <<<"$out" 2>/dev/null) == true ]]; then ok "Telegram bot token works (getMe)"
-      elif [[ $(jq -r '.error_code // empty' <<<"$out" 2>/dev/null) == 401 ]]; then warn agents.telegram "Telegram bot token is rejected (401): revoked in @BotFather? Put the new one in ~/.hermes/.env, restart hermes-gateway"
-      else warn agents.telegram "Telegram getMe probe failed (network or Telegram trouble)"; fi
-    fi
-    unset tok
+  if [[ -f $p/anthropic ]]; then
+    code=$(<"$p/anthropic")
+    case $code in
+      200) ok "Anthropic API key (Hermes) works" ;;
+      401|403) warn agents.anthropic-key "Anthropic API key in ~/.hermes/.env is rejected (HTTP $code): revoked or wrong; make a new one in the console" ;;
+      *) warn agents.anthropic-key "Anthropic API key probe failed (HTTP ${code:-none}; network or API trouble)" ;;
+    esac
+  fi
+  if [[ -f $p/telegram ]]; then
+    out=$(<"$p/telegram")
+    if [[ $(jq -r '.ok // empty' <<<"$out" 2>/dev/null) == true ]]; then ok "Telegram bot token works (getMe)"
+    elif [[ $(jq -r '.error_code // empty' <<<"$out" 2>/dev/null) == 401 ]]; then warn agents.telegram "Telegram bot token is rejected (401): revoked in @BotFather? Put the new one in ~/.hermes/.env, restart hermes-gateway"
+    else warn agents.telegram "Telegram getMe probe failed (network or Telegram trouble)"; fi
   fi
   if have wacli; then
-    out=$(timeout 15 wacli --read-only --json auth status 2>/dev/null)
-    if [[ $(jq -r '.data.authenticated // empty' <<<"$out" 2>/dev/null) == true ]]; then ok "WhatsApp (wacli) linked"
+    if [[ $(jq -r '.data.authenticated // empty' < "$p/wacli" 2>/dev/null) == true ]]; then ok "WhatsApp (wacli) linked"
     else warn agents.whatsapp "WhatsApp (wacli) isn't linked (unlinked from the phone, or inactive): send-message via WhatsApp fails; re-link with wacli auth"; fi
   fi
   if have td; then
-    if timeout 20 td auth status 2>/dev/null | grep -q Authenticated; then ok "Todoist (td) login works"
+    if grep -q Authenticated "$p/td" 2>/dev/null; then ok "Todoist (td) login works"
     else warn agents.todoist "Todoist (td) isn't signed in or the check failed (td auth status; re-login needs an SSH tunnel, see the todoist skill)"; fi
   fi
   # gcloud: nothing on the Pi needs it after setup (R-021 suggests signing out); reported, not warned, until decided.
   if have gcloud; then
-    out=$(timeout 15 gcloud auth list --format='value(account)' 2>/dev/null | grep -c .)
-    (( out )) && info "gcloud is signed in ($out account(s)); only setup needs it (R-021: gcloud auth revoke --all)"
+    out=$(<"$p/gcloud")
+    (( ${out:-0} )) && info "gcloud is signed in ($out account(s)); only setup needs it (R-021: gcloud auth revoke --all)"
   fi
+  return 0
 }
 
 # ---------- backup: the nightly restic backup (raspberry-pi/backup; rules live in pi-backup status, not here) ----------

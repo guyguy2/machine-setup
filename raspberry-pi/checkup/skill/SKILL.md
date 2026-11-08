@@ -14,11 +14,12 @@ Agents only investigate what it flags. Everything here is read-only. Fix nothing
 pi-checkup > <scratchpad>/checkup.txt 2>&1; echo "exit $?"
 ```
 
-- Takes about 20s. `--no-fetch` skips `git fetch`; pass domain names to run only some (`pi-checkup --list`).
+- Takes about 30s. `--no-fetch` skips `git fetch` and the package audits; pass domain names to run only some (`pi-checkup --list`).
 - Lines are `OK`, `INFO` or `WARN <message> [key]`. The last line is `ALL OK` (exit 0) or
   `WARNINGS health=1 repos=3 ...` (exit 1): those are the domains with warnings.
-- Domains: health, services (units, timers, tailnet routes, websites), docker, repos, updates, security, agents
-  (Hermes, OpenClaw, shared skills, gws/gh/Claude logins), backup (nightly restic backup: age, check, timers,
+- Domains: health, services (units, timers, tailnet routes, websites), docker, repos, updates, packages (known
+  vulnerabilities, duplicate installs, npm hardening), security, agents (Hermes, OpenClaw, shared skills, logins and
+  credential expiry), backup (nightly restic backup: age, check, timers,
   root-side copies), drift (snapshot and backup coverage).
 
 ## 2. One agent per domain with warnings
