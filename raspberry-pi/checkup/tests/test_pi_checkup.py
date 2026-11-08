@@ -162,8 +162,8 @@ def test_parse_listeners_tcp_and_udp():
 
 
 def test_listener_scope():
-    addrs = ["127.0.0.1", "::1", "100.64.0.1", "fd7a:115c::1", "0.0.0.0", "192.168.1.5", "*", "::",
-             "2601:db8::5", "fe80::1", "fd00::1"]
+    addrs = ["127.0.0.1", "::1", "100.64.0.1", "fd7a:115c::1", "0.0.0.0", "192.0.2.5", "*", "::",
+             "2001:db8::5", "fe80::1", "fd00::1"]
     assert sh('for a in "$@"; do listener_scope "$a"; done', *addrs).split() == [
         "local", "local", "tailnet", "tailnet", "v4", "v4", "v6", "v6", "v6", "lan6", "lan6",
     ]
@@ -175,3 +175,44 @@ def test_host_firewall_needs_input_drop_in_its_table():
     fwd_only = drop.replace("hook input", "hook forward")
     for text, want in ((drop, "yes"), (accept, "no"), (fwd_only, "no"), ("", "no")):
         assert sh("host_firewall_drops && echo yes || echo no", stdin=text) == want + "\n", text
+
+
+# ---------- R-008: root units running code a non-root user can change ----------
+
+SYSTEMCTL_SHOW = (
+    "ExecStart={ path=/usr/sbin/cron ; argv[]=/usr/sbin/cron -f $EXTRA_OPTS ; ignore_errors=no ; pid=0 }\n"
+    "User=\nId=cron.service\n\n"
+    "ExecStartPre={ path=/bin/bash ; argv[]=/bin/bash /srv/x/renew.sh --quiet ; ignore_errors=no }\n"
+    "ExecStart={ path=/usr/bin/env ; argv[]=/usr/bin/env \"/opt/tool/run\" ; ignore_errors=no }\n"
+    "User=root\nId=cert.service\n\n"
+    "ExecStart={ path=/home/u/bin/app ; argv[]=/home/u/bin/app ; ignore_errors=no }\n"
+    "User=u\nId=userish.service\n"
+)
+
+
+def test_root_exec_paths():
+    assert sh("root_exec_paths", stdin=SYSTEMCTL_SHOW).splitlines() == [
+        "cron.service /usr/sbin/cron",
+        "cert.service /bin/bash", "cert.service /srv/x/renew.sh",
+        "cert.service /usr/bin/env", "cert.service /opt/tool/run",
+    ]
+
+
+def test_nonroot_writable(tmp_path: Path):
+    script = tmp_path / "renew.sh"
+    script.write_text("#!/bin/sh\n")
+    out = sh('nonroot_writable "$1"', str(script))
+    assert out.startswith(str(script)) and "owned by" in out          # the user's own file
+    assert sh("nonroot_writable /usr/bin/env") == ""                    # root's, in root's directories
+    link = tmp_path / "env-link"
+    link.symlink_to("/usr/bin/env")
+    assert "owned by" in sh('nonroot_writable "$1"', str(link))         # a link the user can replace
+
+
+def test_script_exec_paths(tmp_path: Path):
+    script = tmp_path / "s.sh"
+    script.write_text('#!/bin/bash\n/usr/bin/env true\ncp "$a" /etc/hostname\nx=$HOME/y\n')
+    # the interpreter and the programs it runs; not data files or $HOME paths
+    assert sh('script_exec_paths "$1"', str(script)).split() == ["/bin/bash", "/usr/bin/env"]
+    assert sh("script_exec_paths /usr/bin/env") == ""                   # a binary isn't scanned
+

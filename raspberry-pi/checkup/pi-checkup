@@ -146,6 +146,49 @@ listener_scope() {
 }
 # host_firewall_drops < `nft list table inet host`: true when it has an input-hook chain with policy drop
 host_firewall_drops() { grep -E 'hook input' | grep -q 'policy drop'; }
+# root_exec_paths < `systemctl show -p Id,User,ExecStart,...` for many units: "unit path" for every absolute path in
+# the commands of units that run as root (User= empty or root). Arguments count too (bash /path/script.sh).
+root_exec_paths() {
+  awk 'function flush() { if (id != "" && (user == "" || user == "root" || user == "0")) for (i = 1; i <= n; i++) print id, p[i]
+                          id = ""; user = ""; n = 0 }
+       /^$/ { flush(); next }
+       /^Id=/ { id = substr($0, 4); next }
+       /^User=/ { user = substr($0, 6); next }
+       /^Exec[A-Za-z]*=/ { line = $0
+         while (match(line, /argv\[\]=[^;]*/)) {
+           k = split(substr(line, RSTART + 7, RLENGTH - 7), a, /[ \t]+/)
+           for (j = 1; j <= k; j++) { t = a[j]; gsub(/^["\047]+|["\047;]+$/, "", t); if (t ~ /^\//) p[++n] = t }
+           line = substr(line, RSTART + RLENGTH)
+         } }
+       END { flush() }' | awk '!seen[$0]++'
+}
+# script_exec_paths <file>: absolute paths in a script (shebang text file) that are executable files, so the script
+# a root unit runs is checked one level deeper; nothing for binaries
+script_exec_paths() {
+  [[ $(head -c2 "$1" 2>/dev/null) == '#!' ]] || return 0
+  local q
+  grep -oE '(^|[^A-Za-z0-9_.$-])/[A-Za-z0-9_.+/-]+' "$1" 2>/dev/null | sed -E 's#^[^/]##' | sort -u | while read -r q; do
+    [[ $q != "$1" && -f $q && -x $q ]] && echo "$q"
+  done
+  return 0
+}
+# nonroot_writable <path>: "<what> (why)" when a non-root user can change the file it resolves to, or replace it or
+# a symlink to it through a directory they can write; nothing when only root can. (R-008)
+nonroot_writable() {
+  local q uid gid mode
+  for q in "$(readlink -f "$1")" "$(readlink -f "$(dirname "$1")")"; do
+    while [[ -n $q ]]; do
+      if read -r uid gid mode < <(stat -c '%u %g %a' "$q" 2>/dev/null); then
+        if (( uid != 0 )); then echo "$q (owned by $(id -nu "$uid" 2>/dev/null || echo "uid $uid"))"; return; fi
+        if [[ -d $q ]] && (( 8#$mode & 8#1000 )); then :  # sticky (e.g. /tmp): only an entry's owner can replace it
+        elif (( 8#$mode & 8#002 )); then echo "$q (world-writable)"; return
+        elif (( 8#$mode & 8#020 && gid != 0 )); then echo "$q (group $(getent group "$gid" | cut -d: -f1) can write)"; return; fi
+      fi
+      [[ $q == / ]] && break
+      q=$(dirname "$q")
+    done
+  done
+}
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -494,6 +537,24 @@ check_security() {
   # with an input chain that drops by default; any other chain with policy drop doesn't count. (R-029)
   local global6 fw=0
   global6=$(ip -6 -o addr show scope global 2>/dev/null | awk '$2 != "tailscale0" && $4 !~ /^fd/ {print $2}' | sort -u | paste -sd ' ')
+  # Root units must not run anything a non-root user can change: that's a privilege escalation. (R-008)
+  local unit path where bad_units=0
+  local -A checked=()
+  local -a units
+  mapfile -t units < <(systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '$1 !~ /@\.service$/ {print $1}')
+  while read -r unit path; do
+    [[ -n $path && -e $path && -z ${checked[$unit $path]:-} ]] || continue
+    checked[$unit $path]=1
+    for f in "$path" $(script_exec_paths "$path"); do
+      where=$(nonroot_writable "$f")
+      [[ -n $where ]] || continue
+      bad_units=1
+      warn security.root-unit "$unit runs as root but ${f/#$HOME/~} can be changed by a non-root user: ${where/#$HOME/~} (install a root-owned copy, e.g. under /usr/local/lib)"
+      break
+    done
+  done < <(systemctl show -p Id,User,ExecStart,ExecStartPre,ExecStartPost,ExecStop,ExecStopPost,ExecReload,ExecCondition "${units[@]}" 2>/dev/null | root_exec_paths)
+  (( bad_units )) || ok "root services run only root-owned programs and scripts"
+
   if can_sudo; then
     if S nft list table inet host 2>/dev/null | host_firewall_drops; then
       fw=1; ok "host firewall (table inet host) drops unsolicited input"
