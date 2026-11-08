@@ -1,0 +1,42 @@
+# Minimal CI for this public repo (agent-lab/reviews R-048): secret scan of the whole history, syntax and
+# shellcheck on the bash scripts, and the pi-checkup tests. The pre-commit hook (.githooks/pre-commit) runs the
+# same checks locally on staged changes.
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks (all history)
+        run: |
+          base=https://github.com/gitleaks/gitleaks/releases/download/v$GITLEAKS_VERSION
+          tgz=gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
+          curl -sSfL -o "$RUNNER_TEMP/$tgz" "$base/$tgz"
+          curl -sSfL -o "$RUNNER_TEMP/sums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " $tgz\$" sums.txt | sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner .
+      - name: bash -n and shellcheck
+        run: |
+          fail=0
+          for f in $(git ls-files); do
+            [ -f "$f" ] || continue
+            case $(head -n1 "$f") in
+              '#!'*bash*|'#!/bin/sh'*)
+                echo "$f"; bash -n "$f" || fail=1; shellcheck -S warning "$f" || fail=1 ;;
+            esac
+          done
+          exit $fail
+      - name: pi-checkup tests
+        run: pipx run pytest -q raspberry-pi/checkup/tests

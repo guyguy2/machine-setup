@@ -74,7 +74,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `dotfiles` | copies `snapshot/dotfiles/` into `$HOME` | `snapshot/dotfiles/` |
 | `github` | `gh auth login` (device code) + `gh auth setup-git` | |
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
-| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills` | pi-checkup `drift.links` warns about any that are missing |
+| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills`; turns on this repo's pre-commit hook (`core.hooksPath .githooks`) | pi-checkup `drift.links` warns about any that are missing |
 | `pihole` | asks for the admin password, then `docker-compose up -d`; on the main Pi adds the local DNS record `<LAN IP> <this Pi's tailnet name>` (read on the Pi at run time; only when Pi-hole has none) so home-network devices reach DreamBase without Tailscale | `services/pihole/` |
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data comes back with `pi-restore-state` (section 4), not this step | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |
@@ -304,6 +304,8 @@ skill or the admin UI; put anything that should survive a rebuild into the compo
 - New service → files under `services/<name>/`, a symlink in the `links` step, a start step in `restore.sh`, a row
   in the tables above.
 - After changing a script: `shellcheck -S warning *.sh` and `./restore.sh --dry-run`.
+- Commits run `.githooks/pre-commit` (gitleaks, the tailnet name, shellcheck, pi-checkup tests; the `links` step turns
+  it on) and every push runs CI (`.github/workflows/ci.yml`). `--no-verify` skips the hook only in an emergency.
 
 ## pi-status/ (status web page)
 

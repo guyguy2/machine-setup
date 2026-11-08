@@ -297,6 +297,9 @@ if want links; then
   # pi-checkup's drift.links check runs this step as a dry run and warns about any link it would make.
   link_dir "$here/backup/pi-backup" "$HOME/.local/bin/pi-backup"
   link_dir "$here/backup/pi-restore-state" "$HOME/.local/bin/pi-restore-state"
+  # This repo's pre-commit hook (gitleaks, the tailnet name, shellcheck): the repo is public. pi-checkup drift.hooks.
+  if [[ $(git -C "$here" config core.hooksPath) == .githooks ]]; then echo "  machine-setup pre-commit hook already on"
+  else run git -C "$here" config core.hooksPath .githooks; fi
 fi
 
 # pihole_local_dns <pihole.toml>: the main Pi's one local DNS record, "<LAN IP> <tailnet name>", so devices on the

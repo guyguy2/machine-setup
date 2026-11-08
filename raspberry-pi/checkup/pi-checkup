@@ -971,6 +971,9 @@ check_drift() {
   if [[ -n $links ]]; then while read -r f; do warn drift.links "$f (fix: ~/dev/machine-setup/raspberry-pi/restore.sh --only links)"; done <<<"$links"
   else ok "restore.sh's links (commands, ~/dev folders, skill) are all in place"; fi
 
+  if [[ $(git -C "$pi" config core.hooksPath) == .githooks ]]; then ok "machine-setup's pre-commit hook (gitleaks) is on"
+  else warn drift.hooks "machine-setup's pre-commit hook (gitleaks, tailnet name, shellcheck) is off (fix: restore.sh --only links)"; fi
+
   local dups
   dups=$(NO_TMUX=1 zsh -ic 'print -l $path' 2>/dev/null | sort | uniq -d)
   [[ -n $dups ]] && info "PATH lists these more than once: $(echo $dups) (~/.zshrc adds them unconditionally)"

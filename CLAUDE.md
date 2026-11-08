@@ -194,6 +194,10 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
   `uv run pytest` in `~/dev/pi-status` after changing it. The Python is type-checked with pyright and kept at 0 errors.
   The JavaScript is inline in `index.html`; use grep there. Commit `pi-status/` changes yourself.
 - After changing a script: `shellcheck -S warning raspberry-pi/*.sh` and `raspberry-pi/restore.sh --dry-run`.
+- `.githooks/pre-commit` (on via `git config core.hooksPath .githooks`; restore.sh's links step sets it): gitleaks on
+  staged changes, the tailnet name, `bash -n` + shellcheck on staged bash scripts, the pi-checkup tests when
+  `checkup/` is staged. `.github/workflows/ci.yml` runs gitleaks on all history, the script checks and the pi-checkup
+  tests on every push (`gh run watch`).
 - `raspberry-pi/docker/README.md`: notes on the Docker setup, how to add a container service, and Caddy 2 as a
   possible single reverse proxy later.
 - `raspberry-pi/checkup/` (see its README): `pi-checkup [domain...]`, a read-only checkup (health services docker repos updates packages security agents backup

@@ -1,0 +1,40 @@
+#!/bin/sh
+# machine-setup pre-commit. This repo is PUBLIC: nothing secret or personal may be committed.
+# Enable once per clone: git config core.hooksPath .githooks (restore.sh's links step does it; pi-checkup's
+# drift.hooks warns when it isn't set). Skip in an emergency: git commit --no-verify.
+#   1. gitleaks on the staged changes (brew install gitleaks)
+#   2. this Pi's tailnet name in the staged lines (save.sh checks the snapshot the same way; write <tailnet>)
+#   3. bash -n and shellcheck -S warning on staged bash scripts; the pi-checkup tests when checkup/ is staged
+# CI (.github/workflows/ci.yml) runs 1 and 3 on every push.
+set -e
+root=$(git rev-parse --show-toplevel)
+fail=0
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --pre-commit --staged --redact --no-banner --log-level warn "$root" || fail=1
+else
+  echo "pre-commit: gitleaks not installed (brew install gitleaks): secret scan skipped" >&2
+fi
+
+tailnet=$(tailscale status --json 2>/dev/null | jq -r '.MagicDNSSuffix // empty' 2>/dev/null || true)
+if [ -n "$tailnet" ] && git diff --cached -U0 | grep '^+' | grep -qiF "$tailnet"; then
+  echo "pre-commit: the tailnet name appears in the staged changes; write <tailnet> instead" >&2
+  git diff --cached --name-only -G"$(printf '%s' "$tailnet" | sed 's/\./\\./g')" | sed 's/^/  /' >&2
+  fail=1
+fi
+
+for f in $(git diff --cached --name-only --diff-filter=ACMR); do
+  [ -f "$root/$f" ] || continue
+  case $(head -n1 "$root/$f") in
+    '#!'*bash*|'#!/bin/sh'*)
+      bash -n "$root/$f" || fail=1
+      if command -v shellcheck >/dev/null 2>&1; then shellcheck -S warning "$root/$f" || fail=1; fi ;;
+  esac
+done
+
+if git diff --cached --name-only | grep -q '^raspberry-pi/checkup/'; then
+  if command -v uvx >/dev/null 2>&1; then uvx pytest -q "$root/raspberry-pi/checkup/tests" >&2 || fail=1
+  else echo "pre-commit: uvx not found: pi-checkup tests skipped" >&2; fi
+fi
+
+[ "$fail" = 0 ] || { echo "pre-commit: fix the above, or commit with --no-verify to skip" >&2; exit 1; }
