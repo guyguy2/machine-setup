@@ -671,34 +671,22 @@ chromium_running() {
   return 1
 }
 
-# The lab's shared browser (agent-lab `browser start`: the transient user unit lab-chromium) runs all day, so the
-# profile would never be copied. A real run stops it for the copy and starts it again with the same command line and
-# environment. Anything else using the profile (a `browser login` window on the desktop) is left alone: skipped.
+# The lab's shared browser (agent-lab's lab-chromium user unit, `bin/browser run`; since 2026-11-08 a persistent
+# unit that starts at boot) runs all day, so the profile would never be copied. A real run stops the unit for the
+# copy and starts it again. Anything else using the profile (a `browser login` window on the desktop) is left
+# alone: skipped.
 lab_unit=lab-chromium
-lab_argv=() lab_env=() lab_stopped=0
+lab_stopped=0
 lab_browser_detect() {
-  local exec a e
-  lab_argv=() lab_env=()
+  local exec
   systemctl --user is-active --quiet "$lab_unit" 2>/dev/null || return 1
-  # The unit's argv, not /proc/<pid>/cmdline (Chromium rewrites that into one string). Split on whitespace: the
-  # launcher's arguments have none.
   exec=$(systemctl --user show -p ExecStart --value "$lab_unit" 2>/dev/null) || return 1
-  [[ $exec == *"argv[]="*" ; "* ]] || return 1
-  exec=${exec#*argv[]=}; exec=${exec%% ; *}
-  read -r -a lab_argv <<<"$exec"
-  for a in "${lab_argv[@]}"; do
-    if [[ $a == "--user-data-dir=$chromium_profile" || $a == "--user-data-dir=$chromium_real" ]]; then
-      for e in $(systemctl --user show -p Environment --value "$lab_unit" 2>/dev/null); do lab_env+=("--setenv=$e"); done
-      return 0
-    fi
-  done
-  lab_argv=(); return 1
+  [[ $exec == *"/bin/browser"*" run "* || $exec == *"/bin/browser run"* ]]
 }
 lab_browser_start() {
   (( lab_stopped )) || return 0
   lab_stopped=0
-  if systemd-run --user --quiet --collect --unit="$lab_unit" "${lab_env[@]}" -- "${lab_argv[@]}" &&
-     sleep 3 && systemctl --user is-active --quiet "$lab_unit"; then
+  if systemctl --user start "$lab_unit" && sleep 3 && systemctl --user is-active --quiet "$lab_unit"; then
     note "lab browser ($lab_unit) restarted"
   else
     warn "couldn't restart the lab browser ($lab_unit): ~/dev/agent-lab/bin/browser start"

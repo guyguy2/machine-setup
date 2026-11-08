@@ -46,7 +46,8 @@ data ~/.gemini/antigravity-cli/settings.json
 data ~/.local/share/agent-lab
 data ~/.local/share/mail
 data ~/dev/rei/inputs
-data ~/dev/websites/dreambase/dreambase_data.json
+# DreamBase: data, state backups and the PIN hash (dreambase-set-pin) since 2026-11-08.
 data ~/.local/share/dreambase
+signins ~/.config/dreambase
 # OpenClaw is on hold, but its state (config, credentials, agents, workspace) is kept.
 data ~/.openclaw
