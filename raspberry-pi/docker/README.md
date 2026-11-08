@@ -14,7 +14,10 @@ Nothing in this folder is run by `restore.sh`; each service's own files live und
 - Data in `/var/lib/docker` on the SD card, overlay2, cgroup v2. No `/etc/docker/daemon.json` (all defaults).
 - `restore.sh`'s `system` step adds you to the `docker` group and enables `docker.service`; log out and back in
   before `docker` works without sudo.
-- `upd` updates the engine through apt and the Pi-hole image with `docker-compose pull && up -d && image prune -f`.
+- `upd` updates the engine through apt. Compose images are pinned to a release tag (never `:latest`; pi-checkup warns
+  on one): to update Pi-hole, bump the tag in `services/pihole/docker-compose.yml`. `upd` (`_upd_pihole` in
+  `~/.zshrc`) pulls it, runs `up -d --wait`, removes the old image only once the container is healthy, and otherwise
+  starts the old image again. pi-checkup warns when Pi-hole reports newer components or Docker Hub has a newer tag.
 - pi-status shows containers on its Docker tab (`/api/docker`).
 
 ## What runs in it

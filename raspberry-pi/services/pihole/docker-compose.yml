@@ -4,7 +4,9 @@
 # Admin UI: 127.0.0.1:8081, published on the tailnet at https://<pi>.<tailnet>.ts.net:8445/pihole/admin/
 services:
   pihole:
-    image: pihole/pihole:latest
+    # Pinned (agent-lab/reviews R-084): bump the tag on purpose; upd pulls it, waits for healthy, else rolls back.
+    # pi-checkup warns when Pi-hole reports newer components. Tags: https://hub.docker.com/r/pihole/pihole/tags
+    image: pihole/pihole:2026.10.1
     container_name: pihole
     hostname: pihole
     restart: unless-stopped

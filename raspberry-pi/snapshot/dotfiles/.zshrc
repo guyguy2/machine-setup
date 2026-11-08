@@ -167,6 +167,42 @@ _upd_openclaw() {
     echo "OpenClaw updated to $latest"
 }
 
+# Pi-hole: the image tag is pinned in ~/dev/pihole/docker-compose.yml (bump it there on purpose). Pull it, recreate
+# the container only if something changed, and wait for its health check. The old image is removed only once the new
+# container is healthy; otherwise the old image is started again (the house's DNS runs on it). (agent-lab/reviews R-084)
+# Args (for testing on a throwaway compose project): [compose dir] [service]
+_upd_pihole() {
+  local dir=${1:-$HOME/dev/pihole} svc=${2:-pihole} ref cid old new over t rc=0
+  local -a dc=(sudo docker-compose --project-directory $dir -f $dir/docker-compose.yml)
+  ref=$($dc config --images $svc 2>/dev/null | head -1)
+  [[ -n $ref ]] || { echo "could not read the image from $dir/docker-compose.yml"; return 1 }
+  [[ $ref == *:latest || ${ref##*/} != *:* ]] && print -P "%F{yellow}$ref is not pinned to a release tag%f"
+  cid=$($dc ps -aq $svc 2>/dev/null | head -1)
+  [[ -n $cid ]] && old=$(sudo docker inspect -f '{{.Image}}' $cid 2>/dev/null)
+  $dc pull --quiet $svc || { echo "pull of $ref failed; Pi-hole left as it was"; return 1 }
+  new=$(sudo docker image inspect -f '{{.Id}}' $ref 2>/dev/null)
+  # up -d leaves the container alone when neither the image nor the compose file changed
+  if $dc up -d --wait --wait-timeout 180 $svc; then
+    if [[ -n $old && $old != $new ]]; then
+      echo "healthy on $ref; removing the previous image ${old#sha256:}"
+      for t in ${(z)"$(sudo docker image inspect -f '{{join .RepoTags " "}}' $old 2>/dev/null)"}; do
+        sudo docker image rm $t >/dev/null
+      done
+      sudo docker image rm $old >/dev/null 2>&1; sudo docker image prune -f >/dev/null
+    else echo "healthy on $ref${old:+ (image unchanged)}"; fi
+    return 0
+  fi
+  print -P "%F{red}not healthy on $ref%f"
+  [[ -n $old && $old != $new ]] || return 1
+  echo "rolling back to the previous image ${old#sha256:}"
+  over=$(mktemp); printf 'services:\n  %s:\n    image: %s\n' $svc $old > $over
+  $dc -f $over up -d --wait --wait-timeout 180 $svc || rc=$?
+  rm -f $over
+  if (( rc )); then echo "rollback failed too: check docker ps / docker logs now"
+  else echo "rolled back; it stays on the old image until the next upd (fix or re-pin the tag in docker-compose.yml)"; fi
+  return 1
+}
+
 # Hermes: official installer checkout, updated with its own command
 _upd_hermes() {
   # Official installer (git checkout in ~/.hermes/hermes-agent); not Homebrew: its package lacked the anthropic library.
@@ -434,7 +470,7 @@ upd() {
 
   if [[ -f ~/dev/pihole/docker-compose.yml ]]; then
     _upd_step "Pi-hole (docker image)"
-    (cd ~/dev/pihole && sudo docker-compose pull && sudo docker-compose up -d && sudo docker image prune -f) || _upd_note "Pi-hole image update failed"
+    _upd_pihole || _upd_note "Pi-hole update failed (see above; DNS for the house runs on it: docker ps, ~/dev/pihole)"
   fi
 
   _upd_step "Agents"
