@@ -17,6 +17,9 @@ keyboxd.socket
 lab-chromium.service
 mail-sync.timer
 mpris-proxy.service
+pi-alert-digest.timer
+pi-alert-watch.timer
+pi-backup-copy.timer
 pi-backup.timer
 pipewire-pulse.service
 pipewire-pulse.socket
