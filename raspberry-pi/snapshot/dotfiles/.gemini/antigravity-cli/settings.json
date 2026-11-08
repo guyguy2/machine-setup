@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "command(chmod +x /home/guy/dev/statusline.sh)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "/home/guy/dev/statusline.sh"
+  },
+  "trustedWorkspaces": [
+    "/home/guy/dev"
+  ]
+}

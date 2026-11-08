@@ -20,6 +20,7 @@ dotfiles=(
   .config/systemd/user/hermes-dashboard.service .config/systemd/user/hermes-proxy.service .config/systemd/user/openclaw-gateway.service
   .claude/CLAUDE.md .claude/settings.json .claude/statusline-eastwood.sh
   .claude/skills/gws .claude/skills/pihole .claude/skills/openclaw .claude/skills/hermes .claude/skills/train-agents
+  .gemini/antigravity-cli/settings.json dev/statusline.sh  # agy (Antigravity CLI): settings (status line, permissions) and its status line script
 )
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

@@ -17,6 +17,10 @@ signins ~/.config/todoist-cli
 signins ~/.claude/.credentials.json
 # Claude Code's settings and MCP server tokens (plaintext).
 signins ~/.claude.json
+# agy (Antigravity CLI): OAuth token, plugin and MCP config (may hold tokens). Its settings.json and ~/dev/statusline.sh
+# are in the public snapshot (save.sh dotfiles); the install is the antigravity-cli cask in the Brewfile.
+signins ~/.gemini/antigravity-cli/antigravity-oauth-token
+signins ~/.gemini/config
 signins ~/.ssh/id_ed25519*
 signins ~/.ssh/known_hosts
 signins ~/.ssh/config
@@ -27,6 +31,17 @@ signins ~/.agent-browser
 # Data
 # Claude Code memory and transcripts.
 data ~/.claude/projects
+# agy: conversations, memory (brain), summaries and prompt history. Not bin/ (16 MB downloaded runtime), log/, cache/, updater/.
+data ~/.gemini/antigravity-cli/conversations
+data ~/.gemini/antigravity-cli/brain
+data ~/.gemini/antigravity-cli/annotations
+data ~/.gemini/antigravity-cli/implicit
+data ~/.gemini/antigravity-cli/conversation_summaries.db
+data ~/.gemini/antigravity-cli/history.jsonl
+data ~/.gemini/antigravity-cli/installation_id
+data ~/.gemini/antigravity-cli/jetbox_summaries_proto.pb
+data ~/.gemini/antigravity-cli/jetski_state.pbtxt
+data ~/.gemini/antigravity-cli/settings.json
 # agent-lab: the `me` store (facts.db, pending.db), agent logs and state, the lab Chromium profile (staged).
 data ~/.local/share/agent-lab
 data ~/.local/share/mail

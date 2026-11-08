@@ -95,6 +95,8 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
    reports as missing; still start the agent you use (step 5) and re-run `restore.sh --only rei` (step 6). Needs the
    restic passphrases and the OAuth client file (password manager) and the `gdrive-backup:` rclone remote; see [New Pi from backup](#new-pi-from-backup).
 3. **Claude Code**: run `claude` and log in. The agents use this login too.
+   **Antigravity CLI** (`agy`, Brewfile cask `antigravity-cli`): run `agy` and sign in, only if not restoring state. Its settings and
+   status line come back with the dotfiles step; the token, conversations and memory with `pi-restore-state`.
 4. **Google**: `gcloud auth login --no-launch-browser`. For gws, download the OAuth client from Google Cloud console
    → APIs & Services → Credentials to `~/.config/gws/client_secret.json`, then `gws auth login`.
 5. **Agents**: onboard each one the way `~/dev/agent-lab/agents.md` records (each uses the `claude` CLI login, no

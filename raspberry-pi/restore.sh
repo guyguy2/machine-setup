@@ -457,6 +457,7 @@ cat <<'MSG'
     systemctl --user start rei.service.
   - Only if not restoring state (a first-ever setup), or for what pi-restore-state reports missing:
     - claude             (log in; installed via the Brewfile cask)
+    - agy                (Antigravity CLI: run `agy` and sign in; installed via the Brewfile cask, settings and status line from the dotfiles step)
     - gcloud auth login --no-launch-browser
     - gws: put the OAuth client file at ~/.config/gws/client_secret.json (Google Cloud console > APIs & Services >
       Credentials > download), then gws auth login (see the gws skill for the SSH redirect workaround).
@@ -478,6 +479,7 @@ cat <<'MSG'
   - Router: give this Pi a fixed IP (DHCP reservation for its MAC), and hand out both Pis' LAN IPs as DNS (this
     Pi runs a second Pi-hole).
   - claude               (log in, if you'll use Claude Code here)
+  - agy                  (sign in, if you'll use the Antigravity CLI here)
   - Hermes (a worker: no Telegram; only the main Pi has the bot, and two gateways can't share one bot token):
     - A new Anthropic API key for this Pi (same account; per-Pi usage, revoke one Pi alone).
     - In ~/.hermes/.env: API_SERVER_ENABLED=true, API_SERVER_KEY=<random>, API_SERVER_HOST=<this Pi's tailnet IP>

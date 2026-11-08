@@ -22,7 +22,7 @@ its `systemd` step) and the Hermes install. They deliberately skip everything be
 | 1. System | apt, Homebrew, dotfiles, systemd units, Docker, Tailscale install | `restore.sh` ✅ |
 | 2. Apps (code) | pi-status, Pi-hole, REI, mail, websites/DreamBase | `restore.sh` ✅ |
 | 3. Agent state | `~/.hermes` (memories, own skills, sessions, cron, kanban, profiles) | ❌ |
-| 4. Secrets, sign-ins | Hermes `.env`/`auth.json`, gws, rclone, gh, gcloud, todoist-cli, Claude Code, SSH key, labvault | ❌ redone by hand |
+| 4. Secrets, sign-ins | Hermes `.env`/`auth.json`, gws, rclone, gh, gcloud, todoist-cli, Claude Code, agy, SSH key, labvault | ❌ redone by hand |
 | 5. Personal and app data | `me` store, REI `inputs/`, mail data, DreamBase data, Pi-hole lists, services' `.env` | ❌ |
 
 ## Decisions (made 2026-11-06)
@@ -258,6 +258,7 @@ User repo (live paths unless staged above; resolve symlinks like `~/dev/pihole` 
 | gcloud | `~/.config/gcloud/` | Exclude `logs/` |
 | todoist-cli (`td`) | `~/.config/todoist-cli/` | Plaintext token by design |
 | Claude Code | `~/.claude/.credentials.json`, `~/.claude.json`, `~/.claude/projects/` | Memory and transcripts are in `projects/` |
+| agy (Antigravity CLI) | `~/.gemini/antigravity-cli/` (OAuth token; `conversations/`, `brain/`, `annotations/`, `implicit/`, summaries db, `history.jsonl`, `settings.json`), `~/.gemini/config/` | Not `bin/` (downloaded runtime), `log/`, `cache/`, `updater/`. Install: Brewfile cask `antigravity-cli`; `settings.json` and `~/dev/statusline.sh` also in the public snapshot dotfiles |
 | SSH | `~/.ssh/` (`id_ed25519*`, `known_hosts`, `config`, `authorized_keys`) | `~/.ssh/config` uses the key for the Mac |
 | agent-lab data | `~/.local/share/agent-lab/` (SQLite staged) | `chromium/` ~430 MB: see staging |
 | mail | `~/.local/share/mail/` (SQLite staged) | |
