@@ -235,6 +235,7 @@ if want dotfiles; then
       run mkdir -p "$(dirname "$dest")"
       run cp -a "$f" "$dest"
       echo "  restored ~/$rel"
+      case $rel in .gemini/*) run chmod 600 "$dest" ;; esac  # agy keeps its settings private
     done < <(find "$snap/dotfiles" -type f -print0)
     [[ -d $bak ]] && echo "  previous versions saved in $bak"
   fi

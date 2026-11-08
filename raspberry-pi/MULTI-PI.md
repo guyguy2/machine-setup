@@ -258,7 +258,7 @@ User repo (live paths unless staged above; resolve symlinks like `~/dev/pihole` 
 | gcloud | `~/.config/gcloud/` | Exclude `logs/` |
 | todoist-cli (`td`) | `~/.config/todoist-cli/` | Plaintext token by design |
 | Claude Code | `~/.claude/.credentials.json`, `~/.claude.json`, `~/.claude/projects/` | Memory and transcripts are in `projects/` |
-| agy (Antigravity CLI) | `~/.gemini/antigravity-cli/` (OAuth token; `conversations/`, `brain/`, `annotations/`, `implicit/`, summaries db, `history.jsonl`, `settings.json`), `~/.gemini/config/` | Not `bin/` (downloaded runtime), `log/`, `cache/`, `updater/`. Install: Brewfile cask `antigravity-cli`; `settings.json` and `~/dev/statusline.sh` also in the public snapshot dotfiles |
+| agy (Antigravity CLI) | `~/.gemini/antigravity-cli/` (OAuth token; `conversations/`, `brain/`, `annotations/`, `implicit/`, summaries db, `history.jsonl`, `settings.json`), `~/.gemini/config/` | Not `bin/` (downloaded runtime), `log/`, `cache/`, `updater/`. Install: Brewfile cask `antigravity-cli`; `settings.json` (allowlisted keys only: permissions, statusLine, trustedWorkspaces) and `~/dev/statusline.sh` also in the public snapshot dotfiles. `installation_id` is restored too: delete it on a second Pi that should be a separate agy install |
 | SSH | `~/.ssh/` (`id_ed25519*`, `known_hosts`, `config`, `authorized_keys`) | `~/.ssh/config` uses the key for the Mac |
 | agent-lab data | `~/.local/share/agent-lab/` (SQLite staged) | `chromium/` ~430 MB: see staging |
 | mail | `~/.local/share/mail/` (SQLite staged) | |

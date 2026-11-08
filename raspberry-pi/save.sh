@@ -62,6 +62,13 @@ for p in "${dotfiles[@]}"; do
     echo "  skip (missing): $p"
   fi
 done
+# agy's settings.json is published through an allowlist, not copied whole: agy may later add MCP or env entries with
+# tokens that the secret scan below wouldn't recognise. The full file is in the restic backup (includes.txt).
+agy_set=$snap/dotfiles/.gemini/antigravity-cli/settings.json
+if [[ -f $agy_set ]]; then
+  jq '{permissions, statusLine, trustedWorkspaces} | with_entries(select(.value != null))' "$agy_set" > "$agy_set.new" \
+    && mv "$agy_set.new" "$agy_set" || { echo "save.sh: could not filter $agy_set" >&2; exit 1; }
+fi
 
 say "apt: manual packages + third-party sources"
 apt-mark showmanual | LC_ALL=C sort > "$snap/apt-manual.txt"
