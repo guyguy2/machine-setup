@@ -216,3 +216,13 @@ def test_script_exec_paths(tmp_path: Path):
     assert sh('script_exec_paths "$1"', str(script)).split() == ["/bin/bash", "/usr/bin/env"]
     assert sh("script_exec_paths /usr/bin/env") == ""                   # a binary isn't scanned
 
+
+# ---------- R-087: venvs bound to a Homebrew Python ----------
+
+def test_venvs_on_brew_python(tmp_path: Path):
+    for proj, home in (("ok", "/usr/bin"), ("bad", "/home/linuxbrew/.linuxbrew/opt/python@3.14/bin")):
+        (tmp_path / proj / ".venv").mkdir(parents=True)
+        (tmp_path / proj / ".venv" / "pyvenv.cfg").write_text(f"home = {home}\nversion_info = 3.x\n")
+    assert sh('venvs_on_brew_python "$1"', str(tmp_path)) == (
+        f"{tmp_path}/bad/.venv (/home/linuxbrew/.linuxbrew/opt/python@3.14/bin)\n"
+    )

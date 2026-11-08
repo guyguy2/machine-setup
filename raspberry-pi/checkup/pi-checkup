@@ -189,6 +189,16 @@ nonroot_writable() {
     done
   done
 }
+# venvs_on_brew_python <dir...>: "<venv> (home)" for each .venv whose interpreter is a Homebrew Python, which brew
+# upgrade + cleanup deletes (the venv then breaks). (R-087)
+venvs_on_brew_python() {
+  local cfg home
+  while IFS= read -r cfg; do
+    home=$(sed -nE 's/^home *= *//p' "$cfg" | head -1)
+    [[ $home == /home/linuxbrew/* ]] && echo "${cfg%/pyvenv.cfg} ($home)"
+  done < <(find "$@" -maxdepth 6 \( -name node_modules -o -name .git \) -prune -o -path '*/.venv/pyvenv.cfg' -print 2>/dev/null)
+  return 0
+}
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -447,6 +457,13 @@ check_repos() {
   broken=$(find "$HOME/dev" -maxdepth 2 -xtype l 2>/dev/null; find "$HOME/.local/bin" /usr/local/bin "$HOME/.claude/skills" -maxdepth 1 -xtype l 2>/dev/null)
   for f in $broken; do warn repos.symlink "broken symlink ${f/#$HOME/~} -> $(readlink "$f")"; done
   [[ -n $broken ]] || ok "no broken symlinks in ~/dev, ~/.local/bin, /usr/local/bin, ~/.claude/skills"
+
+  # Project venvs must use the system (or uv-managed) Python: Homebrew Pythons arrive as other formulae's
+  # dependencies, and brew upgrade + cleanup deletes the keg a venv points at. (R-087)
+  local venv
+  venv=$(venvs_on_brew_python "$HOME/dev")
+  if [[ -n $venv ]]; then while read -r f; do warn repos.venv-python "venv ${f/#$HOME/~} uses a Homebrew Python, which brew cleanup can delete (pin .python-version, then rm -rf .venv && uv sync)"; done <<<"$venv"
+  else ok "no ~/dev venv uses a Homebrew Python"; fi
 
   # npm run through ~/dev/<x> (a relative symlink into this repo) records bogus ../machine-setup/... paths.
   local lock c
