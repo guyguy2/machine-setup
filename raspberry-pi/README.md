@@ -217,6 +217,33 @@ share one.
 5. Only now: `pi-backup init` and `sudo /usr/local/lib/pi-backup/pi-backup-system init` (they enable the timers).
 6. The rest of section 4 (Tailscale, `restore.sh --only rei`, ...).
 
+## Pi lost or compromised: revoke everything
+
+If the Pi (or its SD card) is stolen, lost, or something on it can't be trusted any more, revoke what it holds
+**from another device**, in this order (most reach first). Almost all of it can be done off the Pi. Then rebuild
+from [New Pi from backup](#new-pi-from-backup) and sign everything in again; that new sign-in replaces what was
+revoked here.
+
+1. **Mac**: delete the Pi's public key from the Mac's `~/.ssh/authorized_keys` (the Pi can SSH into the Mac). This
+   needs the Mac itself. A `from=` / `command=` restriction on that key line limits what it can do in the meantime.
+2. **GitHub** → Settings → Developer settings → Fine-grained tokens: revoke the Pi's token (it can push to the
+   public repo future Pis bootstrap from). Also check Settings → Applications for OAuth apps it signed in.
+3. **Google** → Google Account → Security → Third-party connections (myaccount.google.com/permissions): remove
+   access for the Pi's own OAuth client (gws and the rclone Drive remotes use it), rclone, and Google Cloud SDK.
+   This also cuts off the backup on Drive; afterwards change both restic passphrases from another machine
+   (`restic key add`, then `restic key remove` the old key), since the Pi held them.
+4. **Anthropic**: in the Console, revoke the API key the agents use; on claude.ai, sign out the Pi's Claude Code
+   session (Settings → sessions / devices).
+5. **Telegram**: in BotFather, `/revoke` the bot's token (the Hermes gateway uses it).
+6. **WhatsApp** (phone) → Linked devices: log out the Pi's session.
+7. **Tailscale** admin console → Machines: remove the Pi (its node key gets tailnet access to the other devices).
+8. **Todoist** → Settings → Integrations: revoke the CLI's token.
+9. **Shopping and utility accounts the agents sign into** (Amazon, Walmart, the utilities): change the password,
+   sign out all devices, and for Amazon **re-enroll the authenticator (TOTP)**: the Pi had the same seed as the
+   phone, so the old codes stay valid until it is replaced.
+10. **LastPass** → Account settings → Trusted devices: remove the Pi.
+11. **Firecrawl**: confirm the API key is revoked (no copy is kept on the Pi, so this can't be checked from it).
+
 ## Layout
 
 ```
