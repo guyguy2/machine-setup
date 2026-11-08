@@ -9,7 +9,11 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 from mail_fixture import write_fresh
-from pi_status import Handler, collect
+from pi_status import Handler, collect, guard
+
+# The tailnet login the tests' requests carry, as tailscale serve would add it (guard.py); the only one allowed to POST.
+OWNER = "owner@example.test"
+OWNER_HEADER = {"Tailscale-User-Login": OWNER}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -24,7 +28,9 @@ def fake_mail_state(tmp_path_factory):
            collect.MAIL_UNIT_ENV: "pi-status-test-no-such-unit.service",
            # backup: status files that don't exist, and fixed timer states, so no test reads the real ones
            **{collect.BACKUP_SIDES[side][2]: str(folder / f"no-backup-{side}.json") for side in collect.BACKUP_SIDES},
-           collect.BACKUP_TIMER_ENV: "not set up"}
+           collect.BACKUP_TIMER_ENV: "not set up",
+           # POSTs: the owner is OWNER (not the real one from tailscale), the audit log a temporary file
+           guard.LOGINS_ENV: OWNER, guard.AUDIT_ENV: str(folder / "audit.log")}
     old = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     yield path
@@ -95,7 +101,7 @@ def make_page(browser):
     contexts = []
 
     def make(width=1100, height=900):
-        ctx = browser.new_context(viewport={"width": width, "height": height})
+        ctx = browser.new_context(viewport={"width": width, "height": height}, extra_http_headers=OWNER_HEADER)
         ctx.grant_permissions(["clipboard-read", "clipboard-write"])
         contexts.append(ctx)
         page = ctx.new_page()

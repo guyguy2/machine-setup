@@ -5,6 +5,8 @@ import urllib.request
 import pytest
 
 import pi_status
+from conftest import OWNER, OWNER_HEADER
+from pi_status import guard
 
 
 def get(url):
@@ -64,7 +66,7 @@ def test_status_has_network_summary(base_url):
 # ---------- restart endpoint ----------
 
 def post(url, headers=None):
-    req = urllib.request.Request(url, method="POST", headers=headers or {})
+    req = urllib.request.Request(url, method="POST", headers={**OWNER_HEADER, **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return r.status, json.loads(r.read())
@@ -177,7 +179,7 @@ WEB = ["--via", "web", "--json"]
 def post_json(url, body, headers=None):
     data = body if isinstance(body, bytes) else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="POST",
-                                 headers={"Content-Type": "application/json", **(headers or {})})
+                                 headers={"Content-Type": "application/json", **OWNER_HEADER, **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return r.status, json.loads(r.read())
@@ -338,3 +340,56 @@ def test_backup_endpoint_reads_the_fake_paths_not_the_real_status(base_url):
     with urllib.request.urlopen(base_url + "/api/backup") as r:
         data = json.loads(r.read())
     assert [s["state"] for s in data["sides"]] == ["not set up", "not set up"]
+
+
+# ---------- who may POST, and the audit log (R-033) ----------
+
+def audit_lines():
+    path = guard.audit_path()
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_post_needs_the_owners_tailnet_login(base_url, restarts, monkeypatch):
+    monkeypatch.setattr(pi_status.collect, "can_restart", lambda: True)
+    status, body = post(base_url + "/api/restart", {"X-Requested-With": "pi-status", "Tailscale-User-Login": ""})
+    assert status == 403 and "Tailscale-User-Login" in body["error"]
+    status, body = post(base_url + "/api/restart", {"X-Requested-With": "pi-status", "Tailscale-User-Login": "someone@else.test"})
+    assert status == 403 and "owner" in body["error"]
+    assert restarts == []
+    # the login is compared without case, as tailnet logins are
+    assert post(base_url + "/api/restart", {"X-Requested-With": "pi-status", "Tailscale-User-Login": OWNER.upper()})[0] == 202
+
+
+def test_post_refused_when_the_owner_is_unknown(base_url, controls, monkeypatch):
+    monkeypatch.delenv(guard.LOGINS_ENV)
+    monkeypatch.setattr(guard, "_owner", set())
+    monkeypatch.setattr(guard.collect, "run", lambda *a, **k: "")  # tailscale not answering
+    status, body = post(base_url + "/api/agents/openclaw-gateway.service/stop", {"X-Requested-With": "pi-status"})
+    assert status == 503 and controls == []
+
+
+def test_owner_login_comes_from_tailscale_status(monkeypatch):
+    monkeypatch.delenv(guard.LOGINS_ENV)
+    monkeypatch.setattr(guard, "_owner", set())
+    status = {"Self": {"UserID": 42}, "User": {"42": {"LoginName": "Owner@Example.test"}, "7": {"LoginName": "other@x"}}}
+    monkeypatch.setattr(guard.collect, "run", lambda *a, **k: json.dumps(status))
+    assert guard.owner_logins() == {"owner@example.test"}
+
+
+def test_header_login_decodes_rfc2047():
+    assert guard.header_login("=?utf-8?q?j=C3=B6rg=40example.test?=") == "jörg@example.test"
+    assert guard.header_login(None) == ""
+
+
+def test_posts_are_audited_without_their_text(base_url, fake_mail, controls):
+    before = len(audit_lines())
+    post(base_url + "/api/agents/openclaw-gateway.service/stop", {"X-Requested-With": "pi-status"})
+    post(base_url + "/api/restart", {"Tailscale-User-Login": "someone@else.test"})  # refused: no custom header
+    post_json(base_url + "/api/emails/reason", {"thread": "t1", "text": "private words"}, HB)
+    new = audit_lines()[before:]
+    assert [(e["path"], e["status"]) for e in new][:2] == [
+        ("/api/agents/openclaw-gateway.service/stop", 200), ("/api/restart", 403)]
+    assert new[0]["login"] == OWNER and new[1]["login"] == "someone@else.test"
+    assert new[2]["path"] == "/api/emails/reason" and new[2]["thread"] == "t1"
+    assert "private words" not in guard.audit_path().read_text()
+    assert oct(guard.audit_path().stat().st_mode & 0o777) == "0o600"

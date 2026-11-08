@@ -5,8 +5,7 @@ Home tabs). The page shows that name; the code, folder, service and commands kee
 library only, no runtime dependencies, reachable only over Tailscale. It is part of this repo because it is part of
 setting up a new Pi: `restore.sh` in the parent folder installs and starts it.
 
-    uv run pi-status                    # binds the Tailscale IP, port 8080
-    uv run pi-status --host 127.0.0.1   # what the service uses; Tailscale Serve adds HTTPS in front
+    uv run pi-status                    # 127.0.0.1:8080 (what the service runs); Tailscale Serve adds HTTPS in front
 
 ## Tabs
 
@@ -49,7 +48,8 @@ constant snapshot commits elsewhere in the repo don't change it. A trailing `+` 
 
 If the code on disk is newer than what the running server loaded (after editing or `git pull`), the stamp shows an
 amber "newer code on disk" notice with a **Restart now** button. The button POSTs to `/api/restart` (the request must
-carry an `X-Requested-With` header, so other websites can't trigger it), the service restarts itself through systemd,
+carry an `X-Requested-With` header, so other websites can't trigger it, and come from this Pi's owner through
+`tailscale serve`, see below), the service restarts itself through systemd,
 and the page reloads when the new server is up. A server started by hand can't restart itself, so there the notice just
 asks you to restart it: `systemctl --user restart pi-status`.
 
@@ -65,6 +65,16 @@ asks you to restart it: `systemctl --user restart pi-status`.
   localhost, the sync timer and `GET 127.0.0.1:8420/healthz` (2 s timeout, skipped while the app is stopped), of which
   it passes on only `ok`, `version` and the number of errors. A failed `rei.service` shows in Overview's **Needs
   attention** like any failed user service.
+- **Who can change things** (agent-lab/reviews R-033): the server listens on 127.0.0.1 only, so the tailnet HTTPS
+  address is the way in. `tailscale serve` deletes any `Tailscale-User-*` headers a client sends and adds
+  `Tailscale-User-Login` with the login of the device's owner (not for tagged devices). Every POST (restart, agent
+  start/stop, email choices) must carry the login of this Pi's own owner, read from `tailscale status --json` when the
+  first POST arrives (`src/pi_status/guard.py`); anything else gets 403 (503 while Tailscale can't say who the owner
+  is). GETs stay open to anyone on the tailnet, as before.
+- **Audit log**: every POST, allowed or refused, is one JSON line in `~/.local/state/pi-status/audit.log` (0600; moved
+  to `audit.log.1` past 1 MB): time, login, client tailnet address, path, status, error, and for email choices the
+  thread id, queue and how many ids, never the text of a draft or reason. Read it with
+  `tail ~/.local/state/pi-status/audit.log | jq -c`.
 - `restore.sh` in the parent folder sets all of this up on a fresh image (steps `tailscale`, `pi-status` and `rei`).
 - `~/dev/pi-status` is a symlink to this folder, so there is only one copy.
 - `upd` runs `uv sync` and restarts the service after pulling repos.
@@ -79,7 +89,7 @@ JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/ag
 `/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/websites`, `/api/rei`, `/api/emails`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
 units in `AGENTS`), and `POST /api/emails/decide` `{"thread", "queue"}` (queue action, respond, review, delete or done),
 `/api/emails/undo` `{"thread"}` and `/api/emails/trash` `{"ids": [...]}` (at most 500). Every POST needs the
-`X-Requested-With: pi-status` header. The email ones accept a JSON body of at most 32 KB, check every thread id
+`X-Requested-With: pi-status` header and the `Tailscale-User-Login` of this Pi's owner (next section). The email ones accept a JSON body of at most 32 KB, check every thread id
 (`[0-9a-f]{10,24}`) and then run the sorter's own command, one at a time, as an argument list with no shell:
 `~/dev/mail/.venv/bin/mail decide|undo|trash --yes ... --via web --json` (60 s timeout; `PI_STATUS_MAIL_BIN` overrides
 the path). They answer with its JSON plus the new `/api/emails` payload under `state`; its exit code becomes the status:

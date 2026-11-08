@@ -7,7 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
 
-from . import collect
+from . import collect, guard
 
 MAX_BODY = 64 * 1024  # POST bodies: 500 thread ids fit in about 14 KB, an 8000-character draft in under 50 KB
 
@@ -59,6 +59,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = self.path.split("?")[0]
         restart = False
+        self.audit: dict = {}
+        login = guard.header_login(self.headers.get("Tailscale-User-Login"))
         agent = re.fullmatch(r"/api/agents/([\w.@-]+)/(start|stop)", path)
         mail = re.fullmatch(r"/api/emails/(decide|accept|reason|undo|trash|draft|draft-save|draft-drop|sync)", path)
         if path != "/api/restart" and not agent and not mail:
@@ -67,6 +69,9 @@ class Handler(BaseHTTPRequestHandler):
             # A custom header can't be sent cross-site without a CORS preflight (which we never allow), so
             # another website can't make your browser restart this server, start and stop agents or touch mail.
             code, body = 403, {"error": "missing X-Requested-With header"}
+        elif refused := guard.check(login):
+            # Only this Pi's owner, as tailscale serve vouches for (guard.py), may change anything.
+            code, body = refused[0], {"error": refused[1]}
         elif mail:
             code, body = self.mail(mail[1])
         elif agent:
@@ -75,6 +80,9 @@ class Handler(BaseHTTPRequestHandler):
             code, body = 409, {"error": "not running under systemd; restart it by hand"}
         else:
             code, body, restart = 202, {"restarting": True}, True
+        guard.write({"login": login or None, "client": self.headers.get("X-Forwarded-For") or self.client_address[0],
+                     "path": path, "status": code, **self.audit,
+                     **({"error": str(body["error"])[:200]} if isinstance(body, dict) and body.get("error") else {})})
         try:
             self.send(code, "application/json", json.dumps(body).encode())
         except (BrokenPipeError, ConnectionResetError):
@@ -94,6 +102,7 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
         except ValueError:
             return 400, {"ok": False, "error": "the body isn't valid JSON"}
+        self.audit = guard.mail_detail(body)
         return collect.mail_action(action, body)
 
     def log_message(self, format: str, *args) -> None:
@@ -102,10 +111,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Raspberry Pi status page")
-    parser.add_argument("--host", help="address to bind (default: Tailscale IPv4, else 127.0.0.1)")
+    # Loopback only by default: `tailscale serve` publishes it over HTTPS and adds the identity header POSTs need.
+    parser.add_argument("--host", default="127.0.0.1", help="address to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    host = args.host or collect.run("tailscale", "ip", "-4") or "127.0.0.1"
+    host = args.host
     collect.version()  # remember which code this process loaded, to flag a stale server later
     threading.Thread(target=collect.refresh_auth, daemon=True).start()  # warm the sign-in cache
     print(f"Serving on http://{host}:{args.port}", flush=True)
