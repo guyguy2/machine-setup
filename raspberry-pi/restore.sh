@@ -34,6 +34,9 @@ while (( $# )); do
   esac
   shift
 done
+for s in "${only[@]}"; do
+  [[ " ${all_steps[*]} " == *" $s "* ]] || { echo "${0##*/}: unknown step '$s' in --only (steps: ${all_steps[*]})" >&2; exit 2; }
+done
 if [[ -z $role ]]; then
   role=$(tr -d '[:space:]' 2>/dev/null < "$role_file" || true); role_src=$role_file
   [[ -n $role ]] || { role=main; role_src=default; }
@@ -45,7 +48,15 @@ esac
 
 say() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# The one dry-run gate. run <command...>: print it in a dry run, run it otherwise.
 run() { if (( dry )); then printf '  [dry-run] %s\n' "$*"; else "$@"; fi; }
+# would <what it does>: for steps that aren't one command (pipes, prompts, several commands). In a dry run, print
+# the description and return 1; otherwise return 0. Use: `if would "write X"; then ...; fi`, or `would "..." || :`.
+would() { if (( dry )); then printf '  [dry-run] %s\n' "$*"; return 1; fi; }
+# Steps that failed but let the rest run; listed at the end (exit 1).
+failed=()
+step_failed() { echo "  $1 failed (above); re-run: ./restore.sh --only $1"; failed+=("$1"); }
+dry_flag=(); (( dry )) && dry_flag=(--dry-run)
 # role_skips <step or part>: true when this Pi's role doesn't run it (see main_only).
 role_skips() {
   local s
@@ -69,8 +80,8 @@ need() { [[ -e $snap/$1 ]] || { echo "  missing snapshot/$1, skipping"; return 1
 echo "Role: $role ($role_src)"
 (( dry )) || sudo true
 if [[ $(tr -d '[:space:]' 2>/dev/null < "$role_file" || true) != "$role" ]]; then
-  if (( dry )); then echo "  [dry-run] write '$role' to ~/.config/pi-role"
-  else mkdir -p "${role_file%/*}" && printf '%s\n' "$role" > "$role_file" && echo "  wrote '$role' to ~/.config/pi-role"
+  if would "write '$role' to ~/.config/pi-role"; then
+    mkdir -p "${role_file%/*}" && printf '%s\n' "$role" > "$role_file" && echo "  wrote '$role' to ~/.config/pi-role"
   fi
 fi
 
@@ -130,8 +141,7 @@ if want system; then
     '# so a power cut erases the logs of the boot that failed. Keep it on disk instead; this file sorts later and wins.' \
     '# Written by machine-setup/raspberry-pi/restore.sh (system step).' '[Journal]' 'Storage=persistent' 'SystemMaxUse=200M')
   if [[ $(cat "$jconf" 2>/dev/null) == "$jwant" ]]; then echo "  journal already persistent"
-  elif (( dry )); then echo "  [dry-run] write $jconf (persistent journal), restart journald"
-  else
+  elif would "write $jconf (persistent journal), restart journald"; then
     sudo mkdir -p "${jconf%/*}" && printf '%s\n' "$jwant" | sudo tee "$jconf" >/dev/null
     sudo systemctl restart systemd-journald && sudo journalctl --flush
   fi
@@ -140,8 +150,7 @@ if want system; then
   swant=$(printf '%s\n' '# No root logins over SSH, even with a key (the OpenSSH default allows key logins).' \
     '# Written by machine-setup/raspberry-pi/restore.sh (system step).' 'PermitRootLogin no')
   if [[ $(sudo cat "$sconf" 2>/dev/null) == "$swant" ]]; then echo "  sshd already refuses root logins"
-  elif (( dry )); then echo "  [dry-run] write $sconf (PermitRootLogin no), reload ssh"
-  else
+  elif would "write $sconf (PermitRootLogin no), reload ssh"; then
     printf '%s\n' "$swant" | sudo tee "$sconf" >/dev/null && sudo chmod 600 "$sconf"
     sudo sshd -t && sudo systemctl reload ssh
   fi
@@ -163,9 +172,9 @@ if want tailscale; then
     run sudo apt-get install -y tailscale
   fi
   run sudo systemctl enable --now tailscaled
-  if (( dry )); then echo "  [dry-run] check whether Tailscale is signed in"
-  elif tailscale status >/dev/null 2>&1; then echo "  signed in"
-  else echo "  not signed in yet: run 'sudo tailscale up' and open the link it prints"
+  if would "check whether Tailscale is signed in"; then
+    if tailscale status >/dev/null 2>&1; then echo "  signed in"
+    else echo "  not signed in yet: run 'sudo tailscale up' and open the link it prints"; fi
   fi
 fi
 
@@ -173,14 +182,12 @@ if want brew; then
   say "Homebrew + Brewfile"
   if [[ ! -x $brew_bin ]]; then
     echo "  installing Homebrew"
-    if (( dry )); then echo "  [dry-run] official Homebrew install.sh (NONINTERACTIVE=1)"
-    else NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if would "official Homebrew install.sh (NONINTERACTIVE=1)"; then
+      NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
   fi
   if need Brewfile; then
-    if (( dry )); then echo "  [dry-run] brew bundle --file=snapshot/Brewfile"
-    else "$brew_bin" bundle --file="$snap/Brewfile"
-    fi
+    run "$brew_bin" bundle --file="$snap/Brewfile"
   fi
 fi
 
@@ -200,15 +207,16 @@ if want npm; then
     # Only install releases at least a week old (supply-chain delay; upd relies on it too)
     run sudo npm config set min-release-age 7 --location=global
     mapfile -t n < "$snap/npm-global.txt"
-    (( ${#n[@]} )) && run sudo npm install -g "${n[@]}" || echo "  none"
+    if (( ! ${#n[@]} )); then echo "  none"
+    else run sudo npm install -g "${n[@]}" || step_failed npm; fi
   fi
 fi
 
 if want omzsh; then
   say "Oh My Zsh"
   if [[ -d $HOME/.oh-my-zsh ]]; then echo "  already installed"
-  elif (( dry )); then echo "  [dry-run] official Oh My Zsh install.sh (RUNZSH=no CHSH=no KEEP_ZSHRC=yes)"
-  else RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+  elif would "official Oh My Zsh install.sh (RUNZSH=no CHSH=no KEEP_ZSHRC=yes)"; then
+    RUNZSH=no CHSH=no KEEP_ZSHRC=yes sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
   fi
 fi
 
@@ -236,8 +244,7 @@ if want github; then
   say "GitHub sign-in (needed to clone the private agent-lab repo)"
   if ! have gh; then echo "  gh not installed (run the brew step)"
   elif gh auth status >/dev/null 2>&1; then echo "  already signed in"; run gh auth setup-git
-  elif (( dry )); then echo "  [dry-run] gh auth login --web (one-time code: open https://github.com/login/device on any computer)"
-  else
+  elif would "gh auth login --web (one-time code: open https://github.com/login/device on any computer)"; then
     echo "  Open https://github.com/login/device on any computer (e.g. the Mac) and enter the code printed below."
     gh auth login --hostname github.com --git-protocol https --web
     gh auth setup-git
@@ -250,9 +257,9 @@ if want repos; then
     while read -r name url; do
       [[ -n $name ]] || continue
       if [[ -e $HOME/dev/$name ]]; then echo "  ~/dev/$name already there"
-      elif (( dry )); then echo "  [dry-run] git clone $url ~/dev/$name"
-      elif git clone -q "$url" "$HOME/dev/$name"; then echo "  cloned $name"
-      else echo "  could not clone $url (private? run the github step first)"
+      elif would "git clone $url ~/dev/$name"; then
+        if git clone -q "$url" "$HOME/dev/$name"; then echo "  cloned $name"
+        else echo "  could not clone $url (private? run the github step first)"; fi
       fi
     done < "$snap/repos.txt"
   fi
@@ -288,15 +295,12 @@ if want pihole; then
   if ! have docker-compose; then echo "  docker-compose not installed (run the apt step)"
   else
     if [[ ! -f $ph/.env ]]; then
-      if (( dry )); then echo "  [dry-run] ask for the Pi-hole admin password and write $ph/.env"
-      else
+      if would "ask for the Pi-hole admin password and write $ph/.env"; then
         read -rsp "  choose a Pi-hole admin password: " pw; echo
         (umask 077; printf 'FTLCONF_webserver_api_password=%s\n' "$pw" > "$ph/.env"); unset pw
       fi
     fi
-    if (( dry )); then echo "  [dry-run] (cd $ph && sudo docker-compose up -d)"
-    else (cd "$ph" && sudo docker-compose up -d)
-    fi
+    if would "(cd $ph && sudo docker-compose up -d --wait)"; then (cd "$ph" && sudo docker-compose up -d --wait); fi
   fi
 fi
 
@@ -304,10 +308,9 @@ if want agents; then
   say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes (official installer, not Homebrew)"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
-  elif (( dry )); then echo "  [dry-run] NO_TMUX=1 zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"
-    echo "  [dry-run] curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use"
   # NO_TMUX: over SSH, ~/.zshrc would otherwise attach to tmux and the rebuild would stop there (R-038).
-  else NO_TMUX=1 zsh -ic '_upd_openclaw' || echo "  an agent install failed (see above); re-run: ./restore.sh --only agents"
+  elif would "NO_TMUX=1 zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"; then
+    NO_TMUX=1 zsh -ic '_upd_openclaw' || step_failed agents
     # The Control UI is published at /openclaw (see the pi-status step), so it must serve under that path.
     "$HOME/dev/openclaw_node/node_modules/.bin/openclaw" config set gateway.controlUi.basePath /openclaw || true
   fi
@@ -315,10 +318,10 @@ if want agents; then
   # official installer (git checkout in ~/.hermes/hermes-agent, command in ~/.local/bin). Non-interactive.
   # ~/.hermes (config, API keys, sessions) is never in git: it comes back from the encrypted restic backup with
   # pi-restore-state (dry run first, then --yes; it runs hermes import). A worker sets up its own instead.
-  if (( dry )); then :
-  elif [[ -x $HOME/.local/bin/hermes ]]; then echo "  Hermes already installed ($HOME/.local/bin/hermes)"
-  else curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use \
-    || echo "  Hermes install failed; re-run: ./restore.sh --only agents"
+  if [[ -x $HOME/.local/bin/hermes ]]; then echo "  Hermes already installed ($HOME/.local/bin/hermes)"
+  elif would "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use"; then
+    curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser --skip-computer-use \
+      || step_failed agents
   fi
 fi
 
@@ -333,7 +336,7 @@ if want pi-status; then
     run uv sync --project "$site" --no-dev --inexact
     run systemctl --user daemon-reload
     run systemctl --user enable --now pi-status.service
-    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg 8080, --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes, --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"
+    if ! would "sudo tailscale serve --bg 8080, --https=8443 --set-path /hermes http://127.0.0.1:9120/hermes, --https=8444 --set-path /openclaw http://127.0.0.1:18789/openclaw, --https=8445 --set-path /pihole http://127.0.0.1:8081 (when Tailscale is signed in)"; then :
     elif tailscale status >/dev/null 2>&1; then
       sudo tailscale serve --bg 8080
       # The Hermes dashboard and OpenClaw Control UI, linked from the Agents tab (DASHBOARDS in collect.py).
@@ -355,14 +358,14 @@ if want rei; then
   else run gh repo clone guyguy2/rei "$rei"
   fi
   if [[ ! -d $rei ]]; then
-    (( dry )) && echo "  [dry-run] uv sync, deploy/pi/install.sh, sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421"
+    would "uv sync, deploy/pi/install.sh, sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421" || :
   elif ! have uv; then echo "  uv not installed (run the brew step)"
   else
     run uv sync --project "$rei"
     # Links rei.service, rei-proxy.service and rei-vault-sync.{service,timer} into ~/.config/systemd/user and enables
     # the first two; the sync timer only once the rclone remote gdrive: exists (follow-up below, then re-run this).
-    if (( dry )); then "$rei/deploy/pi/install.sh" --dry-run; else "$rei/deploy/pi/install.sh"; fi
-    if (( dry )); then echo "  [dry-run] sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421 (when Tailscale is signed in)"
+    "$rei/deploy/pi/install.sh" "${dry_flag[@]}"
+    if ! would "sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421 (when Tailscale is signed in)"; then :
     elif tailscale status >/dev/null 2>&1; then sudo tailscale serve --bg --https=8446 http://127.0.0.1:8421  # tailnet only, no LAN port
     else echo "  Tailscale isn't signed in yet: run 'sudo tailscale up', then './restore.sh --only rei' to publish it"
     fi
@@ -387,7 +390,7 @@ if want mail; then
   else run gh repo clone guyguy2/mail "$mail"
   fi
   if [[ ! -d $mail ]]; then
-    (( dry )) && echo "  [dry-run] uv sync, link deploy/mail-sync.{service,timer}, enable mail-sync.timer"
+    would "uv sync, link deploy/mail-sync.{service,timer}, enable mail-sync.timer" || :
   elif ! have uv; then echo "  uv not installed (run the brew step)"
   else
     run uv sync --project "$mail"
@@ -418,7 +421,7 @@ if want systemd; then
   # Units that live in their own (private) repo, cloned by the repos step: ~/dev/websites (DreamBase)
   if role_skips dreambase; then echo "  DreamBase (~/dev/websites/install.sh): skipped (main only)"
   elif [[ -x $HOME/dev/websites/install.sh ]]; then
-    if (( dry )); then "$HOME/dev/websites/install.sh" --dry-run; else "$HOME/dev/websites/install.sh"; fi
+    "$HOME/dev/websites/install.sh" "${dry_flag[@]}"
   else echo "  ~/dev/websites not cloned (private; run the github and repos steps): DreamBase not set up"; fi
   if need systemd-user-enabled.txt; then
     run systemctl --user daemon-reload
@@ -435,6 +438,9 @@ if want systemd; then
   fi
 fi
 
+if (( ${#failed[@]} )); then
+  printf '\n\033[1;31m==>\033[0m Failed steps (the rest ran): %s. Re-run: ./restore.sh --only %s\n' "${failed[*]}" "$(IFS=,; echo "${failed[*]}")"
+fi
 say "Restore finished. Manual follow-ups"
 if [[ $role == main ]]; then
 cat <<'MSG'
@@ -483,3 +489,4 @@ cat <<'MSG'
     or: systemctl --user start hermes-dashboard
 MSG
 fi
+(( ! ${#failed[@]} ))

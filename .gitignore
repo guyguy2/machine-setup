@@ -49,3 +49,6 @@ node_modules/
 .pytest_cache/
 .pi-restore-backup-*/
 .agent-bus/
+
+# save.sh builds the snapshot here before swapping it in (left only if it was killed)
+raspberry-pi/.snapshot-new.*

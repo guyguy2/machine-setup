@@ -43,8 +43,14 @@ if (( push )) && [[ ${role:-main} != main ]]; then
   exit 2
 fi
 
-# Start clean so files deleted on this machine disappear from the snapshot.
-rm -rf "$snap"
+# Build the new snapshot from scratch in a temporary directory next to the target (so files deleted on this machine
+# disappear from it), run the size and secret checks on it, and only then swap it in: a failed check leaves the
+# existing snapshot as it was.
+dest=$snap
+mkdir -p "$(dirname "$dest")"
+snap=$(mktemp -d "$(dirname "$dest")/.snapshot-new.XXXXXX")
+trap 'rm -rf "$snap"' EXIT
+chmod "$(printf %o $(( 8#777 & ~8#$(umask) )))" "$snap"  # mktemp makes it 700; a plain mkdir would follow the umask
 mkdir -p "$snap/dotfiles" "$snap/apt-sources"
 
 say "dotfiles"
@@ -148,6 +154,13 @@ if [[ -r $sites ]]; then
   done < <(jq -r '.[].path // empty' "$sites" 2>/dev/null | tr '/' '\n' | sed '/^$/d' | sort -u)
 fi
 echo "  clean"
+
+# Swap it in (a rename on the same filesystem); keep the old one until the new one is in place.
+if [[ -e $dest ]]; then
+  mv "$dest" "$snap.old" && mv "$snap" "$dest" && rm -rf "$snap.old"
+else mv "$snap" "$dest"; fi
+trap - EXIT
+snap=$dest
 
 if (( push )); then
   say "git commit + push"
