@@ -302,3 +302,16 @@ def test_env_value(tmp_path: Path):
     assert sh('env_value "$1" C', str(f)) == "single\n"
     assert sh('env_value "$1" A', str(f)) == "plain\n"
     assert sh('env_value "$1" MISSING', str(f)) == ""
+
+
+# ---------- updates.npm: a downgrade isn't an update ----------
+
+def test_npm_upgrades_skips_downgrades():
+    outdated = """{
+      "npm": {"current": "11.19.1", "wanted": "12.2.1", "latest": "12.2.1"},
+      "agent-browser": {"current": "0.41.2", "wanted": "0.41.0", "latest": "0.41.0"},
+      "pyright": {"current": "1.1.400", "wanted": "1.1.402", "latest": "1.1.402"},
+      "tool": {"current": "1.9.0", "wanted": "1.10.0", "latest": "1.10.0"},
+      "missing": {"wanted": "2.0.0", "latest": "2.0.0"}
+    }"""
+    assert sh("npm_upgrades", stdin=outdated).splitlines() == ["pyright 1.1.400->1.1.402", "tool 1.9.0->1.10.0"]
