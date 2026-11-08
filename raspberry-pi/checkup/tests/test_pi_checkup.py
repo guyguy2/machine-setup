@@ -42,3 +42,24 @@ def test_unpinned_images(tmp_path: Path):
 def test_repo_compose_files_are_pinned():
     for f in (SCRIPT.parent.parent / "services").glob("*/docker-compose.y*ml"):
         assert sh('unpinned_images "$1"', str(f)) == "", f
+
+
+# ---------- R-041: links restore.sh would make ----------
+
+def test_links_drift():
+    home = sh('printf %s "$HOME"')
+    dry_run = (
+        "Role: main (default)\n"
+        f"  {home}/dev/scripts already linked\n"
+        f"  [dry-run] ln -s /x/backup/pi-backup {home}/.local/bin/pi-backup\n"
+        f"  linked {home}/.local/bin/pi-backup -> /x/backup/pi-backup\n"
+        f"  {home}/dev/pihole exists and is not this repo's services/pihole/; leaving it\n"
+    )
+    assert sh("links_drift", stdin=dry_run).splitlines() == [
+        "~/.local/bin/pi-backup is missing",
+        "~/dev/pihole exists but isn't the repo's link",
+    ]
+
+
+def test_links_drift_clean():
+    assert sh("links_drift", stdin="  /home/x/dev/scripts already linked\n") == ""

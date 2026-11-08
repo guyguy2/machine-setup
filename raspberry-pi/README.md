@@ -74,7 +74,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `dotfiles` | copies `snapshot/dotfiles/` into `$HOME` | `snapshot/dotfiles/` |
 | `github` | `gh auth login` (device code) + `gh auth setup-git` | |
 | `repos` | clones each repo in `snapshot/repos.txt` that's missing from `~/dev` | `snapshot/repos.txt` |
-| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node}` → folders in this repo | |
+| `links` | `~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}` → folders in this repo; `pi-checkup`, `pi-backup`, `pi-restore-state` → `~/.local/bin`; the pi-checkup skill → `~/.claude/skills` | pi-checkup `drift.links` warns about any that are missing |
 | `pihole` | asks for the admin password, then `docker-compose up -d` | `services/pihole/` |
 | `agents` | installs OpenClaw (npm) with `upd`'s own functions, and Hermes with its official installer (`install.sh --skip-browser --skip-computer-use`; the Homebrew formula lacked the `anthropic` library). `~/.hermes` data comes back with `pi-restore-state` (section 4), not this step | `~/.zshrc` |
 | `pi-status` | `uv sync`, enables the website service, `tailscale serve` for the four HTTPS ports (once Tailscale is signed in) | `pi-status/` |

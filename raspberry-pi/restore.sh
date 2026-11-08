@@ -276,7 +276,8 @@ if want links; then
   link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
   link_dir "$here/checkup/pi-checkup" "$HOME/.local/bin/pi-checkup"
   link_dir "$here/checkup/skill" "$HOME/.claude/skills/pi-checkup"
-  # The encrypted restic backup's user-side commands (backup/README.md); link_dir links files too.
+  # The encrypted restic backup's user-side commands (README.md, "Nightly backup"); link_dir links files too.
+  # pi-checkup's drift.links check runs this step as a dry run and warns about any link it would make.
   link_dir "$here/backup/pi-backup" "$HOME/.local/bin/pi-backup"
   link_dir "$here/backup/pi-restore-state" "$HOME/.local/bin/pi-restore-state"
 fi

@@ -66,6 +66,11 @@ unpinned_images() {
     if [[ ${img##*/} != *:* || $img == *:latest ]]; then echo "$img"; fi
   done
 }
+# links_drift < output of `restore.sh --dry-run --only links`: one line per link that is missing or taken
+links_drift() {
+  sed -nE -e "s#^  linked ([^ ]+) -> .*#\1 is missing#p" -e "s#^  ([^ ]+) exists and is not this repo's .*#\1 exists but isn't the repo's link#p" \
+    | sed "s#^$HOME/#~/#"
+}
 # HTTP status of a URL ("000" when nothing answers); extra args go to curl.
 http_code() { curl -s -o /dev/null -m 8 -w '%{http_code}' "$@" 2>/dev/null; }
 listening() { ss -ltnH "( sport = :$1 )" 2>/dev/null | grep -q .; }
@@ -534,6 +539,13 @@ check_drift() {
     f=${f#"$HOME"/}
     grep -qF "$f" <<<"$listed" || warn drift.backup "~/$f is not in save.sh's dotfiles list"
   done
+
+  # Links restore.sh's links step makes (commands on PATH, ~/dev folders, the skill): a dry run prints "linked"
+  # for each one that is missing here; the broken-symlink check can't see a link that was never made. (R-041)
+  local links
+  links=$(links_drift < <("$pi/restore.sh" --dry-run --only links 2>&1))
+  if [[ -n $links ]]; then while read -r f; do warn drift.links "$f (fix: ~/dev/machine-setup/raspberry-pi/restore.sh --only links)"; done <<<"$links"
+  else ok "restore.sh's links (commands, ~/dev folders, skill) are all in place"; fi
 
   local dups
   dups=$(NO_TMUX=1 zsh -ic 'print -l $path' 2>/dev/null | sort | uniq -d)
