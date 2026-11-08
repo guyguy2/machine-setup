@@ -273,3 +273,32 @@ def test_pihole_dns_hosts():
 
 def test_pihole_dns_hosts_empty():
     assert sh("pihole_dns_hosts", stdin="[dns]\n  hosts = []\n[dhcp]\n  hosts = [ \"x\" ]\n") == ""
+
+
+# ---------- R-024: credential expiry ----------
+
+NOW = "1762560000"  # 2025-11-08T00:00:00Z
+
+
+def test_days_until():
+    assert sh('days_until "$1" "$2"', "2025-11-18T00:00:00Z", NOW) == "10\n"
+    assert sh('days_until "$1" "$2"', "2025-11-06 00:00:00 UTC", NOW) == "-2\n"
+    assert subprocess.run(["bash", "-c", 'source "$0"; days_until nonsense', str(SCRIPT)]).returncode == 1
+
+
+def test_expiry_check():
+    def check(date: str, days: int) -> str:
+        return sh(f'days_until() {{ echo {days}; }}; expiry_check k.x "Thing" "$1" 14 "fix it"', date)
+    assert "WARN" in check("2027-01-01T00:00:00Z", 3) and "expires in 3 day(s), on 2027-01-01 (fix it)" in check("2027-01-01T00:00:00Z", 3)
+    assert "expired 2 day(s) ago" in check("2027-01-01", -2)
+    assert "OK" in check("2027-10-19 05:00:00 UTC", 300) and "valid until 2027-10-19 (300 days)" in check("2027-10-19 05:00:00 UTC", 300)
+
+
+def test_env_value(tmp_path: Path):
+    f = tmp_path / ".env"
+    f.write_text('# A=no\nA_KEY=abc123\nexport B="quoted value"\nC=\'single\'\nA=plain\n')
+    assert sh('env_value "$1" A_KEY', str(f)) == "abc123\n"
+    assert sh('env_value "$1" B', str(f)) == "quoted value\n"
+    assert sh('env_value "$1" C', str(f)) == "single\n"
+    assert sh('env_value "$1" A', str(f)) == "plain\n"
+    assert sh('env_value "$1" MISSING', str(f)) == ""

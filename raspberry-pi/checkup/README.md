@@ -23,7 +23,7 @@ health (load, temperature, throttling, RAM/swap, disks, kernel vs reboot, OOM, S
 services, unpinned `:latest` images, unused images, Pi-hole versions and image tag, Pi-hole settings set only in its UI, the main Pi's local DNS record), repos (git state of `~/dev`, untracked folders, broken links, venvs on a Homebrew Python, bogus
 lockfile entries), updates (apt, bootloader, brew, npm, uv, OpenClaw, Hermes, last `upd`), security (TCP and UDP LAN
 listeners, listeners reachable on a global IPv6 address, root services running user-writable code, ad-hoc servers, rpcbind, the `table inet host` firewall, sshd, auto-updates, credential permissions, dead tailnet devices),
-agents (Hermes/OpenClaw dashboards up and answering, the Hermes Telegram gateway, shared skills, gws/gh/Claude logins), backup (`pi-backup status` for both
+agents (Hermes/OpenClaw dashboards up and answering, the Hermes Telegram gateway, shared skills, gws/gh/Claude logins; credential probes: Claude login under 3 days from expiry, gh token and Tailscale node key under 14 days, Anthropic API key, Telegram bot token, WhatsApp (wacli), Todoist (td), gcloud signed in as INFO; tokens are passed to curl on stdin, never printed), backup (`pi-backup status` for both
 restic repos, timers enabled, root-side copies match the repo, lab Chromium profile copied in the last 14 days),
 drift (snapshot vs this machine, links `restore.sh` would make,
 files `save.sh` doesn't back up, PATH duplicates, Brewfile).

@@ -101,6 +101,24 @@ pihole_dns_hosts() {
               while (match(line, /"[^"]*"/)) { print substr(line, RSTART + 1, RLENGTH - 2); line = substr(line, RSTART + RLENGTH) }
               if (done) in_h = 0 }'
 }
+# days_until <date> [now epoch]: whole days from now until the date (any format `date -d` reads; negative when past)
+days_until() {
+  local t now=${2:-$(date +%s)}
+  t=$(date -d "$1" +%s 2>/dev/null) || return 1
+  echo $(( (t - now) / 86400 ))
+}
+# expiry_check <key> <what> <date> <warn days> <fix>: WARN when the date is under <warn days> away (or past), else OK.
+expiry_check() {
+  local d
+  if ! d=$(days_until "$3"); then warn "$1" "$2: can't read its expiry date ($3)"
+  elif (( d < 0 )); then warn "$1" "$2 expired $(( -d )) day(s) ago ($5)"
+  elif (( d < $4 )); then warn "$1" "$2 expires in $d day(s), on ${3%%[T ]*} ($5)"
+  else ok "$2 valid until ${3%%[T ]*} ($d days)"; fi
+}
+# env_value <file> <KEY>: KEY's value from a dotenv file, quotes stripped. Only ever piped into a probe, never printed.
+env_value() { sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$2=[\"']?([^\"']*)[\"']?[[:space:]]*$/\2/p" "$1" 2>/dev/null | tail -1; }
+# curl_k <curl args...>: curl with its URL and headers read from stdin (-K -), so a token never shows in argv (ps).
+curl_k() { curl -s -m 10 -K - "$@"; }
 # save_sh_lists <save.sh>: the text of its dotfiles=( ) and regenerated=( ) arrays (paths save.sh covers)
 save_sh_lists() { sed -n -e '/^dotfiles=(/,/^)/p' -e '/^regenerated=(/,/^)/p' "$1"; }
 # main_only <unit>: true when the unit is for the main Pi only (see MAIN_ONLY)
@@ -688,7 +706,7 @@ check_agents() {
 
   # Logins the agents' tools need. `gws auth status` only reads local files, so make a real (read-only) call:
   # an OAuth app left in Testing mode has its refresh token expire after 7 days.
-  local out
+  local out exp
   if have gws; then
     out=$(timeout 20 gws gmail users getProfile --params '{"userId":"me"}' 2>&1)
     if grep -q emailAddress <<<"$out"; then ok "Google (gws) login works"
@@ -706,8 +724,64 @@ check_agents() {
     else ok "rclone Drive remotes use their own OAuth client"; fi
   fi
   if have claude; then
-    out=$(timeout 20 claude auth status 2>/dev/null | jq -r '.loggedIn // empty' 2>/dev/null)
-    [[ $out == false ]] && warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
+    out=$(timeout 20 claude auth status 2>/dev/null)
+    if [[ $(jq -r '.loggedIn // empty' <<<"$out" 2>/dev/null) == false ]]; then warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
+    else
+      exp=$(jq -r '.loginExpiresAt // empty' <<<"$out" 2>/dev/null)
+      [[ -n $exp ]] && expiry_check agents.claude-expiry "Claude Code login" "$exp" 3 "sign in again: claude, then /login"
+    fi
+  fi
+  check_credentials
+}
+
+# Credential expiry and liveness probes (R-024). Read-only: each makes one read call or reads a status, with a
+# timeout. Tokens go to curl on stdin (curl_k), never in argv or output; only ok/expiry/HTTP status is printed.
+check_credentials() {
+  local out exp code tok
+  if have gh; then
+    exp=$(timeout 15 gh api -i /user 2>/dev/null | tr -d '\r' | sed -nE 's/^github-authentication-token-expiration: *//Ip' | head -1)
+    if [[ -n $exp ]]; then expiry_check agents.gh-expiry "GitHub token (gh)" "$exp" 14 "make a new fine-grained token, then gh auth login"
+    else info "GitHub token (gh): no expiry header (classic token, or the call failed)"; fi
+  fi
+  if have tailscale; then
+    exp=$(tailscale status --json 2>/dev/null | jq -r '.Self.KeyExpiry // empty' 2>/dev/null)
+    if [[ -n $exp ]]; then expiry_check agents.tailscale-expiry "Tailscale node key" "$exp" 14 "renew: admin console > Machines > this Pi > Renew key, or disable key expiry"
+    else info "Tailscale node key: no expiry (disabled) or not signed in"; fi
+  fi
+  local henv=~/.hermes/.env
+  if [[ -r $henv ]]; then
+    tok=$(env_value "$henv" ANTHROPIC_API_KEY)
+    if [[ -n $tok ]]; then
+      code=$(printf 'url = "https://api.anthropic.com/v1/models?limit=1"\nheader = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$tok" \
+        | curl_k -o /dev/null -w '%{http_code}')
+      case $code in
+        200) ok "Anthropic API key (Hermes) works" ;;
+        401|403) warn agents.anthropic-key "Anthropic API key in ~/.hermes/.env is rejected (HTTP $code): revoked or wrong; make a new one in the console" ;;
+        *) warn agents.anthropic-key "Anthropic API key probe failed (HTTP ${code:-none}; network or API trouble)" ;;
+      esac
+    fi
+    tok=$(env_value "$henv" TELEGRAM_BOT_TOKEN)
+    if [[ -n $tok && $role == main ]]; then
+      out=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$tok" | curl_k)
+      if [[ $(jq -r '.ok // empty' <<<"$out" 2>/dev/null) == true ]]; then ok "Telegram bot token works (getMe)"
+      elif [[ $(jq -r '.error_code // empty' <<<"$out" 2>/dev/null) == 401 ]]; then warn agents.telegram "Telegram bot token is rejected (401): revoked in @BotFather? Put the new one in ~/.hermes/.env, restart hermes-gateway"
+      else warn agents.telegram "Telegram getMe probe failed (network or Telegram trouble)"; fi
+    fi
+    unset tok
+  fi
+  if have wacli; then
+    out=$(timeout 15 wacli --read-only --json auth status 2>/dev/null)
+    if [[ $(jq -r '.data.authenticated // empty' <<<"$out" 2>/dev/null) == true ]]; then ok "WhatsApp (wacli) linked"
+    else warn agents.whatsapp "WhatsApp (wacli) isn't linked (unlinked from the phone, or inactive): send-message via WhatsApp fails; re-link with wacli auth"; fi
+  fi
+  if have td; then
+    if timeout 20 td auth status 2>/dev/null | grep -q Authenticated; then ok "Todoist (td) login works"
+    else warn agents.todoist "Todoist (td) isn't signed in or the check failed (td auth status; re-login needs an SSH tunnel, see the todoist skill)"; fi
+  fi
+  # gcloud: nothing on the Pi needs it after setup (R-021 suggests signing out); reported, not warned, until decided.
+  if have gcloud; then
+    out=$(timeout 15 gcloud auth list --format='value(account)' 2>/dev/null | grep -c .)
+    (( out )) && info "gcloud is signed in ($out account(s)); only setup needs it (R-021: gcloud auth revoke --all)"
   fi
 }
 
