@@ -398,6 +398,8 @@ if want agents; then
   say "agents: OpenClaw (npm, ~/dev/openclaw_node); Hermes (official installer, not Homebrew)"
   # The same install/update functions upd uses, defined in ~/.zshrc (restored by the dotfiles step).
   if ! have zsh || [[ ! -f $HOME/.zshrc ]]; then echo "  zsh or ~/.zshrc missing (run the apt and dotfiles steps)"
+  # Paused agents (~/dev/agent-lab/on-hold, same list upd honours) aren't installed; delete the line and rerun to add it.
+  elif grep -qx openclaw "$HOME/dev/agent-lab/on-hold" 2>/dev/null; then echo "  OpenClaw is on hold (~/dev/agent-lab/on-hold), skipped"
   # NO_TMUX: over SSH, ~/.zshrc would otherwise attach to tmux and the rebuild would stop there (R-038).
   elif would "NO_TMUX=1 zsh -ic '_upd_openclaw', then openclaw config set gateway.controlUi.basePath /openclaw"; then
     NO_TMUX=1 zsh -ic '_upd_openclaw' || step_failed agents
