@@ -3,12 +3,14 @@
 | File | What it is | Linked from |
 |---|---|---|
 | `pi-checkup` | Read-only bash script with all the checks. Prints `OK` / `INFO` / `WARN … [key]` and exits 1 on any warning. | `~/.local/bin/pi-checkup` (on PATH) |
+| `pi-up` | 5-second red/green check: Hermes, Tailscale, internet/DNS, Pi-hole, the shared browser (service + DevTools), pi-status, DreamBase, REI, Docker, SSH, failed units, disk/temp/RAM. `-q` prints only reds; exit 1 on any red. | `~/.local/bin/pi-up` (on PATH) |
 | `skill/SKILL.md` | Claude Code skill: runs the script, sends one read-only agent per domain with warnings, merges a report. | `~/.claude/skills/pi-checkup` |
 
-`restore.sh` (links step) creates both links on a rebuild.
+`restore.sh` (links step) creates the links on a rebuild.
 
 ## Which to run when
 
+- **Is it up? (under a second):** `pi-up`. Red lines say what to run.
 - **Quick look, no AI (about 30s, free):** `pi-checkup` in a terminal. Only problems: `pi-checkup --warn-only`.
   One area: `pi-checkup security` (domains: `pi-checkup --list`). Offline or in a hurry: `--no-fetch`.
 - **Full scan with explanations and fixes:** in Claude Code, type `/pi-checkup` (or ask "scan the Pi"). It costs

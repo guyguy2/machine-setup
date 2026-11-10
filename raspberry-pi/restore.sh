@@ -310,13 +310,14 @@ link_dir() {
 }
 
 if want links; then
-  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup command + skill, pi-backup, pi-restore-state, pi-alert"
+  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup and pi-up commands + skill, pi-backup, pi-restore-state, pi-alert"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
   link_dir "$here/services/openclaw_node" "$HOME/dev/openclaw_node"
   link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
   link_dir "$here/checkup/pi-checkup" "$HOME/.local/bin/pi-checkup"
+  link_dir "$here/checkup/pi-up" "$HOME/.local/bin/pi-up"
   link_dir "$here/checkup/skill" "$HOME/.claude/skills/pi-checkup"
   # The encrypted restic backup's user-side commands (README.md, "Nightly backup"); link_dir links files too.
   # pi-checkup's drift.links check runs this step as a dry run and warns about any link it would make.

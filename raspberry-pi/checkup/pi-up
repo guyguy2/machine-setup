@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# pi-up: a 5-second red/green "is the Pi up and working?" check. Read-only.
+# Usage: pi-up [-q]    -q: print only the red lines (and the verdict)
+# Exit 0 when everything is green, 1 when anything is red. For the deep scan (warnings, drift, updates) use pi-checkup.
+set -uo pipefail
+
+quiet=0
+[[ "${1:-}" == "-q" ]] && quiet=1
+
+if [[ -t 1 ]]; then G=$'\033[1;32m'; R=$'\033[1;31m'; N=$'\033[0m'; else G=''; R=''; N=''; fi
+red=0
+
+# green NAME  /  red NAME DETAIL
+green() { ((quiet)) || printf '%s●%s %s\n' "$G" "$N" "$1"; }
+red()   { printf '%s●%s %s: %s\n' "$R" "$N" "$1" "$2"; red=$((red + 1)); }
+# check NAME DETAIL-ON-FAILURE COMMAND...   (command's success = green; external commands carry their own timeout)
+check() {
+  local name=$1 detail=$2
+  shift 2
+  if "$@" >/dev/null 2>&1; then green "$name"; else red "$name" "$detail"; fi
+}
+unit_user() { timeout 5 systemctl --user is-active --quiet "$1"; }
+unit_sys()  { timeout 5 systemctl is-active --quiet "$1"; }
+
+# --- agents
+check "Hermes gateway (Telegram bot)" "hermes-gateway.service not active: systemctl --user restart hermes-gateway" unit_user hermes-gateway.service
+
+# --- network
+tailscale_ok() { timeout 5 tailscale status --json | python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if d["BackendState"]=="Running" and d["Self"]["Online"] else 1)'; }
+check "Tailscale connected" "not Running/online: tailscale status; sudo systemctl restart tailscaled" tailscale_ok
+check "Internet (HTTPS)" "no HTTPS to the internet: check router/Pi-hole" curl -fsS -o /dev/null -m4 https://example.com
+check "DNS resolves" "name lookup failed: check the pihole container" timeout 5 getent hosts example.com
+pihole_ok() { [[ "$(timeout 5 docker inspect -f '{{.State.Health.Status}}' pihole)" == healthy ]]; }
+check "Pi-hole container healthy" "docker ps / docker logs pihole" pihole_ok
+
+# --- shared browser (agent-lab's Chromium, DevTools on 9222)
+check "Shared browser service" "lab-chromium.service not active: systemctl --user restart lab-chromium" unit_user lab-chromium.service
+check "Shared browser answers (CDP :9222)" "service is up but DevTools doesn't answer: restart lab-chromium" curl -fsS -o /dev/null -m3 http://127.0.0.1:9222/json/version
+
+# --- the Pi's own services
+check "pi-status dashboard" "pi-status.service / :8080 not answering" curl -fsS -o /dev/null -m3 http://127.0.0.1:8080/
+check "DreamBase" "dreambase.service not active" unit_user dreambase.service
+check "REI" "rei.service not active" unit_user rei.service
+check "Docker daemon" "docker.service not active" unit_sys docker.service
+check "SSH" "ssh.service not active" unit_sys ssh.service
+no_failed() { [[ -z "$(systemctl --failed --no-legend; systemctl --user --failed --no-legend)" ]]; }
+check "No failed systemd units" "see: systemctl --failed; systemctl --user --failed" no_failed
+
+# --- hardware
+disk_ok() { (($(df --output=pcent / | tail -1 | tr -dc 0-9) < 90)); }
+check "Disk under 90%" "/ is $(df --output=pcent / | tail -1 | tr -d ' ') full" disk_ok
+temp_ok() { local t; t=$(vcgencmd measure_temp | tr -dc '0-9.'); awk -v t="$t" 'BEGIN { exit !(t < 80) }'; }
+check "SoC under 80°C" "running hot: $(vcgencmd measure_temp 2>/dev/null)" temp_ok
+mem_ok() { (($(awk '/MemAvailable/ {print $2}' /proc/meminfo) > 500000)); }
+check "RAM: 500 MB+ free" "low memory: free -h" mem_ok
+
+if ((red == 0)); then
+  printf '%sALL GREEN%s\n' "$G" "$N"
+else
+  printf '%s%d RED%s (details: pi-checkup)\n' "$R" "$red" "$N"
+  exit 1
+fi
