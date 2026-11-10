@@ -22,7 +22,7 @@ KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID
 ExecStop=-"/home/guy/.hermes/hermes-agent/.hermes/bin/hermes" "--run-module" "gateway.systemd_stop_mark"
 ExecStopPost=-"/home/guy/.hermes/hermes-agent/.hermes/bin/hermes" "--run-module" "gateway.cgroup_cleanup"
-TimeoutStopSec=70
+TimeoutStopSec=90
 StandardOutput=journal
 StandardError=journal
 
