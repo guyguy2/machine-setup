@@ -156,7 +156,7 @@ _upd_note() { print -r -- "$1" >> $_upd_log }
 
 # OpenClaw: npm install in ~/dev/openclaw_node (no source checkout is kept; read the docs in node_modules/openclaw)
 _upd_openclaw() {
-  # Resolve the symlink (into machine-setup/services): npm run through it writes ../ paths into package-lock.json
+  # Resolve the symlink (to ~/.local/share/openclaw_node): npm run through it writes ../ paths into package-lock.json
   local dir=$HOME/dev/openclaw_node cur latest
   dir=${dir:A}
   latest=$(npm view openclaw version 2>/dev/null) || { echo "could not fetch latest OpenClaw version"; return 1 }
@@ -345,6 +345,15 @@ _upd_restic() {
   esac
 }
 
+# pi-up (machine-setup/raspberry-pi/checkup): red/green "is everything still up?" after the updates. Services that were
+# just restarted may need a few seconds, so a red run gets one retry before it lands in the summary.
+_upd_pi_up() {
+  command -v pi-up >/dev/null || { echo "not installed"; return 0 }
+  pi-up && return 0
+  echo "retrying in 8 s (services may still be restarting)"; sleep 8
+  pi-up || _upd_note "pi-up shows red checks after the update: run pi-up (details: pi-checkup)"
+}
+
 # End-of-run summary: work out what is still needed to be fully up to date, list it, and offer to do each item.
 # Reads $_upd_log (failures noted by the steps) and $_upd_claude_before / $_upd_omz_before (versions at the start).
 _upd_summary() {
@@ -503,6 +512,8 @@ upd() {
   fi
 
   _upd_step "Nightly backup (restic): status and root-side copies"; _upd_restic
+
+  _upd_step "Health check (pi-up)"; _upd_pi_up
 
   _upd_summary
   rm -f $_upd_log
