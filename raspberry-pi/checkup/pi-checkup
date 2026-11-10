@@ -42,8 +42,8 @@ SECRET_FILES=(~/.hermes/.env ~/.hermes/auth.json ~/.openclaw/openclaw.json ~/dev
 # Pi-hole settings changed outside compose (pihole.toml "### CHANGED" without "(env)") that are expected: dns.hosts is
 # the main Pi's local DNS record (restore.sh's pihole step writes it, checked below); webserver.api.pwhash is the hash of
 # FTLCONF_webserver_api_password (.env); files.macvendor is the image's own.
-# Any other key lives only in etc-pihole/ (the Teleporter backup), so a rebuild would lose it: move it to compose.
-PIHOLE_TOML=~/dev/pihole/etc-pihole/pihole.toml
+# Any other key lives only in Pi-hole's data folder (the Teleporter backup), so a rebuild would lose it: move it to compose.
+PIHOLE_TOML=~/.local/share/pihole/pihole.toml
 PIHOLE_UI_KEYS=(dns.hosts webserver.api.pwhash files.macvendor)
 # Warnings the user has looked at and accepted, by key (shown as INFO "accepted"). Add keys here, not in your head.
 ACCEPTED=()

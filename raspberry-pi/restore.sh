@@ -310,11 +310,13 @@ link_dir() {
 }
 
 if want links; then
-  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,openclaw_node,hermes-proxy}, pi-checkup and pi-up commands + skill, pi-backup, pi-restore-state, pi-alert"
+  say "symlinks into this repo: ~/dev/{scripts,pi-status,pihole,hermes-proxy}, ~/dev/openclaw_node -> ~/.local/share/openclaw_node, pi-checkup and pi-up commands + skill, pi-backup, pi-restore-state, pi-alert"
   link_dir "$here/bin" "$HOME/dev/scripts"
   link_dir "$here/pi-status" "$HOME/dev/pi-status"
   link_dir "$here/services/pihole" "$HOME/dev/pihole"
-  link_dir "$here/services/openclaw_node" "$HOME/dev/openclaw_node"
+  # OpenClaw's npm project is local data, not in this public repo (R-047); upd/_upd_openclaw installs into it.
+  run mkdir -p "$HOME/.local/share/openclaw_node"
+  link_dir "$HOME/.local/share/openclaw_node" "$HOME/dev/openclaw_node"
   link_dir "$here/services/hermes-proxy" "$HOME/dev/hermes-proxy"
   link_dir "$here/checkup/pi-checkup" "$HOME/.local/bin/pi-checkup"
   link_dir "$here/checkup/pi-up" "$HOME/.local/bin/pi-up"
@@ -379,6 +381,7 @@ pi_dns_fallback() {
 if want pihole; then
   say "Pi-hole (docker compose in ~/dev/pihole; DNS on port 53, admin UI on 127.0.0.1:8081)"
   ph=$here/services/pihole
+  phdata=$HOME/.local/share/pihole  # /etc/pihole in the container; outside this public repo (R-047)
   if ! have docker-compose; then echo "  docker-compose not installed (run the apt step)"
   else
     if [[ ! -f $ph/.env ]]; then
@@ -387,9 +390,12 @@ if want pihole; then
         (umask 077; printf 'FTLCONF_webserver_api_password=%s\n' "$pw" > "$ph/.env"); unset pw
       fi
     fi
+    if [[ -f $ph/.env ]] && ! grep -q '^PIHOLE_DATA=' "$ph/.env" && would "add PIHOLE_DATA=$phdata to $ph/.env"; then
+      printf 'PIHOLE_DATA=%s\n' "$phdata" >> "$ph/.env"
+    fi
     if would "(cd $ph && sudo docker-compose up -d --wait)"; then (cd "$ph" && sudo docker-compose up -d --wait); fi
     if role_skips dreambase; then echo "  local DNS record: skipped (main only)"
-    else pihole_local_dns "$ph/etc-pihole/pihole.toml"; fi
+    else pihole_local_dns "$phdata/pihole.toml"; fi
   fi
   pi_dns_fallback
 fi

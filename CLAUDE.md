@@ -186,8 +186,8 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
   paths to the `dotfiles` list at the top of `save.sh`.
 - Folders symlinked from `~/dev` (edit them here, never keep a second copy): `bin/` (`~/dev/scripts`: Hermes,
   OpenClaw launchers), `pi-status/` (`~/dev/pi-status`), `services/pihole/` (`~/dev/pihole`: Pi-hole
-  docker compose; `.env` and `etc-pihole/` gitignored), `services/hermes-proxy/` (`~/dev/hermes-proxy`: Caddyfile that serves Hermes under `/hermes` on the tailnet), `services/openclaw_node/` (`~/dev/openclaw_node`: the npm
-  project `openclaw-gateway.service` runs from; `node_modules/` gitignored).
+  docker compose; `.env` gitignored), `services/hermes-proxy/` (`~/dev/hermes-proxy`: Caddyfile that serves Hermes under `/hermes` on the tailnet), and, outside the repo, `~/dev/openclaw_node` → `~/.local/share/openclaw_node` (the npm
+  project `openclaw-gateway.service` runs from; OpenClaw is on hold). Pi-hole's data is in `~/.local/share/pihole`.
 - `raspberry-pi/pi-status/` is the Pi's status web page (uv project, stdlib-only server, pytest + Playwright tests; see
   its README). It runs as the user unit `pi-status.service`, published over HTTPS by `tailscale serve --bg 8080`. The
   page doesn't poll and offers a Restart now button when its code on disk is newer than the running server. Run

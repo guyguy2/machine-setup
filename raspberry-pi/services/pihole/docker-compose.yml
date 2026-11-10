@@ -1,6 +1,6 @@
-# Pi-hole (DNS ad blocker). The whole config is here plus the admin password in .env (not in git;
-# restore.sh's pihole step asks for it and writes .env).
-# etc-pihole/ is runtime data Pi-hole rebuilds on first start (blocklist = Pi-hole's default StevenBlack list).
+# Pi-hole (DNS ad blocker). The whole config is here plus, in .env (not in git; restore.sh's pihole step writes it),
+# the admin password and PIHOLE_DATA, the folder for /etc/pihole (~/.local/share/pihole: kept out of this public repo).
+# That folder is runtime data Pi-hole rebuilds on first start (blocklist = Pi-hole's default StevenBlack list).
 # Admin UI: 127.0.0.1:8081, published on the tailnet at https://<pi>.<tailnet>.ts.net:8445/pihole/admin/
 services:
   pihole:
@@ -27,7 +27,7 @@ services:
       # refused the whole house (and this Pi, whose DNS goes via the router) at busy moments
       FTLCONF_dns_rateLimit_count: "5000"
     volumes:
-      - ./etc-pihole:/etc/pihole
+      - ${PIHOLE_DATA:?set PIHOLE_DATA in .env (restore.sh --only pihole)}:/etc/pihole
     cap_add:
       - NET_ADMIN
       - SYS_TIME

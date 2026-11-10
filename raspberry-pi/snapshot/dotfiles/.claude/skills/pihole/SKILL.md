@@ -9,7 +9,8 @@ Pi-hole runs as the Docker container `pihole`, not on the host, so there is no `
 `docker exec pihole ...` or the REST API.
 
 - Project dir: `~/dev/pihole`, a symlink to `~/dev/machine-setup/raspberry-pi/services/pihole` (`docker-compose.yml`,
-  `.env`, `.env.example`, `etc-pihole/` as the persistent volume). `.env` is gitignored.
+  `.env`, `.env.example`). `.env` is gitignored and holds the password and `PIHOLE_DATA`; the persistent volume
+  (`/etc/pihole`) is `~/.local/share/pihole`, outside the public repo.
 - Web UI/API: bound to `127.0.0.1:8081` (`/admin`, `/api`, API reference at `/api/docs`). The user reaches it from
   the Mac over Tailscale (`https://raspberrypi.<tailnet>.ts.net:8445/pihole/admin/`; get the name with `tailscale status --json | jq -r .Self.DNSName`) or an SSH tunnel.
 - DNS: port 53 tcp/udp on all interfaces.
@@ -69,10 +70,10 @@ docker exec pihole pihole-FTL --config dns.upstreams '["1.1.1.1","1.0.0.1"]'   #
 Any setting defined as an `FTLCONF_<section>_<key>` variable in `docker-compose.yml` or `.env` (currently
 `webserver_api_password` and `dns_listeningMode`) is read-only through the UI, API and CLI and is re-applied on every
 restart. Change those in the compose file/`.env` and run `docker compose up -d`. Everything else (upstreams,
-blocklists, allow/deny entries, groups, clients) can be changed live and is persisted in `etc-pihole/`.
+blocklists, allow/deny entries, groups, clients) can be changed live and is persisted in `~/.local/share/pihole`.
 
-If the user wants a live-changed setting to survive a container rebuild from scratch, `etc-pihole/` is the state
-that matters. Check whether it is backed up (machine-setup `save.sh`) before recreating or deleting the volume.
+If the user wants a live-changed setting to survive a container rebuild from scratch, `~/.local/share/pihole` is the state
+that matters. The nightly pi-backup keeps a Teleporter export of it; check that it's recent before recreating or deleting the volume.
 
 ## Safety
 
@@ -80,4 +81,4 @@ that matters. Check whether it is backed up (machine-setup `save.sh`) before rec
   changes affect every device on the network that uses this Pi-hole for DNS.
 - `docker compose up -d` recreates the container and DNS is briefly down (about 15 s until healthy). Warn first
   if the user may be mid-call or streaming.
-- Don't run `docker compose down -v`, delete `etc-pihole/`, or remove the container without asking.
+- Don't run `docker compose down -v`, delete `~/.local/share/pihole`, or remove the container without asking.

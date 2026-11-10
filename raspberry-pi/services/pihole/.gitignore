@@ -1,2 +1,2 @@
-etc-pihole/
+etc-pihole/  # the data folder until 2026-11-10; now PIHOLE_DATA (~/.local/share/pihole)
 .env

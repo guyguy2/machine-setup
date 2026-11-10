@@ -19,7 +19,7 @@ The newest file in `~/dev/agent-lab/docs/` says where the work stands.
 |---|---|
 | Docs (match the installed version) | `~/dev/openclaw_node/node_modules/openclaw/docs/` (Markdown). **Index: `docs/docs_map.md`** (every page's headings: grep it to find the page). Key pages: `tools/skills.md`, `tools/skills-config.md`, `tools/exec.md`, `concepts/system-prompt.md`, `concepts/agent-workspace.md`, `gateway/security/`, `cli/` |
 | Live docs | https://docs.openclaw.ai (also `openclaw docs <query>`, which searches them) |
-| Installed package | `~/dev/openclaw_node` (npm; `~/dev/openclaw_node` is a symlink into `~/dev/machine-setup/raspberry-pi/services/`). Bundled skills: `node_modules/openclaw/skills/`. Built JS: `node_modules/openclaw/dist/*.mjs` (grep it when the docs are silent) |
+| Installed package | `~/dev/openclaw_node` (npm; `~/dev/openclaw_node` is a symlink to `~/.local/share/openclaw_node`, outside any repo). Bundled skills: `node_modules/openclaw/skills/`. Built JS: `node_modules/openclaw/dist/*.mjs` (grep it when the docs are silent) |
 | Source checkout | none kept (deleted 2026-11-07). Docs and dist: `~/dev/openclaw_node/node_modules/openclaw/`; clone github.com/openclaw/openclaw at the matching tag if source is needed |
 | Binary | `~/dev/openclaw_node/node_modules/.bin/openclaw` (not on PATH) |
 | Config | `~/.openclaw/openclaw.json` (read/write with `openclaw config get|set|unset <path>`) |
