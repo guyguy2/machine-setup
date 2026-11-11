@@ -85,6 +85,13 @@ asks you to restart it: `systemctl --user restart pi-status`.
     uv run python screenshots.py        # PNGs of every tab (desktop + phone) in ./screenshots (not committed)
     pyright                             # type-check the Python (kept at 0 errors; install with sudo npm install -g pyright)
 
+The page is served with `Content-Security-Policy: require-trusted-types-for 'script'`, so the browser refuses
+`innerHTML`, `insertAdjacentHTML`, `eval` and the like: build DOM with `h()` (text only). In Playwright tests, give
+`wait_for_function` an arrow function (`"() => ..."`); a plain expression is run through `eval` and refused. Tests that
+fold groups or open `<details>` call `settle(page)` first, since those animate (Chrome). The colors are checked for
+contrast in every theme (`test_status_text_and_text_boxes_are_readable_in_every_theme`). Target browser: Chrome
+(Mac and Android); newer CSS that other browsers lack must degrade to a working page.
+
 JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/agents`, `/api/dashboards`, `/api/auth`, `/api/docker`,
 `/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/websites`, `/api/rei`, `/api/emails`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
 units in `AGENTS`), and `POST /api/emails/decide` `{"thread", "queue"}` (queue action, respond, review, delete or done),

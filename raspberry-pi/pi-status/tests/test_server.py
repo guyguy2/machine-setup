@@ -393,3 +393,11 @@ def test_posts_are_audited_without_their_text(base_url, fake_mail, controls):
     assert new[2]["path"] == "/api/emails/reason" and new[2]["thread"] == "t1"
     assert "private words" not in guard.audit_path().read_text()
     assert oct(guard.audit_path().stat().st_mode & 0o777) == "0o600"
+
+
+def test_page_enforces_trusted_types_and_json_does_not_need_it(base_url):
+    """The page builds its DOM from text only; this header makes the browser refuse innerHTML and friends outright."""
+    with urllib.request.urlopen(base_url + "/") as r:
+        assert r.headers["Content-Security-Policy"] == "require-trusted-types-for 'script'"
+    with urllib.request.urlopen(base_url + "/api/version") as r:
+        assert r.headers["Content-Security-Policy"] is None

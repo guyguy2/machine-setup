@@ -80,7 +80,8 @@
     -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
             mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; }
   .nav-group.folded button.nav-label::after { transform: rotate(-90deg); }
-  .nav-group.folded .nav-links { display: none; }
+  .nav-links { overflow: clip; overflow-clip-margin: 4px; transition: block-size .2s ease, visibility .2s; }
+  .nav-group.folded .nav-links { block-size: 0; visibility: hidden; }   /* hidden: out of the tab order and screen readers */
   button.nav-label .nav-badge { display: none; margin-left: 6px; }
   .nav-group.folded button.nav-label .nav-badge { display: inline-block; }
   nav a { display: block; padding: 9px 12px; border-radius: 8px; color: var(--text); text-decoration: none; }
@@ -128,7 +129,7 @@
   .strip-row .status { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; container: card / inline-size; }
   .grid .card { margin-bottom: 0; }
   .label { color: var(--muted); font-size: .8125rem; text-transform: uppercase; letter-spacing: .04em; }
   .value { font-size: 1.75rem; font-weight: 600; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
@@ -151,7 +152,17 @@
   .pill.info { background: var(--accent-bg); color: var(--accent); }
   .pill.question { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
 
-  .scroll { overflow-x: auto; }
+  /* a table's wrapper scrolls sideways when the table is wider than its card (focusable, so arrow keys scroll it); a soft
+     shadow marks each edge with more to see (scroll-state queries, Chrome; elsewhere no shadow) */
+  .scroll { overflow-x: auto; display: flex; container-type: scroll-state; }
+  .scroll > table { flex: none; }
+  .scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .edge { position: sticky; flex: none; width: 16px; z-index: 1; pointer-events: none; opacity: 0; transition: opacity .2s;
+          --edge: color-mix(in srgb, var(--text) 18%, transparent); }
+  .edge-start { left: 0; margin-right: -16px; background: linear-gradient(to right, var(--edge), transparent); }
+  .edge-end { right: 0; margin-left: -16px; background: linear-gradient(to left, var(--edge), transparent); }
+  @container scroll-state(scrollable: left) { .edge-start { opacity: 1; } }
+  @container scroll-state(scrollable: right) { .edge-end { opacity: 1; } }
   table { width: 100%; border-collapse: collapse; font-size: .875rem; }
   th { text-align: left; color: var(--muted); font-weight: 500; font-size: .75rem; text-transform: uppercase;
        letter-spacing: .04em; padding: 6px 10px 6px 0; white-space: nowrap; }
@@ -412,6 +423,13 @@
   [data-density=compact] h3 { margin-top: 14px; }
   [data-motion=reduce] *, [data-motion=reduce] *::before, [data-motion=reduce] *::after { transition: none !important; scroll-behavior: auto !important; }
   [data-motion=reduce] .spin { animation-duration: 3s; }
+  [data-motion=reduce] ::details-content { transition: none !important; }
+
+  /* <details> (More, Sign-ins, Prompt, Command) open and close smoothly to their natural height (Chrome) */
+  :root { interpolate-size: allow-keywords; }
+  details::details-content { block-size: 0; overflow: clip; overflow-clip-margin: 4px;
+                             transition: block-size .2s ease, content-visibility .2s allow-discrete; }
+  details[open]::details-content { block-size: auto; }
 
   /* ---------- theme: Neon (dark; cyan and hot pink, soft glows on what's active, text itself stays plain) ---------- */
   [data-theme=neon] {
@@ -440,6 +458,8 @@
   [data-theme=neon] .tp-side i.on, [data-theme=neon] .tp-bar::before { box-shadow: 0 0 6px var(--accent); }
   [data-theme=neon] .keys-help { box-shadow: 0 0 32px rgba(34, 228, 255, .18); }
   [data-theme=neon] kbd { border-color: rgba(34, 228, 255, .35); }
+  [data-theme=neon] { scrollbar-color: rgba(34, 228, 255, .45) transparent; scrollbar-width: thin; }
+  [data-theme=neon] ::selection { background: var(--accent); color: var(--bg); }
 
   /* ---------- theme: Terminal (dark; green phosphor, monospace, square corners) ---------- */
   [data-theme=terminal] {
@@ -452,6 +472,20 @@
   [data-theme=terminal] nav a, [data-theme=terminal] .queues a, [data-theme=terminal] .mail-all, [data-theme=terminal] .copy { border-radius: 3px; }
   [data-theme=terminal] nav a[aria-current="page"] { box-shadow: inset 3px 0 0 var(--accent); }
   [data-theme=terminal] h2::before { content: "> "; color: var(--accent); }
+  [data-theme=terminal] { scrollbar-color: #3d7a47 transparent; scrollbar-width: thin; }
+  [data-theme=terminal] ::selection { background: var(--accent); color: var(--bg); }   /* inverse video */
+
+  /* after the base table rules, so these win. A narrow card: each row is a block, its first cell the title and the others "label: value" lines */
+  @container card (width < 36rem) {
+    table, tbody, tr, td { display: block; }
+    thead { display: none; }
+    tbody tr { padding: 8px 0; border-top: 1px solid var(--track); }
+    tbody tr:first-child { border-top: 0; padding-top: 0; }
+    td, td.num { padding: 1px 0; border-top: 0; text-align: left; overflow-wrap: anywhere; }
+    td:first-child { font-weight: 600; }
+    td:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); font: .8125rem system-ui, -apple-system, sans-serif; }
+    .cmd .clamp { display: block; max-width: none; }
+  }
 
   /* phones: sidebar becomes a tab strip along the top */
   @media (max-width: 45em) {
@@ -474,7 +508,7 @@
     /* no folding on phones: the groups are already one or two rows */
     button.nav-label { pointer-events: none; }
     button.nav-label::after { display: none; }
-    .nav-group.folded .nav-links { display: flex; }
+    .nav-group.folded .nav-links { block-size: auto; visibility: visible; }
     .nav-group.folded button.nav-label .nav-badge { display: none; }
     .nav-links { flex-direction: row; flex-wrap: wrap; gap: 0; }
     nav a { white-space: nowrap; flex: 1 1 auto; padding: 9px 2px; text-align: center; justify-content: center; }
@@ -486,15 +520,6 @@
     .value { font-size: 1.5rem; }
     .lab-row, .lab-axis { grid-template-columns: 76px minmax(0, 1fr); }
     .lab-axis div:last-child { display: none; }
-    /* tables: each row is a block, its first cell the title and the others "label: value" lines */
-    table, tbody, tr, td { display: block; }
-    thead { display: none; }
-    tbody tr { padding: 8px 0; border-top: 1px solid var(--track); }
-    tbody tr:first-child { border-top: 0; padding-top: 0; }
-    td, td.num { padding: 1px 0; border-top: 0; text-align: left; overflow-wrap: anywhere; }
-    td:first-child { font-weight: 600; }
-    td:not(:first-child)::before { content: attr(data-label) ": "; color: var(--muted); font: .8125rem system-ui, -apple-system, sans-serif; }
-    .cmd .clamp { display: block; max-width: none; }
     /* emails: the queue column becomes wrapping chips above the pane */
     .mail { grid-template-columns: minmax(0, 1fr); }
     .queues { flex-direction: row; flex-wrap: wrap; gap: 6px; }
@@ -549,13 +574,16 @@ function dur(s) {
 const pill = (text, kind) => h("span", { class: "pill " + (kind || "") }, text);
 const empty = text => h("div", { class: "card empty" }, text);
 
-// On phones each row stacks into a block, its cells labelled from data-label (see the 720px media query).
-function table(cols, rows) {
+// In a narrow card each row stacks into a block, its cells labelled from data-label (see the card container query).
+// `label` names the table for screen readers; its wrapper is a focusable region so the arrow keys can scroll it.
+function table(cols, rows, label) {
   const cells = rows.map(r => cols.map(c => c.value(r)));
   // a column that is "–" in every row says nothing; `keep` ones stay anyway (the Lab scoreboard's agents with no runs)
   const shown = cols.map((c, i) => c.keep || !rows.length || cells.some(row => row[i] !== "–"));
   const pick = list => list.filter((_, i) => shown[i]);
-  return h("div", { class: "scroll" }, h("table", {},
+  return h("div", { class: "scroll", tabindex: "0", role: "region", "aria-label": label },
+    h("span", { class: "edge edge-start", "aria-hidden": "true" }),
+    h("table", {},
     h("thead", {}, h("tr", {}, pick(cols).map(c => h("th", { class: c.num ? "num" : "" }, c.label)))),
     h("tbody", {}, cells.map(row => h("tr", {}, pick(cols.map((c, i) => {
       const v = row[i];
@@ -564,7 +592,8 @@ function table(cols, rows) {
                    c.cmd ? h("div", { class: "clamp" }, v) : v);
       if (c.cmd) td.title = String(v);
       return td;
-    })))))));
+    })))))),
+    h("span", { class: "edge edge-end", "aria-hidden": "true" }));
 }
 
 // `what` names the thing for screen readers: "Copy <what>"
@@ -741,7 +770,7 @@ function network(n) {
       { label: "State", value: i => pill(i.state === "unknown" ? "up" : i.state, stateKind[i.state]) },  // tunnels report "unknown"
       { label: "Addresses", mono: true, value: i => i.addresses.join("  ") || "–" },
       { label: "MAC", mono: true, value: i => i.mac || "–" },
-    ], n.interfaces)),
+    ], n.interfaces, "Network interfaces")),
 
     h("h3", {}, `Tailscale peers (${(ts.peers || []).length})`),
     (ts.peers || []).length
@@ -751,7 +780,7 @@ function network(n) {
           { label: "IP", mono: true, value: p => p.ip },
           { label: "OS", value: p => p.os },
           { label: "Path", value: p => p.online ? p.path || "–" : p.last_seen ? "seen " + new Date(p.last_seen).toLocaleDateString() : "–" },
-        ], ts.peers))
+        ], ts.peers, "Tailscale peers"))
       : empty("No other machines on this tailnet."),
 
     h("h3", {}, "Logged-in sessions"),
@@ -761,7 +790,7 @@ function network(n) {
           { label: "Terminal", mono: true, value: s => s.tty },
           { label: "Since", nowrap: true, value: s => s.since },
           { label: "From", mono: true, value: s => s.origin },
-        ], n.sessions))
+        ], n.sessions, "Logged-in sessions"))
       : empty("No one is logged in."),
   ];
 }
@@ -785,7 +814,7 @@ function signIns(auth) {
         { label: "Status", value: a => pill(...AUTH_PILL[a.state] || [a.state, ""]) },
         { label: "Account", value: a => a.account || "–" },
         { label: "Details", value: a => a.detail || "–" },
-      ], auth.services),
+      ], auth.services, "Sign-ins"),
       h("div", { class: "sub", style: "margin-top:8px" }, "Local checks only; no tokens are shown."))),
   ];
 }
@@ -866,7 +895,7 @@ function agentCard(a, d) {
         { label: "Directory", mono: true, value: p => p.cwd },
         { label: "Listening", mono: true, value: p => p.ports.join(", ") || "–" },
         cmdCol,
-      ], ps)));
+      ], ps, `${a.name} processes`)));
 }
 
 // running ones first, stopped last
@@ -989,7 +1018,7 @@ function lab(d) {
           return r ? runLink(r, outcomePill(r.outcome), r.overall != null ? ` ${num(r.overall)}/5` : "",
                              mine.length > 1 ? h("span", { class: "sub" }, ` · ${mine.length} runs`) : "") : "–";
         } })),
-      ], ucs),
+      ], ucs, "Scoreboard"),
       h("div", { class: "sub", style: "margin-top:8px" }, "Latest run for each use case and agent. Click one to read its note.")),
 
     h("h3", {}, "How they compare"),
@@ -999,7 +1028,7 @@ function lab(d) {
     h("div", { class: "card" }, table([
       { label: "Average per run", value: m => m[1] },
       ...agentCols().map(c => ({ label: c.label, num: true, value: m => m[0] === "runs" ? ofAgent(c.id).length : num(mean(ofAgent(c.id).map(r => r[m[0]]))) })),
-    ], [["runs", "Runs"], ...LAB_MEASURES])),
+    ], [["runs", "Runs"], ...LAB_MEASURES], "Time and resources")),
 
     h("h3", {}, "My take"),
     h("div", { class: "grid" }, agents.map((a, i) => h("div", { class: "card" },
@@ -1015,7 +1044,7 @@ function lab(d) {
           { label: "Outcome", value: r => outcomePill(r.outcome) },
           { label: "Overall", num: true, value: r => r.overall == null ? "–" : num(r.overall) + "/5" },
           { label: "Minutes", num: true, value: r => num(r.duration_min) },
-        ], [...runs].reverse()))
+        ], [...runs].reverse(), "Runs"))
       : empty("No runs yet. Start one on the Pi with: bin/lab run UC-001 hermes"),
 
     h("h3", {}, `Use cases (${ucs.length})`),
@@ -1078,7 +1107,7 @@ function docker(d) {
       { label: "Image", mono: true, value: c => c.image },
       { label: "Status", value: c => c.status },
       { label: "Ports", mono: true, value: c => c.ports || "–" },
-    ], d.containers)),
+    ], d.containers, "Docker containers")),
   ];
 }
 
@@ -1089,7 +1118,7 @@ function services(s) {
       { label: "Unit", mono: true, value: r => r.unit },
       { label: "State", value: r => pill(r.active === "failed" ? "failed" : r.sub, r.active === "failed" ? "bad" : "ok") },
       { label: "Description", value: r => r.description },
-    ], rows)) : empty("None"),
+    ], rows, title)) : empty("None"),
   ];
   return [section("Your user services", s.user), section("System services", s.system)];
 }
@@ -1101,7 +1130,7 @@ function processes(d) {
   const seg = (id, label) => h("button", { "aria-pressed": String(procSort === id), onclick: () => { procSort = id; refresh(); } }, label);
   return [
     h("div", { class: "seg", role: "group", "aria-label": "Sort by" }, seg("cpu", "Top by CPU"), seg("mem", "Top by memory")),
-    h("div", { class: "card" }, table([...procCols, cmdCol], rows)),
+    h("div", { class: "card" }, table([...procCols, cmdCol], rows, "Processes")),
     h("div", { class: "sub" }, `${d.total} processes in total`),
   ];
 }
@@ -1115,7 +1144,7 @@ function ports(list) {
       { label: "Address", mono: true, value: p => p.address },
       { label: "Reachable from", value: p => pill(p.exposure, kind[p.exposure]) },
       { label: "Process", value: p => p.process ? `${p.process} (${p.pid})` : "–" },
-    ], list)),
+    ], list, "Listening ports")),
     h("div", { class: "sub" }, "Process names are only visible for your own processes; root-owned ones show –."),
   ];
 }
@@ -1743,7 +1772,8 @@ function clash(keys, id) {
 
 const go = id => { location.hash = "#" + id; };
 function stepTab(d) {
-  const i = TABS.indexOf(current);
+  // from the address, not `current`: a quick second key can arrive before hashchange has run route() for the first
+  const i = Math.max(0, TABS.findIndex(t => t.id === location.hash.slice(1).split("/")[0]));
   go(TABS[(i + d + TABS.length) % TABS.length].id);
 }
 function stepQueue(d) {
@@ -2023,9 +2053,15 @@ async function getJSON(url) {
   return data;
 }
 
+let shownView = null;
 function show(tab, out) {
+  const fresh = currentView !== shownView;
+  shownView = currentView;
   $("view").style.minHeight = "";
   $("view").replaceChildren(...[tab.sub ? [h("h2", {}, tab.title), subtabs(), out] : out].flat(Infinity).filter(Boolean));
+  // a new tab fades in (opacity and translate only, so it stays smooth); not on redraws, and not with Motion reduced
+  if (fresh && document.documentElement.dataset.motion !== "reduce")
+    $("view").animate([{ opacity: 0, translate: "0 6px" }, { opacity: 1, translate: "0 0" }], { duration: 180, easing: "ease-out" });
 }
 
 async function refresh() {

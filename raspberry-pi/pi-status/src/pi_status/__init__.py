@@ -36,6 +36,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if ctype.startswith("text/html"):
+            # Trusted Types: the browser refuses innerHTML and other raw-HTML sinks, so the page's rule (DOM built with
+            # textContent only, never markup from data) is enforced, not just followed.
+            self.send_header("Content-Security-Policy", "require-trusted-types-for 'script'")
         self.end_headers()
         self.wfile.write(body)
 

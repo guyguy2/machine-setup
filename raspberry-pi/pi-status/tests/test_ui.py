@@ -43,7 +43,7 @@ def test_tab_renders_without_errors(make_page, base_url, tab):
     open_tab(page, base_url, tab)
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == tab.split("/")[0]
     assert page.locator("#view h2").inner_text()
-    page.wait_for_function("document.getElementById('conn').textContent.startsWith('updated')", timeout=5000)
+    page.wait_for_function("() => document.getElementById('conn').textContent.startsWith('updated')", timeout=5000)
     assert page.errors == []
 
 
@@ -51,14 +51,14 @@ def test_nav_click_switches_tabs(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "overview")
     page.click("nav a[data-tab=agents]")
-    page.wait_for_function("document.querySelector('#view h2')?.textContent.includes('Agents')")
+    page.wait_for_function("() => document.querySelector('#view h2')?.textContent.includes('Agents')")
     assert page.url.endswith("#agents")
 
 
 def test_sidebar_hostname_loads_on_any_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "system/ports")
-    page.wait_for_function("document.getElementById('host').textContent !== ''")
+    page.wait_for_function("() => document.getElementById('host').textContent !== ''")
 
 
 def test_sidebar_is_on_the_left_on_desktop(make_page, base_url):
@@ -205,7 +205,7 @@ def test_process_sort_toggle(make_page, base_url):
     page.wait_for_selector("#view tbody tr")
     assert "cpuhog" in page.locator("#view tbody tr").first.inner_text()
     page.click("text=Top by memory")
-    page.wait_for_function("document.querySelector('#view tbody tr')?.textContent.includes('memhog')")
+    page.wait_for_function("() => document.querySelector('#view tbody tr')?.textContent.includes('memhog')")
 
 
 def test_api_failure_shows_unreachable(make_page, base_url):
@@ -213,7 +213,7 @@ def test_api_failure_shows_unreachable(make_page, base_url):
     page.route("**/api/ports", lambda r: r.fulfill(status=500, json={"error": "boom"}))
     open_tab_ports = f"{base_url}/#system/ports"
     page.goto(open_tab_ports)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('unreachable')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('unreachable')")
     assert "boom" in page.locator("#view").inner_text()
 
 
@@ -263,7 +263,7 @@ def test_version_is_bottom_left_of_the_sidebar(make_page, base_url):
     page = make_page(1100, 900)
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
     box, side = page.locator("#version").bounding_box(), page.locator(".side").bounding_box()
     assert box["x"] < 60 and box["x"] + box["width"] <= side["x"] + side["width"]
     assert box["y"] > 900 - 120, f"version is at y={box['y']}, not at the bottom of a 900px window"
@@ -274,7 +274,7 @@ def test_version_warns_when_server_is_stale(make_page, base_url):
     page = make_page()
     page.route("**/api/version", lambda r: r.fulfill(json={**VERSION, "stale": True, "label": "v2026-10-19 17:00 · f00ba42"}))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('newer code on disk')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('newer code on disk')")
     assert "restart" in page.locator("#version").inner_text()
     assert "false" not in page.locator("#version").inner_text()
 
@@ -283,7 +283,7 @@ def test_version_has_no_stale_warning_when_current(make_page, base_url):
     page = make_page()
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
     assert "restart" not in page.locator("#version").inner_text()
     assert "false" not in page.locator("#version").inner_text()
 
@@ -292,7 +292,7 @@ def test_version_visible_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
     assert page.locator("#version").is_visible()
     widths = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert widths[0] <= widths[1]
@@ -342,7 +342,7 @@ def test_no_restart_button_when_server_cannot_restart_itself(make_page, base_url
     page = make_page()
     page.route("**/api/version", lambda r: r.fulfill(json={**VERSION, "stale": True, "can_restart": False}))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('restart')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('restart')")
     assert page.locator("#version button").count() == 0
     assert "restart the server to update" in page.locator("#version").inner_text()
 
@@ -351,7 +351,7 @@ def test_no_restart_button_when_up_to_date(make_page, base_url):
     page = make_page()
     page.route("**/api/version", lambda r: r.fulfill(json={**VERSION, "can_restart": True}))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
     assert page.locator("#version button").count() == 0
 
 
@@ -367,7 +367,7 @@ def test_nothing_polls_in_the_background(make_page, base_url, tab):
     page.clock.install()
     seen = count_api_requests(page)
     open_tab(page, base_url, tab)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     before = list(seen)
     page.clock.run_for(10 * 60 * 1000)   # ten minutes pass in the page's own timers
     page.wait_for_timeout(300)
@@ -378,7 +378,7 @@ def test_each_tab_visit_fetches_once(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
     open_tab(page, base_url, "system/ports")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert seen.count("ports") == 1 and seen.count("version") == 1
 
 
@@ -386,10 +386,10 @@ def test_refresh_button_reloads_the_current_tab(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
     open_tab(page, base_url, "system/ports")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     seen.clear()
     page.click("#refresh")
-    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    page.wait_for_function("() => document.getElementById('refresh').textContent === 'Refresh'")
     assert seen.count("ports") == 1 and seen.count("version") == 1
     assert not page.locator("#refresh").is_disabled()
 
@@ -471,7 +471,7 @@ def test_lab_run_note_opens_and_goes_back(make_page, base_url):
     page = make_page()
     open_lab(page, base_url)
     page.locator("#view table").first.locator("a.cell").first.click()
-    page.wait_for_function("document.querySelector('#view h2')?.textContent.includes('on Hermes')")
+    page.wait_for_function("() => document.querySelector('#view h2')?.textContent.includes('on Hermes')")
     assert page.url.endswith("#lab/2026-10-20_UC-001_hermes.md")
     view = page.locator("#view")
     assert view.locator(".note h4").inner_text() == "What happened"
@@ -614,6 +614,7 @@ def test_agent_reference_details_are_under_more(make_page, base_url):
     assert "ssh -N -L 18789" not in claw.inner_text()       # collapsed by default
     assert "up 15m · 1.5% CPU · 400 MB" in claw.inner_text()  # the summary line stays visible
     claw.locator("summary", has_text="More").click()
+    settle(page)
     text = claw.inner_text()
     for expected in ["ssh -N -L 18789:localhost:18789 pi", "http://localhost:18789/", "openclaw-gateway.service", "127.0.0.1:18789"]:
         assert expected in text
@@ -628,6 +629,7 @@ def test_claude_code_has_one_row_per_session(make_page, base_url):
     assert "~/dev/pi-status" in rows.nth(0).inner_text() and "up 15m" in rows.nth(0).inner_text() and "400 MB" in rows.nth(0).inner_text()
     assert "claude --model=opus" not in rows.nth(0).inner_text()  # the full command is one click away
     rows.nth(0).locator("summary").click()
+    settle(page)
     assert "claude --model=opus" in rows.nth(0).inner_text()
 
 
@@ -700,7 +702,7 @@ def test_agent_cards_offer_stop_and_start(make_page, base_url):
     assert cards.filter(has_text="OpenClaw").locator(".service-btn").inner_text() == "Start"
     assert cards.filter(has_text="Claude Code").locator(".service-btn").count() == 0  # no service to control
     cards.filter(has_text="Hermes").locator(".service-btn").click()
-    page.wait_for_function("document.getElementById('conn').textContent.startsWith('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.startsWith('updated')")
     page.wait_for_timeout(300)
     assert posts == [(f"{base_url}/api/agents/hermes-dashboard.service/stop", "pi-status")]
     assert page.errors == []
@@ -891,7 +893,7 @@ def test_system_opens_on_docker(make_page, base_url):
     page.route("**/api/docker", lambda r: r.fulfill(json={"installed": True, "running": False, "containers": []}))
     seen = count_api_requests(page)
     open_tab(page, base_url, "system")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert subtab(page) == "Docker" and "isn't running" in page.locator("#view").inner_text()
     assert seen.count("docker") == 1
 
@@ -909,7 +911,7 @@ def test_old_hashes_redirect_to_system(make_page, base_url, old):
     page = make_page()
     seen = count_api_requests(page)
     page.goto(f"{base_url}/#{old}")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert page.url.endswith(f"#system/{old}")
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == "system"
     assert seen.count(old) == 1   # the redirect doesn't load the view twice
@@ -959,7 +961,7 @@ def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIG
     page.route("**/api/version", lambda r: r.fulfill(json=version))
     open_tab(page, base_url, "overview")
     page.wait_for_selector("#view .strip")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
 
 
 def attention(page):
@@ -1034,7 +1036,7 @@ def test_overview_survives_backup_endpoint_failing(make_page, base_url):
 def test_overview_attention_ignores_emails_not_set_up(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, mail=NOT_CONNECTED)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     page.wait_for_timeout(200)
     assert attention(page) == []
 
@@ -1099,7 +1101,7 @@ def test_overview_visit_fetches_each_api_once(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
     open_overview(page, base_url)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     for api in ["status", "agents", "auth", "services", "dashboards", "version"]:
         assert seen.count(api) == 1, (api, seen)
 
@@ -1173,7 +1175,7 @@ def test_version_shares_the_status_line_on_phone(make_page, base_url):
     page = make_page(*PHONE)
     page.route("**/api/version", lambda r: r.fulfill(json=VERSION))
     open_tab(page, base_url, "overview")
-    page.wait_for_function("document.getElementById('version').textContent.includes('a1b2c3d')")
+    page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
     app, conn, version, nav = (page.locator(s).bounding_box() for s in ["#app", "#conn", "#version", "#nav"])
     mid = lambda box: box["y"] + box["height"] / 2
     # two header lines: the version shares the status line, or the status line sits beside the title
@@ -1259,7 +1261,7 @@ GROUPS_JS = """[...document.querySelectorAll('nav .nav-group')].map(g =>
 
 def settled(page):
     """Wait for the sidebar's hostname and version: the phone header changes height when they arrive."""
-    page.wait_for_function("document.getElementById('host').textContent !== ''"
+    page.wait_for_function("() => document.getElementById('host').textContent !== ''"
                            " && document.getElementById('version').textContent !== ''")
 
 
@@ -1286,13 +1288,16 @@ def test_nav_groups_fold(make_page, base_url):
     pi, home = page.locator("nav button.nav-label").all()
     assert pi.get_attribute("aria-expanded") == "true" and visible() == NAV
     pi.click()   # folded: all its tabs hide, the open one too
+    settle(page)
     assert pi.get_attribute("aria-expanded") == "false" and visible() == ["Emails", "REI"]
     home.click()
+    settle(page)
     assert visible() == []
     page.reload()   # remembered across loads
     page.wait_for_selector("#view h2")
     assert visible() == []
     pi.click(); home.click()
+    settle(page)
     assert visible() == NAV
 
 
@@ -1304,6 +1309,7 @@ def test_folded_group_shows_the_badge_on_its_label(make_page, base_url):
     home = page.locator("nav button.nav-label").nth(1)
     assert not home.locator(".nav-badge").is_visible()   # only while folded
     home.click()
+    settle(page)
     assert not page.locator("nav a[data-tab=emails]").is_visible()
     assert home.locator(".nav-badge").inner_text() == "3" and home.inner_text().startswith("HOME")
     home.click()
@@ -1737,7 +1743,7 @@ def test_emails_new_sender_and_unsuggested_thread(make_page, base_url):
     open_emails(page, base_url, "emails/delete")
     assert cards(page).first.locator(".history").inner_text() == "new sender"
     page.click("#view .queues a[data-queue=inbox]")
-    page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
+    page.wait_for_function("() => document.querySelector('#view .mail-pane h3')?.textContent === 'Inbox'")
     card = cards(page).first
     assert card.locator(".suggest").count() == 0 and card.locator(".choice.primary, .choice.suggested").count() == 0
     assert card.locator(".choice").all_inner_texts() == ["Action", "Respond", "Review", "Delete", "No action", "Later"]
@@ -1818,10 +1824,10 @@ def test_emails_unknown_queue_falls_back_to_inbox(make_page, base_url):
 def test_emails_queue_click_switches_without_fetching(make_page, base_url):
     page = make_page()
     open_emails(page, base_url)
-    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    page.wait_for_function("() => document.getElementById('version').textContent !== ''")
     seen = count_api_requests(page)
     page.click("#view .queues a[data-queue=review]")
-    page.wait_for_function("document.querySelector('#view .mail-pane h3')?.textContent === 'Review'")
+    page.wait_for_function("() => document.querySelector('#view .mail-pane h3')?.textContent === 'Review'")
     assert page.url.endswith("#emails/review") and selected_queue(page).get_attribute("data-queue") == "review"
     assert cards(page).count() == 2
     assert seen == []
@@ -1847,12 +1853,12 @@ def test_emails_badge_and_title_on_another_tab(make_page, base_url):
     open_tab(page, base_url, "system/ports")
     page.wait_for_selector("nav a[data-tab=emails] .nav-badge")
     assert page.locator("nav a[data-tab=emails] .nav-badge").inner_text() == "3"
-    page.wait_for_function("document.title === '(3) Home Base · box'")
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.title === '(3) Home Base · box'")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert seen.count("emails") == 1
     seen.clear()
     page.click("#refresh")
-    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    page.wait_for_function("() => document.getElementById('refresh').textContent === 'Refresh'")
     assert seen.count("emails") == 1 and seen.count("ports") == 1
 
 
@@ -1860,12 +1866,12 @@ def test_emails_tab_fetches_once_and_badge_follows_it(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
     open_emails(page, base_url, data=mail_api(needs_you=0))
-    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    page.wait_for_function("() => document.getElementById('version').textContent !== ''")
     assert seen.count("emails") == 1
     assert page.locator("nav .nav-badge").count() == 0 and not page.title().startswith("(")
     seen.clear()
     page.click("#refresh")
-    page.wait_for_function("document.getElementById('refresh').textContent === 'Refresh'")
+    page.wait_for_function("() => document.getElementById('refresh').textContent === 'Refresh'")
     assert seen.count("emails") == 1
 
 
@@ -2012,7 +2018,7 @@ def test_rei_visit_fetches_its_api_once(make_page, base_url):
     page = make_page()
     seen = count_api_requests(page)
     open_rei(page, base_url)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert seen.count("rei") == 1
 
 
@@ -2034,7 +2040,7 @@ def test_rei_fits_phone(make_page, base_url, size):
 def test_old_routes_still_work(make_page, base_url, tab, data_tab, h2):
     page = make_page()
     open_tab(page, base_url, tab)
-    page.wait_for_function("document.getElementById('conn').textContent.includes('updated')")
+    page.wait_for_function("() => document.getElementById('conn').textContent.includes('updated')")
     assert page.locator("nav a[aria-current=page]").get_attribute("data-tab") == data_tab
     assert page.locator("nav a[aria-current=page]").count() == 1
     assert h2 in page.locator("#view h2").first.inner_text()
@@ -2043,10 +2049,10 @@ def test_old_routes_still_work(make_page, base_url, tab, data_tab, h2):
 def test_switching_from_emails_to_another_tab_fetches_only_that_tab(make_page, base_url):
     page = make_page()
     open_tab(page, base_url, "emails")
-    page.wait_for_function("document.getElementById('version').textContent !== ''")
+    page.wait_for_function("() => document.getElementById('version').textContent !== ''")
     seen = count_api_requests(page)
     page.click("nav a[data-tab=network]")
-    page.wait_for_function("document.querySelector('#view h2')?.textContent === 'Network'")
+    page.wait_for_function("() => document.querySelector('#view h2')?.textContent === 'Network'")
     assert seen == ["network"]
 
 
@@ -2067,7 +2073,7 @@ def test_sidebar_is_titled_home_base_and_names_the_pi(make_page, base_url):
     page.route("**/api/status", lambda r: r.fulfill(json=status()))
     page.route("**/api/emails", lambda r: r.fulfill(json=mail_api(needs_you=0)))   # no "(N)" in the title
     open_tab(page, base_url, "emails")
-    page.wait_for_function("document.getElementById('host').textContent !== ''")
+    page.wait_for_function("() => document.getElementById('host').textContent !== ''")
     assert page.locator("#app").inner_text() == "Home Base"
     assert page.locator("#host").inner_text() == "box"
     assert page.title() == "Home Base · box"
@@ -2127,7 +2133,7 @@ def test_emails_choice_says_what_it_did_where_the_card_was(make_page, base_url, 
     flash.locator(".reason .linkish").click()                               # Add a reason, right there
     flash.locator(".reason input").fill("paid already")
     flash.locator(".reason input").press("Enter")
-    page.wait_for_function("document.querySelector('#view .mail-flash .reason .said')")
+    page.wait_for_function("() => document.querySelector('#view .mail-flash .reason .said')")
     flash = page.locator("#view .mail-flash")
     assert flash.evaluate("e => e.previousElementSibling.dataset.thread") == SCHOOL
     assert abs(flash.evaluate("e => e.getBoundingClientRect().top") - top) < 2
@@ -2170,7 +2176,7 @@ def test_emails_choice_locks_the_card_with_a_spinner_while_it_runs(make_page, ba
     card(page, SCHOOL).locator(".spin").wait_for()
     assert all(b.is_disabled() for b in card(page, SCHOOL).locator("button").all())
     assert not card(page, WATER).locator(".choice[data-choice=review]").is_disabled()   # other cards stay usable
-    page.wait_for_function("true")
+    page.wait_for_function("() => true")
     held[0].continue_()
     page.locator("#view .mail-flash").wait_for()
     assert page.locator("#view .spin").count() == 0
@@ -2274,7 +2280,7 @@ def test_emails_no_action_needed_then_a_reason_from_the_flash(make_page, base_ur
     box = flash.locator(".reason input")
     box.fill("I declined;  he just said   thanks")
     box.press("Enter")
-    page.wait_for_function("document.querySelector('#view .mail-flash .reason .said')")
+    page.wait_for_function("() => document.querySelector('#view .mail-flash .reason .said')")
     assert page.locator("#view .mail-flash .reason .said").inner_text() == "Your reason: “I declined; he just said thanks”"
     assert fake_mail.calls() == [["decide", SCHOOL, "nar", "--via", "web", "--json"],
                                  ["reason", SCHOOL, "I declined; he just said thanks", "--via", "web", "--json"]]
@@ -2291,7 +2297,7 @@ def test_emails_reason_on_a_decided_card_and_escape_cancels(make_page, base_url,
     bank.locator(".reason .linkish").click()
     bank.locator(".reason input").fill("Statements: read and archive")
     bank.locator(".reason button.copy").click()
-    page.wait_for_function("document.querySelector('#view .reason .said')")
+    page.wait_for_function("() => document.querySelector('#view .reason .said')")
     assert card(page, BANK).locator(".reason .said").inner_text() == "Your reason: “Statements: read and archive”"
     assert card(page, SCHOOL).locator(".reason").count() == 0                  # only decided cards have one
 
@@ -2373,11 +2379,11 @@ def test_emails_redo_with_a_note_and_cancel_and_discard(make_page, base_url, fak
     assert messages == ["Replace your edits with a new draft?"] and fake_mail.calls() == []
     page.once("dialog", lambda d: d.accept())
     pat.get_by_role("button", name="Rewrite").click()
-    page.wait_for_function("document.querySelector('#view .draft textarea')?.value.startsWith('Hi Pat,')")
+    page.wait_for_function("() => document.querySelector('#view .draft textarea')?.value.startsWith('Hi Pat,')")
     assert "Changed here · Gmail still has the older version" in card(page, PAT).locator(".draft-head").inner_text()
     page.once("dialog", lambda d: (messages.append(d.message), d.accept()))
     card(page, PAT).get_by_role("button", name="Discard").click()
-    page.wait_for_function("!document.querySelector('#view .draft')")
+    page.wait_for_function("() => !document.querySelector('#view .draft')")
     assert messages[-1] == "Discard this draft here? The copy in Gmail Drafts stays there."
     assert [c[0] for c in fake_mail.calls()] == ["draft", "draft-drop"]
 
@@ -2415,10 +2421,10 @@ def test_emails_sync_now_shows_checking_then_redraws_when_done(make_page, base_u
     open_live_emails(page, base_url, "emails/review")
     fresh_line = page.locator("#view .page-head .mail-fresh")
     fresh_line.get_by_role("button", name="Sync now").click()
-    page.wait_for_function("document.querySelector('#view .mail-fresh').textContent.includes('Checking Gmail…')")
+    page.wait_for_function("() => document.querySelector('#view .mail-fresh').textContent.includes('Checking Gmail…')")
     assert running["started"] == 1 and fresh_line.locator(".spin").count() == 1
     running["now"] = False                                     # the run finishes; the page notices within seconds
-    page.wait_for_function("document.querySelector('#view .mail-fresh').textContent.startsWith('Gmail checked')",
+    page.wait_for_function("() => document.querySelector('#view .mail-fresh').textContent.startsWith('Gmail checked')",
                            timeout=10_000)
     assert page.locator("#view .page-head .mail-fresh button").inner_text() == "Sync now"
     assert page.errors == []
@@ -2486,10 +2492,9 @@ def test_emails_draft_box_grows_with_its_text_up_to_a_limit(make_page, base_url,
 
 
 CONTRAST_JS = """() => {
-  const box = document.createElement('div');
-  box.className = 'card';
-  box.innerHTML = '<span class="pill ok">ok</span><span class="pill warn">w</span><span class="pill bad">b</span>' +
-    '<span class="nav-badge">3</span><div class="alert">x</div><button class="copy danger">x</button><input class="mail-search">';
+  const box = h('div', { class: 'card' }, h('span', { class: 'pill ok' }, 'ok'), h('span', { class: 'pill warn' }, 'w'),
+    h('span', { class: 'pill bad' }, 'b'), h('span', { class: 'nav-badge' }, '3'), h('div', { class: 'alert' }, 'x'),
+    h('button', { class: 'copy danger' }, 'x'), h('input', { class: 'mail-search' }));   // no innerHTML: Trusted Types
   document.querySelector('#view').append(box);
   const cs = s => getComputedStyle(box.querySelector(s));
   const out = {card: getComputedStyle(box).backgroundColor, page: getComputedStyle(document.body).backgroundColor};
@@ -2536,3 +2541,119 @@ def test_status_text_and_text_boxes_are_readable_in_every_theme(make_page, base_
         assert contrast(over(fg, behind), behind) >= 4.5, (theme, sel, c[sel])
     field = rgba(c["field"])
     assert contrast(field, card) >= 3 and contrast(field, bg) >= 3, (theme, c["field"])
+
+
+# ---------- modern-web-guidance, round 2: Trusted Types, table regions, scroll shadows, theme scrollbars, motion ----------
+
+def settle(page):
+    """Wait for transitions and animations to finish (folds, the tab fade); endless ones like the spinner don't count.
+    A <details> opening isn't listed in getAnimations (Chrome), so give its 0.2s a moment too."""
+    page.wait_for_function("() => document.getAnimations().every(a => a.effect?.getComputedTiming().iterations === Infinity)")
+    page.wait_for_timeout(220)
+
+
+def test_raw_html_is_refused_by_trusted_types(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    error = page.evaluate("() => { try { document.body.insertAdjacentHTML('beforeend', '<b>x</b>'); return ''; } catch (e) { return e.name; } }")
+    assert error == "TypeError"
+    page.errors.clear()   # Chrome logs the refusal it just made; from here on the page itself must cause none
+    for tab in ["agents", "lab", "network", "system/processes", "emails", "settings"]:   # the page itself never needs raw HTML
+        open_tab(page, base_url, tab)
+    assert not [e for e in page.errors if "TrustedHTML" in e or "Trusted Type" in e], page.errors
+
+
+def test_tables_are_named_keyboard_scrollable_regions(make_page, base_url):
+    page = make_page(760, 900)
+    page.route("**/api/processes", lambda r: r.fulfill(json={"total": 1, "processes": [
+        {"pid": 1, "cpu": 1.0, "rss": 2**20, "age_s": 60, "user": "guy", "cmd": "x " * 400}]}))
+    open_tab(page, base_url, "system/processes")
+    region = page.locator("#view .scroll").first
+    assert region.get_attribute("role") == "region" and region.get_attribute("aria-label") == "Processes"
+    assert region.get_attribute("tabindex") == "0"
+
+
+def test_tables_stack_by_their_card_width(make_page, base_url):
+    stacked = "getComputedStyle(document.querySelector('#view thead')).display"
+    wide = make_page(1280, 900)
+    open_tab(wide, base_url, "system/ports")
+    assert wide.evaluate(stacked) != "none"            # a wide card: a normal table
+    narrow = make_page(800, 900)                        # desktop layout, but the card is under 36rem
+    open_tab(narrow, base_url, "system/ports")
+    assert narrow.evaluate("getComputedStyle(document.querySelector('.side')).position") == "sticky"
+    assert narrow.evaluate(stacked) == "none"           # each row a block
+    cell = "getComputedStyle(document.querySelector('#view tbody td.num'))"
+    assert narrow.evaluate(f"[{cell}.textAlign, {cell}.borderTopWidth]") == ["left", "0px"]   # the stacked rules win
+
+
+def test_scroll_shadow_marks_the_edge_with_more_to_see(make_page, base_url):
+    page = make_page(1280, 900)
+    wide = [{"name": "eth0", "state": "up", "addresses": ["fd7a:115c:a1e0::" + "abcd:" * 40 + "1/128"], "mac": "aa:bb"}]
+    page.route("**/api/network", lambda r: r.fulfill(json={**NETWORK, "interfaces": wide}))
+    open_tab(page, base_url, "network")
+    scroller = page.locator("#view .scroll").first
+    assert scroller.evaluate("e => e.scrollWidth > e.clientWidth")
+    opacity = "e => [...e.querySelectorAll(':scope > .edge')].map(x => getComputedStyle(x).opacity)"
+    settle(page)
+    assert scroller.evaluate(opacity) == ["0", "1"]       # at the start: only the right edge has more
+    scroller.focus()
+    for _ in range(5):
+        page.keyboard.press("ArrowRight")                 # focusable, so the arrow keys scroll it
+    page.wait_for_function("e => e.scrollLeft > 0", arg=scroller.element_handle())
+    settle(page)
+    assert scroller.evaluate(opacity)[0] == "1"
+
+
+@pytest.mark.parametrize("theme", ["neon", "terminal"])
+def test_neon_and_terminal_theme_the_scrollbars_and_selection(make_page, base_url, theme):
+    page = make_page()
+    set_prefs(page, base_url, {"theme": theme})
+    root = page.evaluate("[getComputedStyle(document.documentElement).scrollbarColor, getComputedStyle(document.documentElement).scrollbarWidth]")
+    assert root[0] != "auto" and root[1] == "thin"
+    sel = page.evaluate("[getComputedStyle(document.body, '::selection').backgroundColor, getComputedStyle(document.body).backgroundColor]")
+    assert sel[0] not in ("rgba(0, 0, 0, 0)", sel[1])
+
+
+def test_classic_keeps_the_native_scrollbars(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    assert page.evaluate("getComputedStyle(document.documentElement).scrollbarColor") == "auto"
+
+
+def count_transitions(page, prop):
+    # Chrome reports a block-size transition by its physical name, height
+    names = {"block-size": ["block-size", "height"]}.get(prop, [prop])
+    return page.evaluate("ns => document.getAnimations().filter(a => ns.includes(a.transitionProperty)).length", names)
+
+
+@pytest.mark.parametrize("motion, moves", [("full", True), ("reduce", False)])
+def test_folds_and_details_animate_unless_motion_is_reduced(make_page, base_url, motion, moves):
+    page = make_page()
+    set_prefs(page, base_url, {"motion": motion}, tab="agents")
+    settle(page)
+    page.locator("nav button.nav-label").first.click()
+    assert (count_transitions(page, "block-size") > 0) == moves     # the Pi group folding
+    settle(page)
+    assert not page.locator("nav a[data-tab=overview]").is_visible()
+    # a <details> opening (Chrome doesn't list ::details-content transitions in getAnimations, so measure it part-way)
+    early, final = page.evaluate("""async () => { const d = document.querySelector('#view details');
+      const h = () => parseFloat(getComputedStyle(d, '::details-content').blockSize);
+      d.querySelector('summary').click();
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const early = h(); await new Promise(r => setTimeout(r, 400)); return [early, h()]; }""")
+    assert final > 0 and (early < final) == moves
+    assert page.locator("#view details").first.get_attribute("open") == ""
+
+
+@pytest.mark.parametrize("motion, fades", [("full", 1), ("reduce", 0)])
+def test_a_new_tab_fades_in_but_a_redraw_does_not(make_page, base_url, motion, fades):
+    page = make_page()
+    set_prefs(page, base_url, {"motion": motion})
+    page.evaluate("""() => { window.fades = 0; const animate = Element.prototype.animate;
+      Element.prototype.animate = function (...a) { if (this.id === 'view') window.fades++; return animate.apply(this, a); }; }""")
+    page.click("nav a[data-tab=network]")
+    page.wait_for_selector("#view h2:text('Network')")
+    assert page.evaluate("window.fades") == fades
+    page.click("#refresh")
+    page.wait_for_function("() => document.querySelector('#refresh').textContent === 'Refresh'")
+    assert page.evaluate("window.fades") == fades      # same tab, redrawn: no fade
