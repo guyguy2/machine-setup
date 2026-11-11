@@ -2440,3 +2440,99 @@ def test_emails_no_sync_now_when_not_connected(make_page, base_url):
     page = make_page()
     open_emails(page, base_url, data=NOT_CONNECTED)
     assert page.locator("#view .mail-fresh button").count() == 0
+
+
+# ---------- modern-web-guidance follow-ups: system motion, light dismiss, growing draft box, contrast ----------
+
+@pytest.mark.parametrize("reduced, effective", [("reduce", "reduce"), ("no-preference", "full")])
+def test_motion_follows_the_system_until_chosen(browser, base_url, reduced, effective):
+    ctx = browser.new_context(reduced_motion=reduced)
+    page = ctx.new_page()
+    open_tab(page, base_url, "settings")
+    assert page.evaluate("document.documentElement.dataset.motion") == effective
+    assert page.locator("[data-pref=motion] button[aria-pressed=true]").inner_text() == "System"
+    page.click("[data-pref=motion] button[data-value=full]")   # an explicit choice wins over the system
+    assert page.evaluate("document.documentElement.dataset.motion") == "full"
+    ctx.close()
+
+
+def test_shortcut_help_closes_on_a_click_outside(make_page, base_url):
+    page = make_page()
+    open_tab(page, base_url, "overview")
+    press(page, "Shift+Slash")
+    help = page.locator("#keys-help")
+    assert help.is_visible()
+    page.mouse.click(5, 5)   # the backdrop
+    assert not help.is_visible()
+
+
+def test_emails_draft_box_grows_with_its_text_up_to_a_limit(make_page, base_url, fake_mail):
+    page = make_page()
+    open_live_emails(page, base_url, "emails/respond")
+    card(page, SAM).get_by_role("button", name="✎ Draft a reply").click()
+    card(page, SAM).locator(".draft-ask input").press("Enter")
+    area = card(page, SAM).locator(".draft textarea")
+    area.wait_for()
+    height = "e => e.getBoundingClientRect().height"
+    area.fill("one line")
+    short = area.evaluate(height)
+    area.fill("line\n" * 10)
+    taller = area.evaluate(height)
+    area.fill("line\n" * 40)
+    capped = area.evaluate(height)
+    assert short < taller < capped
+    assert area.evaluate("e => e.scrollHeight > e.clientHeight")   # past 14 lines it scrolls instead
+    assert page.errors == []
+
+
+CONTRAST_JS = """() => {
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.innerHTML = '<span class="pill ok">ok</span><span class="pill warn">w</span><span class="pill bad">b</span>' +
+    '<span class="nav-badge">3</span><div class="alert">x</div><button class="copy danger">x</button><input class="mail-search">';
+  document.querySelector('#view').append(box);
+  const cs = s => getComputedStyle(box.querySelector(s));
+  const out = {card: getComputedStyle(box).backgroundColor, page: getComputedStyle(document.body).backgroundColor};
+  for (const s of ['.pill.ok', '.pill.warn', '.pill.bad', '.nav-badge', '.alert', '.copy.danger'])
+    out[s] = [cs(s).color, cs(s).backgroundColor];
+  out.field = cs('.mail-search').borderTopColor;
+  return out;
+}"""
+
+
+def rgba(css):
+    m = re.fullmatch(r"color\(srgb ([-\d.e]+) ([-\d.e]+) ([-\d.e]+)(?: / ([\d.]+))?\)", css)
+    if m:
+        return [float(x) * 255 for x in m.groups()[:3]] + [float(m[4] or 1)]
+    m = re.fullmatch(r"rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)", css)
+    assert m, css
+    return [float(x) for x in m.groups()[:3]] + [float(m[4] or 1)]
+
+
+def over(fg, bg):
+    a = fg[3]
+    return [f * a + b * (1 - a) for f, b in zip(fg[:3], bg[:3])] + [1]
+
+
+def contrast(a, b):
+    def lum(c):
+        c = [x / 255 for x in c[:3]]
+        c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    hi, lo = sorted([lum(a), lum(b)], reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("theme", ["light", "dark", "neon", "terminal"])
+def test_status_text_and_text_boxes_are_readable_in_every_theme(make_page, base_url, theme):
+    """WCAG: 4.5:1 for small text (pills, badge, alert, danger button), 3:1 for a text box's border."""
+    page = make_page()
+    set_prefs(page, base_url, {"theme": theme})
+    c = page.evaluate(CONTRAST_JS)
+    card, bg = rgba(c["card"]), rgba(c["page"])
+    for sel in [".pill.ok", ".pill.warn", ".pill.bad", ".nav-badge", ".alert", ".copy.danger"]:
+        fg, back = (rgba(x) for x in c[sel])
+        behind = over(back, card)
+        assert contrast(over(fg, behind), behind) >= 4.5, (theme, sel, c[sel])
+    field = rgba(c["field"])
+    assert contrast(field, card) >= 3 and contrast(field, bg) >= 3, (theme, c["field"])

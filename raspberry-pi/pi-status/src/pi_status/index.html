@@ -10,8 +10,9 @@
   // page paints, so the theme, text size and density never flash. The Settings tab edits `prefs` through savePrefs().
   const SETTINGS_KEY = "pi-status.settings";
   const THEME_MODES = { system: null, light: "light", dark: "dark", neon: "dark", terminal: "dark" };
-  const PREF_CHOICES = { text: ["small", "default", "large", "larger"], density: ["comfortable", "compact"], motion: ["full", "reduce"] };
+  const PREF_CHOICES = { text: ["small", "default", "large", "larger"], density: ["comfortable", "compact"], motion: ["system", "full", "reduce"] };
   const systemDark = matchMedia("(prefers-color-scheme: dark)");
+  const systemReduce = matchMedia("(prefers-reduced-motion: reduce)");
   let prefs = {};
   try { prefs = JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch {}
   if (typeof prefs !== "object" || Array.isArray(prefs)) prefs = {};
@@ -22,6 +23,7 @@
     r.theme = t;
     r.mode = THEME_MODES[t] || (systemDark.matches ? "dark" : "light");
     for (const k in PREF_CHOICES) r[k] = pref(k);
+    if (r.motion === "system") r.motion = systemReduce.matches ? "reduce" : "full";  // like the theme: what's in effect
   }
   function savePrefs(change) {
     Object.assign(prefs, change);
@@ -31,6 +33,7 @@
   }
   applyPrefs();
   systemDark.addEventListener("change", applyPrefs);
+  systemReduce.addEventListener("change", applyPrefs);
 </script>
 <style>
   /* data-mode (light/dark) and data-theme on <html> are set by the script below from Settings; "system" follows the OS.
@@ -39,17 +42,24 @@
     color-scheme: light;
     --bg: #f5f5f7; --card: #fff; --text: #1d1d1f; --muted: #6e6e73; --track: #e5e5ea;
     --ok: #1f9d55; --warn: #d97706; --bad: #dc2626; --accent: #2563eb; --accent-bg: #e8f0fe;
+    /* status colors as text (pills, warnings): darker than the dots and bars so small text reaches 4.5:1 */
+    --ok-text: #137036; --warn-text: #a14a0b; --bad-text: #b91c1c;
+    --on-bad: #fff;       /* text on a solid --bad background (alert, badge, danger button) */
+    --field: #86868b;     /* text box borders: 3:1 against the card and the page, so the box is visible */
   }
   [data-mode=dark] { color-scheme: dark; --bg: #111113; --card: #1c1c1f; --text: #f2f2f4; --muted: #9a9aa2; --track: #2c2c30;
-            --accent: #60a5fa; --accent-bg: #1e2a44; --ok: #34d399; --warn: #fbbf24; --bad: #f87171; }
+            --accent: #60a5fa; --accent-bg: #1e2a44; --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+            --ok-text: var(--ok); --warn-text: var(--warn); --bad-text: var(--bad); --on-bad: var(--card); --field: #76767e; }
   * { box-sizing: border-box; }
-  html { font-size: 16px; }
-  [data-text=small] { font-size: 14px; } [data-text=large] { font-size: 18px; } [data-text=larger] { font-size: 20px; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.4 system-ui, -apple-system, sans-serif; }
+  /* Text size scales the browser's own default (so its font-size setting still counts); never a fixed px root */
+  [data-text=small] { font-size: 87.5%; } [data-text=large] { font-size: 112.5%; } [data-text=larger] { font-size: 125%; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.4 system-ui, -apple-system, sans-serif;
+         accent-color: var(--accent); }  /* checkboxes and radios in the theme's color */
+  h2, h3, h4 { text-wrap: balance; }
 
   /* layout: sidebar on the left, tabs at its top */
-  .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100vh; }
-  .side { position: sticky; top: 0; align-self: start; height: 100vh; padding: 16px 12px; overflow-y: auto;
+  .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: 100dvh; }
+  .side { position: sticky; top: 0; align-self: start; height: 100dvh; padding: 16px 12px; overflow-y: auto;
           display: flex; flex-direction: column;
           background: var(--card); border-right: 1px solid var(--track); }
   .brand { padding: 0 8px 12px; }
@@ -95,7 +105,7 @@
   nav a[data-tab=rei] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z'/%3E%3Cpath d='M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2'/%3E%3Cpath d='M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2'/%3E%3Cpath d='M10 6h4'/%3E%3Cpath d='M10 10h4'/%3E%3Cpath d='M10 14h4'/%3E%3Cpath d='M10 18h4'/%3E%3C/svg%3E"); }
   nav a .nav-badge { margin-left: -2px; }
   .version { margin-top: auto; padding: 12px 8px 0; font: .75rem/1.4 ui-monospace, "SF Mono", Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
-  .version .stale { display: block; color: var(--warn); font-weight: 600; }
+  .version .stale { display: block; color: var(--warn-text); font-weight: 600; }
   .version .copy { margin-top: 6px; font-size: .75rem; }
   .brand .copy { margin-top: 8px; }
   .content { padding: 16px 24px 32px; max-width: 1000px; width: 100%; }
@@ -128,16 +138,16 @@
   .bar > i.warn { background: var(--warn); } .bar > i.bad { background: var(--bad); }
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
   dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
-  .alert { background: var(--bad); color: #fff; border-radius: 12px; padding: 10px 16px; margin-bottom: 12px; }
+  .alert { background: var(--bad); color: var(--on-bad); border-radius: 12px; padding: 10px 16px; margin-bottom: 12px; }
   .empty { color: var(--muted); }
 
   .card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
   .card-head h4 { font-size: 1.0625rem; margin: 0; }
   .pill { display: inline-block; padding: 1px 9px; border-radius: 99px; font-size: .75rem; font-weight: 600;
           background: var(--track); color: var(--muted); white-space: nowrap; }
-  .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
-  .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-  .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .pill.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok-text); }
+  .pill.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn-text); }
+  .pill.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad-text); }
   .pill.info { background: var(--accent-bg); color: var(--accent); }
   .pill.question { background: color-mix(in srgb, var(--teal) 18%, transparent); color: var(--teal); }
 
@@ -203,7 +213,7 @@
   a.cell:hover { text-decoration: underline; }
   details summary { cursor: pointer; color: var(--muted); font-size: .875rem; margin-top: 6px; }
   .note h4 { font-size: .9375rem; margin: 16px 0 6px; } .note h4:first-child { margin-top: 0; }
-  .note p { margin: 0 0 8px; } .note ul, .note ol { margin: 0 0 8px; padding-left: 22px; }
+  .note p { margin: 0 0 8px; max-width: 75ch; text-wrap: pretty; } .note ul, .note ol { margin: 0 0 8px; padding-left: 22px; }
   .note pre, .prompt { margin: 0 0 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .note code { background: var(--bg); padding: 0 4px; border-radius: 4px; }
 
@@ -213,7 +223,7 @@
   .mail { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 12px; align-items: start; }
   .mail > .card { margin-bottom: 0; }
   .mail-side { padding: 12px; }
-  .mail-search { width: 100%; font: inherit; font-size: .875rem; padding: 6px 10px; border: 1px solid var(--track);
+  .mail-search { width: 100%; font: inherit; font-size: .875rem; padding: 6px 10px; border: 1px solid var(--field);
                  border-radius: 8px; background: var(--bg); color: var(--text); margin-bottom: 10px; }
   .mail-search:disabled { color: var(--muted); cursor: not-allowed; }
   .page-head { display: flex; align-items: baseline; gap: 4px 14px; flex-wrap: wrap; margin: 0 0 12px; }
@@ -266,7 +276,7 @@
   .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-size: .6875rem; font-weight: 600;
          background: var(--track); color: var(--muted); vertical-align: 1px; white-space: nowrap; }
   .tag.claude { background: color-mix(in srgb, var(--s4) 18%, transparent); color: var(--s4); }
-  .thread .waiting.overdue { color: var(--warn); font-weight: 600; }
+  .thread .waiting.overdue { color: var(--warn-text); font-weight: 600; }
   .thread .choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
   .choice:disabled { cursor: not-allowed; opacity: .6; }
   .choice.primary { background: var(--accent); border-color: var(--accent); color: var(--card); }  /* your choice */
@@ -274,10 +284,10 @@
   .choice.suggested .hint { margin-left: 6px; font-size: .6875rem; font-weight: 500; opacity: .8; }
   .gmail { margin-left: auto; text-decoration: none; display: inline-block; text-align: center; }
   .choice:focus-visible, .undo:focus-visible, .danger:focus-visible, .gmail:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .thread .decided { color: var(--ok); font-weight: 600; }
+  .thread .decided { color: var(--ok-text); font-weight: 600; }
   .reason { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .875rem; }
   .reason .said { color: var(--muted); font-style: italic; }
-  .reason input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border: 1px solid var(--track); border-radius: 6px;
+  .reason input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border: 1px solid var(--field); border-radius: 6px;
                   background: var(--bg); color: var(--text); font: inherit; }
   .linkish { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: .875rem; cursor: pointer; }
   .linkish:hover { text-decoration: underline; }
@@ -290,14 +300,15 @@
   .draft-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: .875rem; }
   .draft-head b { font-weight: 600; }
   .draft-head .status { color: var(--muted); }
-  .draft-head .status.ok { color: var(--ok); }
-  .draft-head .status.warn { color: var(--warn); }
-  .draft textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--track); border-radius: 6px;
-                    background: var(--bg); color: var(--text); font: inherit; font-size: .9375rem; line-height: 1.45; resize: vertical; }
+  .draft-head .status.ok { color: var(--ok-text); }
+  .draft-head .status.warn { color: var(--warn-text); }
+  .draft textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--field); border-radius: 6px;
+                    background: var(--bg); color: var(--text); font: inherit; font-size: .9375rem; line-height: 1.45; resize: vertical;
+                    field-sizing: content; min-block-size: calc(4lh + 18px); max-block-size: calc(14lh + 18px); }
   .draft textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .draft-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .draft-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: .875rem; }
-  .draft-ask input { flex: 1 1 260px; min-width: 0; padding: 4px 8px; border: 1px solid var(--track); border-radius: 6px;
+  .draft-ask input { flex: 1 1 260px; min-width: 0; padding: 4px 8px; border: 1px solid var(--field); border-radius: 6px;
                      background: var(--bg); color: var(--text); font: inherit; }
   .draft-ask .wait { color: var(--muted); }
   .act-error { margin-top: 8px; padding: 6px 8px; border-radius: 8px; font-size: .875rem;
@@ -307,7 +318,7 @@
                 background: color-mix(in srgb, var(--ok) 14%, transparent); font-size: .875rem; overflow-wrap: anywhere; }
   .mail-flash:focus { outline: none; }
   .mail-trash, .mail-accept { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-  .copy.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+  .copy.danger { background: var(--bad); border-color: var(--bad); color: var(--on-bad); font-weight: 600; }
   .copy.danger:hover { filter: brightness(.92); }
   .copy.accept { background: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
   .copy.accept:hover { filter: brightness(.92); }
@@ -324,7 +335,7 @@
   .note-card h4 { margin: 0; font-size: 1rem; }
   .note-card p { margin: 4px 0 0; }
   .nav-badge { display: inline-block; margin-left: 6px; min-width: 1.5em; padding: 0 5px; border-radius: 99px; background: var(--bad);
-               color: #fff; font-size: .6875rem; font-weight: 700; line-height: 1.5; text-align: center; vertical-align: 1px; }
+               color: var(--on-bad); font-size: .6875rem; font-weight: 700; line-height: 1.5; text-align: center; vertical-align: 1px; }
 
   /* rei (launcher for its own dashboard app) */
   .rei dl { margin: 10px 0 4px; }
@@ -366,12 +377,12 @@
   .set-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 10px 0; }
   .set-row .seg { margin: 0; }
   .set-label { font-weight: 600; }
-  .set-select, .key-input, .site-input { font: inherit; font-size: .875rem; padding: 4px 8px; border: 1px solid var(--track);
+  .set-select, .key-input, .site-input { font: inherit; font-size: .875rem; padding: 4px 8px; border: 1px solid var(--field);
                                         border-radius: 6px; background: var(--bg); color: var(--text); }
   .key-input { width: 6.5em; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
   .site-input { width: 100%; min-width: 7em; }
   .key-input[aria-invalid=true] { border-color: var(--bad); }
-  .key-err { display: block; color: var(--bad); font-size: .8125rem; }
+  .key-err { display: block; color: var(--bad-text); font-size: .8125rem; }
   .set-check { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
   .keys-table td { vertical-align: middle; }
   .keys-table td.on { width: 2em; }
@@ -407,7 +418,7 @@
     --bg: #07060d; --card: #100e1b; --text: #ece8ff; --muted: #8f89b8; --track: #262041;
     --accent: #22e4ff; --accent-bg: rgba(34, 228, 255, .10); --ok: #3dff9a; --warn: #ffd23f; --bad: #ff3d81;
     --orange: #ff8f3d; --teal: #2ef2d0; --s1: #22e4ff; --s2: #ff3d81; --s3: #3dff9a; --s4: #b26bff;
-    --glow: rgba(34, 228, 255, .35); --glow-pink: rgba(255, 61, 129, .45);
+    --glow: rgba(34, 228, 255, .35); --glow-pink: rgba(255, 61, 129, .45); --field: #6a63a0;
   }
   :root[data-theme=neon] body { background: radial-gradient(1100px 600px at 0 0, rgba(178, 107, 255, .10), transparent 60%),
                                             radial-gradient(900px 500px at 100% 100%, rgba(34, 228, 255, .06), transparent 60%), var(--bg);
@@ -434,7 +445,7 @@
   [data-theme=terminal] {
     --bg: #050a06; --card: #0b140d; --text: #b8f5c0; --muted: #62a06b; --track: #18291c;
     --accent: #5cff8a; --accent-bg: rgba(92, 255, 138, .10); --ok: #5cff8a; --warn: #ffcc4d; --bad: #ff6b5c;
-    --orange: #ffa24d; --teal: #4dffd2; --s1: #5cff8a; --s2: #ffcc4d; --s3: #4dd2ff; --s4: #ff7ad9;
+    --orange: #ffa24d; --teal: #4dffd2; --s1: #5cff8a; --s2: #ffcc4d; --s3: #4dd2ff; --s4: #ff7ad9; --field: #46804f;
   }
   :root[data-theme=terminal] body { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9375rem; }
   [data-theme=terminal] .card { border: 1px solid var(--track); border-radius: 3px; }
@@ -443,7 +454,7 @@
   [data-theme=terminal] h2::before { content: "> "; color: var(--accent); }
 
   /* phones: sidebar becomes a tab strip along the top */
-  @media (max-width: 720px) {
+  @media (max-width: 45em) {
     .layout { display: block; }
     .side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--track); padding: 12px 16px 8px; }
     .side { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
@@ -1395,7 +1406,7 @@ function draftStatus(dr) {
 function draftBox(t) {
   const dr = t.draft, extra = h("div");
   const text = draftEdits[t.id] ?? dr.body;
-  const area = h("textarea", { rows: String(Math.max(4, Math.min(14, text.split("\n").length + 1))),
+  const area = h("textarea", { rows: "4",  // CSS field-sizing grows it with the text, up to 14 lines
                                "aria-label": `Reply draft for ${t.subject || "this email"}` }, text);
   const [cls, said] = draftStatus(draftEdits[t.id] != null && draftEdits[t.id] !== dr.body ? { ...dr, unsaved: true } : dr);
   const status = h("span", { class: "status " + cls }, said);
@@ -1765,7 +1776,8 @@ function showKeys() {
   old?.remove();
   const list = shortcuts().filter(x => x.on && x.keys);
   const groups = [...new Set(list.map(x => x.group))];
-  const d = h("dialog", { id: "keys-help", class: "keys-help", "aria-labelledby": "keys-help-title" },
+  // closedby=any: a click outside closes it too (Chrome, Firefox; elsewhere Esc and Close still do)
+  const d = h("dialog", { id: "keys-help", class: "keys-help", closedby: "any", "aria-labelledby": "keys-help-title" },
     h("h2", { id: "keys-help-title", tabindex: "-1", autofocus: true }, "Keyboard shortcuts"),   // focus the top, not the link at the bottom
     list.length ? h("div", { class: "keys-groups" }, groups.map(g => h("div", { class: "keys-group" }, h("h3", {}, g),
       h("dl", {}, list.filter(x => x.group === g).flatMap(x => [h("dt", {}, keysLabel(x.keys)), h("dd", {}, x.label)])))))
@@ -1893,7 +1905,8 @@ function settings() {
       h("div", { class: "set-rows" },
         choiceRow("Text size", null, "text", [["small", "Small"], ["default", "Default"], ["large", "Large"], ["larger", "Larger"]]),
         choiceRow("Density", "Compact fits more on the screen", "density", [["comfortable", "Comfortable"], ["compact", "Compact"]]),
-        choiceRow("Motion", "Reduced turns off animations and transitions", "motion", [["full", "Full"], ["reduce", "Reduced"]]),
+        choiceRow("Motion", "Reduced turns off animations and transitions; System follows your computer's Reduce motion setting", "motion",
+                  [["system", "System"], ["full", "Full"], ["reduce", "Reduced"]]),
         h("div", { class: "set-row" },
           h("div", {}, h("div", { class: "set-label" }, "Start page"), h("div", { class: "sub" }, "What opens at the plain address, without a #tab")),
           startSel))),
