@@ -522,12 +522,14 @@ def proc(pid, cwd="~", ports=(), cmd="x", age_s=900, rss=400 * 2**20):
 
 
 AGENTS = [
-    {"name": "Claude Code", "kind": "Coding agent", "instances": [
+    {"name": "Claude Code", "kind": "Coding agent", "group": "coding", "instances": [
         proc(11, "~/dev/pi-status", cmd="claude --model=opus"), proc(12, "~/dev", cmd="claude --model=sonnet", age_s=60)]},
-    {"name": "Hermes", "kind": "Agent", "unit": "hermes-dashboard.service", "unit_state": "active",   # up, port not open yet
-     "instances": [proc(21, cmd="hermes dashboard --no-open")]},
-    {"name": "OpenClaw", "kind": "Personal assistant", "unit": "openclaw-gateway.service", "unit_state": "active",
-     "instances": [proc(31, ports=["127.0.0.1:18789"], cmd="openclaw-gateway")]},
+    {"name": "agy", "kind": "Coding agent · Antigravity CLI", "group": "coding", "instances": []},
+    {"name": "Hermes", "kind": "Agent", "group": "agent", "unit": "hermes-gateway.service", "unit_state": "active",
+     "dashboard_unit": "hermes-dashboard.service", "dashboard_state": "active",   # dashboard up, its port not open yet
+     "instances": [proc(21, cmd="hermes gateway run"), proc(22, cmd="hermes dashboard --no-open")]},
+    {"name": "OpenClaw", "kind": "Personal assistant", "group": "agent", "unit": "openclaw-gateway.service",
+     "unit_state": "active", "instances": [proc(31, ports=["127.0.0.1:18789"], cmd="openclaw-gateway")]},
 ]
 
 DASHBOARDS = [
@@ -553,7 +555,8 @@ def test_each_agent_appears_once(make_page, base_url):
     page = make_page()
     cards = open_agents(page, base_url)
     names = page.locator("#view .agent .card-head h4").all_inner_texts()
-    assert sorted(names) == sorted({"Claude Code", "Hermes", "OpenClaw"})
+    assert names == ["Hermes", "OpenClaw", "Claude Code", "agy"]  # agents, then coding sessions; running ones first
+    assert page.locator("#view h3", has_text="Coding sessions").count() == 1
     assert page.locator("#view .dashboard").count() == 0
     assert "Start it on the Pi" not in page.locator("#view").text_content()  # the Start button replaces it
     after = page.evaluate("[...document.querySelectorAll('#view .agent')].pop().compareDocumentPosition(document.querySelector('#view .signins'))")
@@ -565,7 +568,7 @@ def test_stopped_agent_is_listed_last(make_page, base_url):
     page = make_page()
     stopped = [{**a, "unit_state": "inactive", "instances": []} if a["name"] == "Hermes" else a for a in AGENTS]
     open_agents(page, base_url, stopped)
-    assert page.locator("#view .agent .card-head h4").all_inner_texts()[-1] == "Hermes"
+    assert page.locator("#view .agent .card-head h4").all_inner_texts()[:2] == ["OpenClaw", "Hermes"]
     assert page.errors == []
 
 
@@ -573,8 +576,12 @@ def test_agent_status_words(make_page, base_url):
     page = make_page()
     cards = open_agents(page, base_url)
     pills = {name: c.locator(".card-head .pill").all_inner_texts() for name, c in cards.items()}
-    assert pills == {"Claude Code": ["running · 2"], "OpenClaw": ["running"],
-                     "Hermes": ["starting"]}      # its unit is active, its dashboard port isn't listening yet; one pill each
+    assert pills == {"Claude Code": ["2 open"], "agy": ["none"], "OpenClaw": ["running"],
+                     "Hermes": ["running"]}       # the gateway's state, whatever its dashboard does; one pill each
+    # Hermes's dashboard has its own line: its unit is up but its port isn't listening yet
+    dash = cards["Hermes"].locator(".dash-ctl")
+    assert dash.locator(".pill").inner_text() == "starting" and dash.locator(".dash-btn").inner_text() == "Stop"
+    assert cards["OpenClaw"].locator(".dash-ctl").count() == 0  # its Control UI is the gateway itself
 
 
 def test_published_dashboards_link_to_their_tailnet_url(make_page, base_url):
@@ -657,7 +664,7 @@ def test_agents_tab_survives_dashboard_failure(make_page, base_url):
     open_tab(page, base_url, "agents")
     page.wait_for_selector("#view .agent")
     assert "Dashboard status unavailable" in page.locator("#view").inner_text()
-    assert page.locator("#view .agent").count() == 3
+    assert page.locator("#view .agent").count() == 4
     assert page.locator("#view .agent", has_text="Hermes").locator(".card-head .pill").inner_text() == "running"  # the unit says so
 
 
@@ -679,10 +686,12 @@ def test_agent_cards_fit_phone(make_page, base_url):
 
 
 SERVICE_AGENTS = [
-    {"name": "Hermes", "kind": "Agent", "unit": "hermes-dashboard.service", "unit_state": "active", "instances": [
-        {"pid": 7, "user": "guy", "cpu": 0.0, "rss": 2**20, "age_s": 9, "cwd": "~", "ports": [], "cmd": "hermes dashboard"}]},
-    {"name": "OpenClaw", "kind": "Personal assistant", "unit": "openclaw-gateway.service", "unit_state": "inactive", "instances": []},
-    {"name": "Claude Code", "kind": "Coding agent", "instances": []},
+    {"name": "Hermes", "kind": "Agent", "group": "agent", "unit": "hermes-gateway.service", "unit_state": "active",
+     "dashboard_unit": "hermes-dashboard.service", "dashboard_state": "inactive", "instances": [
+        {"pid": 7, "user": "guy", "cpu": 0.0, "rss": 2**20, "age_s": 9, "cwd": "~", "ports": [], "cmd": "hermes gateway run"}]},
+    {"name": "OpenClaw", "kind": "Personal assistant", "group": "agent", "unit": "openclaw-gateway.service",
+     "unit_state": "inactive", "instances": []},
+    {"name": "Claude Code", "kind": "Coding agent", "group": "coding", "instances": []},
 ]
 
 
@@ -691,7 +700,7 @@ def test_agent_cards_offer_stop_and_start(make_page, base_url):
 
     def control(route):
         posts.append((route.request.url, route.request.headers.get("x-requested-with")))
-        route.fulfill(json={"unit": "hermes-dashboard.service", "state": "inactive"})
+        route.fulfill(json={"unit": "hermes-gateway.service", "state": "inactive"})
     page = make_page()
     page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
     page.route("**/api/agents/*/*", control)
@@ -704,7 +713,28 @@ def test_agent_cards_offer_stop_and_start(make_page, base_url):
     cards.filter(has_text="Hermes").locator(".service-btn").click()
     page.wait_for_function("() => document.getElementById('conn').textContent.startsWith('updated')")
     page.wait_for_timeout(300)
-    assert posts == [(f"{base_url}/api/agents/hermes-dashboard.service/stop", "pi-status")]
+    assert posts == [(f"{base_url}/api/agents/hermes-gateway.service/stop", "pi-status")]
+    assert page.errors == []
+
+
+def test_hermes_dashboard_starts_on_its_own(make_page, base_url):
+    posts = []
+
+    def control(route):
+        posts.append(route.request.url)
+        route.fulfill(json={"unit": "hermes-dashboard.service", "state": "active"})
+    page = make_page()
+    page.route("**/api/agents", lambda r: r.fulfill(json=SERVICE_AGENTS))
+    page.route("**/api/agents/*/*", control)
+    open_tab(page, base_url, "agents")
+    page.wait_for_selector("#view .dash-btn")
+    dash = page.locator("#view .agent", has_text="Hermes").locator(".dash-ctl")
+    assert dash.locator(".pill").inner_text() == "stopped"
+    btn = dash.locator(".dash-btn")
+    assert btn.inner_text() == "Start" and btn.get_attribute("aria-label") == "Start Hermes dashboard"
+    btn.click()
+    page.wait_for_timeout(500)
+    assert posts == [f"{base_url}/api/agents/hermes-dashboard.service/start"]
     assert page.errors == []
 
 
@@ -948,9 +978,22 @@ def backup_side(side="user", state="ok", problems=(), **kw):
 BACKUP_OK = {"sides": [backup_side("user"), backup_side("system")], "setup": "README", "stale_after_s": 129600}
 
 
+def health_api(*red):
+    """/api/health with three checks; `red` maps a check name to its detail."""
+    red = dict(red)
+    names = ["Tailscale connected", "No failed systemd units", "Disk under 90%"]
+    checks = [{"name": n, "ok": n not in red, "detail": red.get(n, "")} for n in names]
+    return {"checks": checks, "red": len(red)}
+
+
+HEALTH_OK = health_api()
+
+
 def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIGNED_IN, services=NO_SERVICES,
-                  version=VERSION, dash=DASHBOARDS, mail=None, backup=BACKUP_OK):
+                  version=VERSION, dash=DASHBOARDS, mail=None, backup=BACKUP_OK, health=HEALTH_OK):
     page.route("**/api/emails", lambda r: r.fulfill(json=mail or mail_api()))
+    if health is not None:  # None: the test routes /api/health itself
+        page.route("**/api/health", lambda r: r.fulfill(json=health))
     if backup is not None:  # None: the test routes /api/backup itself
         page.route("**/api/backup", lambda r: r.fulfill(json=backup))
     page.route("**/api/status", lambda r: r.fulfill(json=status))
@@ -960,7 +1003,7 @@ def open_overview(page, base_url, status=STATUS, agents=SERVICE_AGENTS, auth=SIG
     page.route("**/api/dashboards", lambda r: r.fulfill(json=dash))
     page.route("**/api/version", lambda r: r.fulfill(json=version))
     open_tab(page, base_url, "overview")
-    page.wait_for_selector("#view .strip")
+    page.wait_for_selector("#view .strip:not(.checks)")  # the health checks are folded (hidden) while green
     page.wait_for_function("() => document.getElementById('version').textContent.includes('a1b2c3d')")
 
 
@@ -1033,6 +1076,43 @@ def test_overview_survives_backup_endpoint_failing(make_page, base_url):
     assert "Backup status unavailable." in page.locator("#view").inner_text()
 
 
+def test_overview_health_folds_to_one_line_while_all_green(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url)
+    card = page.locator("#view .health")
+    assert "All 3 green" in card.locator("summary").inner_text()
+    assert card.locator("details").get_attribute("open") is None
+    assert not card.locator(".checks").is_visible()
+    assert attention(page) == []
+    assert page.errors == []
+
+
+def test_overview_health_opens_and_lists_red_checks_in_attention(make_page, base_url):
+    page = make_page()
+    open_overview(page, base_url, health=health_api(("Tailscale connected", "not Running/online"),
+                                                       ("No failed systemd units", "see: systemctl --failed")))
+    card = page.locator("#view .health")
+    assert "2 of 3 red" in card.locator("summary").inner_text()
+    assert card.locator("details").get_attribute("open") is not None
+    rows = card.locator(".strip-row").all_inner_texts()
+    assert len(rows) == 3 and "not Running/online" in rows[0] and "red" in rows[0] and "ok" in rows[2]
+    lines = attention(page)
+    assert "Tailscale connected: not Running/online" in lines, lines
+    assert not any("failed systemd units" in line for line in lines)  # failed units are listed by name instead
+    assert page.errors == []
+
+
+@pytest.mark.parametrize("respond, expected", [
+    (lambda r: r.fulfill(status=500, body="boom"), "Health check unavailable."),
+    (lambda r: r.fulfill(json={"error": "pi-up not found (/x/pi-up)"}), "Health check: pi-up not found (/x/pi-up)"),
+])
+def test_overview_survives_health_failing(make_page, base_url, respond, expected):
+    page = make_page()
+    page.route("**/api/health", respond)
+    open_overview(page, base_url, health=None)
+    assert expected in page.locator("#view").inner_text()
+
+
 def test_overview_attention_ignores_emails_not_set_up(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, mail=NOT_CONNECTED)
@@ -1063,13 +1143,12 @@ def test_attention_links_to_where_it_is_fixed(make_page, base_url):
 def test_overview_strip_shows_each_agent_with_its_status(make_page, base_url):
     page = make_page()
     open_overview(page, base_url, agents=AGENTS)
-    strip = "#view .strip:not(.backup)"  # the Backup card below is a strip too
-    rows = page.locator(f"{strip} .strip-row")
-    assert rows.count() == 3
-    text = page.locator(strip).inner_text()
-    for word in ["Claude Code", "running · 2", "Hermes", "starting", "OpenClaw", "running"]:
-        assert word in text
-    assert page.locator(f"{strip} a[href='#agents']").count() == 3   # each name opens the Agents tab
+    agents, coding = page.locator("#view .agents-strip"), page.locator("#view .coding-strip")
+    assert agents.locator(".strip-row").all_inner_texts() == ["Hermes\nrunning\nStop", "OpenClaw\nrunning\nStop"]
+    assert coding.locator(".strip-row").all_inner_texts() == ["Claude Code\n2 open", "agy\nnone"]
+    assert coding.locator("button").count() == 0                      # nothing to start or stop
+    assert page.locator("#view h3", has_text="Coding sessions").count() == 1
+    assert page.locator("#view .strip a[href='#agents']").count() == 4   # each name opens the Agents tab
 
 
 def test_overview_strip_start_posts_to_the_unit(make_page, base_url):

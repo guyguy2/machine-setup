@@ -197,6 +197,10 @@
   .session details summary { margin-top: 2px; }
   .signins summary { margin: 0; color: var(--text); font-size: 1rem; }
   .signins details[open] summary { margin-bottom: 8px; }
+  .health summary { margin: 0; color: var(--text); font-size: 1rem; }
+  .dash-ctl { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
+  .dash-ctl .status { display: inline-flex; align-items: center; gap: 10px; }
+  .health details[open] summary { margin-bottom: 8px; }
   .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   @media (pointer: coarse) { .copy, .seg a, .seg button { min-height: 36px; } }  /* fingers, not a mouse */
 
@@ -648,7 +652,7 @@ const AUTH_PROBLEM = { signed_out: ["is signed out", "warn"], expired: ["sign-in
 
 // Everything on the Pi that needs you, each problem once. Empty when all is well.
 function problems() {
-  const { s, list, auth, svc, bk } = overviewData;
+  const { s, list, auth, svc, bk, hc } = overviewData;
   const item = (kind, text, href, action) => h("li", {}, h("span", { class: "dot " + kind }), href ? h("a", { href }, text) : text, action);
   const agentUnits = new Set((list || []).map(a => a.unit).filter(Boolean));  // a failed agent is listed as the agent
   const v = lastVersion;
@@ -662,6 +666,10 @@ function problems() {
     svc && [...svc.user, ...svc.system].filter(r => r.active === "failed" && !agentUnits.has(r.unit))
       .map(r => item("bad", `${r.unit} failed`, "#system/services")),
     (p => p && item(p.kind, "Email sorter: " + p.text, "#emails"))(mailProblem(lastMail)),
+    hc?.error && item("warn", "Health check: " + hc.error),
+    // red pi-up checks; a failed unit is already listed above by name, so its catch-all check isn't repeated
+    (hc?.checks || []).filter(c => !c.ok && c.name !== "No failed systemd units")
+      .map(c => item("bad", c.name + (c.detail ? ": " + c.detail : ""))),
     (bk?.sides || []).filter(b => b.problems.length).map(b =>
       item(b.state === "bad" ? "bad" : "warn", `Backup (${b.label.toLowerCase()}): ${b.problems.join("; ")}`)),
     v?.stale && item("warn", "Newer pi-status code on disk", null,
@@ -673,6 +681,19 @@ function attentionCard() {
   const items = problems();
   return h("div", { class: "card attention", hidden: !items.length || null },
     h("h3", { style: "margin:0 0 6px" }, "Needs attention"), h("ul", {}, items));
+}
+
+// pi-up's red/green checks (the ones `upd` ends with), folded to one line while all are green
+function healthCard(hc) {
+  if (!hc) return empty("Health check unavailable.");
+  if (hc.error) return empty("Health check: " + hc.error);
+  const n = hc.checks.length, green = n - hc.red;
+  return h("div", { class: "card health" }, h("details", { open: hc.red > 0 || null },  // opens itself when one is red
+    h("summary", {}, h("span", { class: "dot" + (hc.red ? " bad" : "") }),
+      hc.red ? `${hc.red} of ${n} red` : `All ${n} green`, h("span", { class: "sub" }, " · pi-up, as at the end of upd")),
+    h("div", { class: "strip checks" }, hc.checks.map(c => h("div", { class: "strip-row" },
+      h("span", {}, c.name, c.detail && h("span", { class: "sub" }, " · " + c.detail)),
+      h("span", { class: "status" }, pill(...(c.ok ? ["ok", "ok"] : ["red", "bad"]))))))));
 }
 
 // The nightly restic backup, one row per repository. collect.backup_side decides ok/warn/bad and the problems.
@@ -693,9 +714,16 @@ function backupCard(bk) {
   }));
 }
 
-function overview(s, list, auth, svc, dash, bk) {
+// Overview's one line per agent: name (opens the Agents tab), status and Start/Stop
+function agentStrip(list, byName, cls) {
+  return h("div", { class: "card strip " + cls }, sortAgents(list, byName).map(a => h("div", { class: "strip-row" },
+    h("a", { href: "#agents" }, a.name),
+    h("span", { class: "status" }, pill(...agentStatus(a, byName[a.name])), a.unit && serviceButton(a)))));
+}
+
+function overview(s, list, auth, svc, dash, bk, hc) {
   brand(s);
-  overviewData = { s, list, auth, svc, bk };
+  overviewData = { s, list, auth, svc, bk, hc };
   const byName = Object.fromEntries((dash || []).map(d => [d.name, d]));
   const mp = s.mem_used / s.mem_total * 100, dp = s.disk_used / s.disk_total * 100;
   return [
@@ -706,13 +734,12 @@ function overview(s, list, auth, svc, dash, bk) {
       metric("Temperature", s.temp_c + " °C", s.temp_c / 85 * 100, 70, 90, "throttles at 80 °C"),
       metric("Memory", mp.toFixed(0) + "%", mp, 75, 90, `${gb(s.mem_used)} of ${gb(s.mem_total)}`),
       metric("Disk (/)", dp.toFixed(0) + "%", dp, 80, 92, `${gb(s.disk_used)} of ${gb(s.disk_total)}`)),
+    h("h3", {}, "Health check"),
+    healthCard(hc),
     h("h3", {}, "Agents"),
     agentError && h("div", { class: "alert" }, agentError),
-    list
-      ? h("div", { class: "card strip" }, sortAgents(list, byName).map(a => h("div", { class: "strip-row" },
-          h("a", { href: "#agents" }, a.name),
-          h("span", { class: "status" }, pill(...agentStatus(a, byName[a.name])), a.unit && serviceButton(a)))))
-      : empty("Agent status unavailable."),
+    list ? agentStrip(list.filter(a => !isCoding(a)), byName, "agents-strip") : empty("Agent status unavailable."),
+    list?.some(isCoding) && [h("h3", {}, "Coding sessions"), agentStrip(list.filter(isCoding), byName, "coding-strip")],
     h("h3", {}, "Backup"),
     bk ? backupCard(bk) : empty("Backup status unavailable."),
     h("div", { class: "card", style: "margin-top:12px" }, h("dl", {},
@@ -839,27 +866,39 @@ async function controlAgent(btn, unit, action) {
   refresh();
 }
 
-function serviceButton(a) {
-  const up = ["active", "activating", "reloading"].includes(a.unit_state);
-  if (a.unit_state === "deactivating") return h("button", { class: "copy", type: "button", disabled: true }, "Stopping…");
+// Start/Stop for an agent's unit, or (with the dashboard's unit, state and label) for its on-demand dashboard
+function serviceButton(a, unit = a.unit, state = a.unit_state, label = a.name, cls = "service-btn") {
+  const up = ["active", "activating", "reloading"].includes(state);
+  if (state === "deactivating") return h("button", { class: "copy", type: "button", disabled: true }, "Stopping…");
   return h("button", {
-    class: "copy service-btn", type: "button", "aria-label": `${up ? "Stop" : "Start"} ${a.name}`,
-    title: up ? `Stop ${a.unit} gracefully (SIGTERM, then time to clean up). It starts again at boot or with Start.`
-              : `Start ${a.unit}`,
-    onclick: e => controlAgent(e.currentTarget, a.unit, up ? "stop" : "start"),
+    class: "copy " + cls, type: "button", "aria-label": `${up ? "Stop" : "Start"} ${label}`,
+    title: up ? `Stop ${unit} gracefully (SIGTERM, then time to clean up)${unit === a.unit ? ". It starts again at boot or with Start." : ""}`
+              : `Start ${unit}`,
+    onclick: e => controlAgent(e.currentTarget, unit, up ? "stop" : "start"),
   }, up ? "Stop" : "Start");
 }
 
 const UNIT_STATUS = { active: ["running", "ok"], reloading: ["running", "ok"], activating: ["starting", "warn"],
                       deactivating: ["stopping", "warn"], failed: ["failed", "bad"] };  // anything else: stopped
 
-// An agent with a service goes by its unit; one without (Claude Code) by its processes.
+// A coding tool (Claude Code, agy) counts its open sessions; an agent with a service goes by its unit, another by its
+// processes.
 function agentStatus(a, d) {
+  if (a.group === "coding") return a.instances.length ? [`${a.instances.length} open`, "ok"] : ["none", ""];
   if (!a.unit) return a.instances.length ? [`running · ${a.instances.length}`, "ok"] : ["stopped", ""];
   const [word, kind] = UNIT_STATUS[a.unit_state] || ["stopped", ""];
-  if (word === "running" && d && d.local_url && !d.running) return ["starting", "warn"];  // up, dashboard not listening yet
+  // up, but the web UI it serves isn't listening yet (a dashboard with its own unit says so on its own line)
+  if (word === "running" && !a.dashboard_unit && d && d.local_url && !d.running) return ["starting", "warn"];
   return [word, kind];
 }
+
+// An on-demand dashboard with its own unit (Hermes): its unit's state, "starting" until its port listens
+function dashboardStatus(a, d) {
+  const [word, kind] = UNIT_STATUS[a.dashboard_state] || ["stopped", ""];
+  return word === "running" && d && !d.running ? ["starting", "warn"] : [word, kind];
+}
+
+const isCoding = a => a.group === "coding";
 
 // oldest process's uptime, total CPU and memory
 const usage = ps => `up ${dur(Math.max(...ps.map(p => p.age_s)))} · ${ps.reduce((t, p) => t + p.cpu, 0).toFixed(1)}% CPU · ${size(ps.reduce((t, p) => t + p.rss, 0))}`;
@@ -881,6 +920,9 @@ function agentCard(a, d) {
       h("h4", {}, a.name), h("span", { class: "sub" }, a.kind),
       h("span", { class: "status" }, pill(word, kind), a.unit && serviceButton(a))),  // wraps as one: status beside its button
     summary && h("div", { class: "detail" }, summary),
+    a.dashboard_unit && h("div", { class: "dash-ctl" }, h("span", { class: "sub" }, "Web dashboard"),
+      h("span", { class: "status" }, pill(...dashboardStatus(a, d)),
+        serviceButton(a, a.dashboard_unit, a.dashboard_state, `${a.name} dashboard`, "dash-btn"))),
     web && (d.tailnet_url
       ? copyRow(d.running ? "On your tailnet" : "On your tailnet (once it's running)", d.tailnet_url, `${a.name} tailnet address`,
                 h("a", { class: "mono ssh-cmd", href: d.tailnet_url, target: "_blank", rel: "noopener", title: d.what }, d.tailnet_url))
@@ -889,7 +931,8 @@ function agentCard(a, d) {
     a.unit && h("details", {}, h("summary", {}, "More"),
       web && [copyRow("Without Tailscale: tunnel over SSH", d.tunnel, `${a.name} SSH tunnel command`),
              copyRow("…then open on that machine", d.local_url, `${a.name} localhost address`)],
-      h("div", { class: "sub", style: "margin:8px 0" }, "Service: ", h("span", { class: "mono" }, a.unit)),
+      h("div", { class: "sub", style: "margin:8px 0" }, "Service: ", h("span", { class: "mono" }, a.unit),
+        a.dashboard_unit && [" · dashboard: ", h("span", { class: "mono" }, a.dashboard_unit)]),
       ps.length && table([
         ...procCols,
         { label: "Directory", mono: true, value: p => p.cwd },
@@ -900,7 +943,7 @@ function agentCard(a, d) {
 
 // running ones first, stopped last
 function sortAgents(list, byName) {
-  const live = a => agentStatus(a, byName[a.name])[0] !== "stopped";
+  const live = a => !["stopped", "none"].includes(agentStatus(a, byName[a.name])[0]);
   return [...list].sort((a, b) => live(b) - live(a));
 }
 
@@ -910,7 +953,9 @@ function agents(list, auth, dash) {
     h("h2", {}, "Agents & Assistants"),
     agentError && h("div", { class: "alert" }, agentError),
     !dash && h("div", { class: "sub", style: "margin-bottom:12px" }, "Dashboard status unavailable."),
-    sortAgents(list, byName).map(a => agentCard(a, byName[a.name])),
+    sortAgents(list.filter(a => !isCoding(a)), byName).map(a => agentCard(a, byName[a.name])),
+    list.some(isCoding) && [h("h3", {}, "Coding sessions"),
+      sortAgents(list.filter(isCoding), byName).map(a => agentCard(a, byName[a.name]))],
     signIns(auth),
   ];
 }
@@ -1966,7 +2011,7 @@ const SYSTEM = [
 // `group` is the sidebar section; a tab without `api` would be rendered straight away, nothing fetched
 const TABS = [
   { id: "overview", group: "Pi", title: "Overview", api: "/api/status",
-    also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards", "/api/backup"], render: overview },
+    also: ["/api/agents", "/api/auth", "/api/services", "/api/dashboards", "/api/backup", "/api/health"], render: overview },
   { id: "agents", group: "Pi", title: "Agents", api: "/api/agents", also: ["/api/auth", "/api/dashboards"], render: agents },
   { id: "lab", group: "Pi", title: "Agent Lab", api: "/api/lab", render: lab },
   { id: "websites", group: "Pi", title: "Websites", api: "/api/websites", render: websites },

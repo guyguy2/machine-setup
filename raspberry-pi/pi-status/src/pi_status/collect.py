@@ -199,13 +199,20 @@ def top_processes() -> dict:
 # ---------- agents ----------
 
 # `match` is compared (prefix) with the executable name and, for interpreters, the script's name and folders.
+# group "agent": always-on assistants, whose status is their `unit` (the page starts and stops it). group "coding":
+# interactive tools you open in a terminal; their status is how many sessions are open. A `dashboard_unit` is a web UI
+# that runs as its own unit, on demand, beside the agent (its state is shown and controlled separately).
 AGENTS = [
-    {"name": "Claude Code", "kind": "Coding agent", "match": ("claude",)},
-    {"name": "Hermes", "kind": "Agent", "match": ("hermes",), "unit": "hermes-dashboard.service"},
+    {"name": "Claude Code", "kind": "Coding agent", "match": ("claude",), "group": "coding"},
+    # Antigravity CLI (Homebrew cask antigravity-cli): `agy` is a symlink to its `antigravity` binary; one process per session
+    {"name": "agy", "kind": "Coding agent · Antigravity CLI", "match": ("agy", "antigravity"), "group": "coding"},
+    # the gateway is Hermes itself (Telegram bot, cron); its dashboard is off at boot on purpose, started when wanted
+    {"name": "Hermes", "kind": "Agent", "match": ("hermes",), "unit": "hermes-gateway.service",
+     "dashboard_unit": "hermes-dashboard.service"},
     {"name": "OpenClaw", "kind": "Personal assistant", "match": ("openclaw",), "unit": "openclaw-gateway.service"},
     # not installed here; listed only while running
-    {"name": "Codex", "kind": "Coding agent", "match": ("codex",), "optional": True},
-    {"name": "Gemini CLI", "kind": "Coding agent", "match": ("gemini",), "optional": True},
+    {"name": "Codex", "kind": "Coding agent", "match": ("codex",), "optional": True, "group": "coding"},
+    {"name": "Gemini CLI", "kind": "Coding agent", "match": ("gemini",), "optional": True, "group": "coding"},
     {"name": "Ollama", "kind": "Local models", "match": ("ollama",), "optional": True},
 ]
 
@@ -245,15 +252,16 @@ def agents() -> list[dict]:
                 "cwd": "~" + cwd[len(HOME):] if cwd.startswith(HOME) else cwd,
                 "ports": [f"{x['address']}:{x['port']}" for x in listening if x["pid"] == p["pid"]],
             })
-        entry = {"name": spec["name"], "kind": spec["kind"], "instances": instances}
-        if "unit" in spec:
-            entry["unit"] = spec["unit"]
-            entry["unit_state"] = run("systemctl", "--user", "is-active", spec["unit"]) or "unknown"
+        entry = {"name": spec["name"], "kind": spec["kind"], "group": spec.get("group", "agent"), "instances": instances}
+        for key, state in (("unit", "unit_state"), ("dashboard_unit", "dashboard_state")):
+            if key in spec:
+                entry[key] = spec[key]
+                entry[state] = run("systemctl", "--user", "is-active", spec[key]) or "unknown"
         result.append(entry)
     return result
 
 
-AGENT_UNITS = {spec["unit"] for spec in AGENTS if "unit" in spec}  # the only units the page may start or stop
+AGENT_UNITS = {spec[k] for spec in AGENTS for k in ("unit", "dashboard_unit") if k in spec}  # all the page may start/stop
 
 
 def control_agent(unit: str, action: str) -> tuple[int, dict]:
@@ -774,6 +782,33 @@ def backup() -> dict:
     return {"sides": [backup_side(side, now) for side in BACKUP_SIDES], "setup": BACKUP_SETUP,
             "stale_after_s": BACKUP_STALE_S}
 
+
+
+# ---------- health check (pi-up: the same red/green checks `upd` runs at the end) ----------
+
+PI_UP = Path(HOME) / "dev/machine-setup/raspberry-pi/checkup/pi-up"  # the one list of checks; this page only shows them
+PI_UP_ENV = "PI_STATUS_PI_UP"  # tests point this at a fake script so no test runs the real checks
+PI_UP_TIMEOUT = 30  # seconds; all green takes well under one, but each check may wait up to 5 s when something is down
+
+
+def health() -> dict:
+    """Run `pi-up --json`. Exit 1 only means a check is red; the JSON is what counts."""
+    script = Path(os.environ.get(PI_UP_ENV) or PI_UP)
+    if not script.is_file():
+        return {"error": f"pi-up not found ({script})"}
+    try:
+        out = subprocess.run([str(script), "--json"], capture_output=True, text=True, timeout=PI_UP_TIMEOUT).stdout
+    except subprocess.TimeoutExpired:
+        return {"error": f"pi-up took over {PI_UP_TIMEOUT} s"}
+    except OSError as e:
+        return {"error": f"pi-up didn't run: {e}"}
+    try:
+        data = json.loads(out)
+        checks = [{"name": str(c["name"]), "ok": c["ok"] is True, "detail": str(c.get("detail") or "")}
+                  for c in data["checks"]]
+    except (ValueError, KeyError, TypeError):
+        return {"error": "pi-up gave no readable result: run pi-up"}
+    return {"checks": checks, "red": sum(not c["ok"] for c in checks)}
 
 # ---------- emails (suggestions from the private mail sorter, read from one file) ----------
 

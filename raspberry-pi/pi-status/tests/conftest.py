@@ -29,6 +29,8 @@ def fake_mail_state(tmp_path_factory):
            # backup: status files that don't exist, and fixed timer states, so no test reads the real ones
            **{collect.BACKUP_SIDES[side][2]: str(folder / f"no-backup-{side}.json") for side in collect.BACKUP_SIDES},
            collect.BACKUP_TIMER_ENV: "not set up",
+           # health: a pi-up that doesn't exist, so no test runs the real checks (tests that need one write a fake)
+           collect.PI_UP_ENV: str(folder / "no-pi-up-here"),
            # POSTs: the owner is OWNER (not the real one from tailscale), the audit log a temporary file
            guard.LOGINS_ENV: OWNER, guard.AUDIT_ENV: str(folder / "audit.log")}
     old = {k: os.environ.get(k) for k in env}

@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
 # pi-up: a 5-second red/green "is the Pi up and working?" check. Read-only.
-# Usage: pi-up [-q]    -q: print only the red lines (and the verdict)
+# Usage: pi-up [-q|--json]    -q: print only the red lines (and the verdict)
+#                             --json: one JSON object, {"checks": [{"name", "ok", "detail"}...], "red": N}, for Home Base
 # Exit 0 when everything is green, 1 when anything is red. For the deep scan (warnings, drift, updates) use pi-checkup.
 set -uo pipefail
 
-quiet=0
-[[ "${1:-}" == "-q" ]] && quiet=1
+quiet=0 json=0
+case "${1:-}" in
+  -q) quiet=1 ;;
+  --json) json=1 ;;
+  "") ;;
+  *) echo "usage: pi-up [-q|--json]" >&2; exit 2 ;;
+esac
+results=()  # --json: one "ok<TAB>name<TAB>detail" line per check
 
 if [[ -t 1 ]]; then G=$'\033[1;32m'; R=$'\033[1;31m'; N=$'\033[0m'; else G=''; R=''; N=''; fi
 red=0
 
 # green NAME  /  red NAME DETAIL
-green() { ((quiet)) || printf '%s●%s %s\n' "$G" "$N" "$1"; }
-red()   { printf '%s●%s %s: %s\n' "$R" "$N" "$1" "$2"; red=$((red + 1)); }
+green() {
+  if ((json)); then results+=("1"$'\t'"$1"$'\t'); elif ((!quiet)); then printf '%s●%s %s\n' "$G" "$N" "$1"; fi
+}
+red() {
+  red=$((red + 1))
+  if ((json)); then results+=("0"$'\t'"$1"$'\t'"$2"); else printf '%s●%s %s: %s\n' "$R" "$N" "$1" "$2"; fi
+}
 # check NAME DETAIL-ON-FAILURE COMMAND...   (command's success = green; external commands carry their own timeout)
 check() {
   local name=$1 detail=$2
@@ -54,7 +66,14 @@ check "SoC under 80°C" "running hot: $(vcgencmd measure_temp 2>/dev/null)" temp
 mem_ok() { (($(awk '/MemAvailable/ {print $2}' /proc/meminfo) > 500000)); }
 check "RAM: 500 MB+ free" "low memory: free -h" mem_ok
 
-if ((red == 0)); then
+if ((json)); then
+  printf '%s\n' "${results[@]}" | python3 -c '
+import json, sys
+checks = [dict(zip(("ok", "name", "detail"), line.rstrip("\n").split("\t", 2))) for line in sys.stdin if line.strip()]
+checks = [{"name": c["name"], "ok": c["ok"] == "1", "detail": c["detail"]} for c in checks]
+print(json.dumps({"checks": checks, "red": sum(not c["ok"] for c in checks)}))'
+  ((red == 0)) || exit 1
+elif ((red == 0)); then
   printf '%sALL GREEN%s\n' "$G" "$N"
 else
   printf '%s%d RED%s (details: pi-checkup)\n' "$R" "$red" "$N"

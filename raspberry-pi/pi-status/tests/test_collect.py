@@ -188,6 +188,20 @@ def test_agents_matches_running_and_hides_optional(monkeypatch):
     assert result["Hermes"]["unit_state"] == "active"
 
 
+def test_agents_lists_agy_sessions_like_claude_code(monkeypatch):
+    """agy has no service: always listed (stopped when no session runs), one instance per process, either name."""
+    monkeypatch.setattr(collect, "ports", lambda: [])
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: "active")
+    monkeypatch.setattr(collect, "scan", lambda: [])
+    agy = next(a for a in collect.agents() if a["name"] == "agy")
+    assert agy["instances"] == [] and "unit" not in agy
+    procs = [fake_proc(1, ["agy", "-c"]), fake_proc(2, ["/home/linuxbrew/.linuxbrew/Caskroom/antigravity-cli/1/antigravity"]),
+             fake_proc(3, ["zsh", "-c", "agy"])]
+    monkeypatch.setattr(collect, "scan", lambda: procs)
+    agy = next(a for a in collect.agents() if a["name"] == "agy")
+    assert sorted(i["pid"] for i in agy["instances"]) == [1, 2]
+
+
 def test_agents_skips_the_servers_own_child_processes(monkeypatch):
     """The sign-in check runs `claude auth status` while the Agents tab scans /proc; it is not a running agent."""
     import os
@@ -978,3 +992,64 @@ def test_backup_timer_off_warns(backup_file, monkeypatch):
 
 def test_backup_lists_both_sides():
     assert [s["side"] for s in collect.backup()["sides"]] == ["user", "system"]
+
+
+# ---------- health (pi-up --json) ----------
+
+@pytest.fixture
+def fake_pi_up(tmp_path, monkeypatch):
+    """Write a fake pi-up that prints BODY and exits with CODE; returns the writer."""
+    path = tmp_path / "pi-up"
+    monkeypatch.setenv(collect.PI_UP_ENV, str(path))
+
+    def write(body: str, code: int = 0) -> None:
+        path.write_text(f"#!/bin/sh\ncat <<'EOF'\n{body}\nEOF\nexit {code}\n")
+        path.chmod(0o755)
+    return write
+
+
+def test_health_all_green(fake_pi_up):
+    fake_pi_up(json.dumps({"checks": [{"name": "SSH", "ok": True, "detail": ""}], "red": 0}))
+    assert collect.health() == {"checks": [{"name": "SSH", "ok": True, "detail": ""}], "red": 0}
+
+
+def test_health_red_exit_1_still_reads_the_checks(fake_pi_up):
+    fake_pi_up(json.dumps({"checks": [{"name": "SSH", "ok": True, "detail": ""},
+                                      {"name": "DNS resolves", "ok": False, "detail": "check the pihole container"}],
+                           "red": 1}), code=1)
+    h = collect.health()
+    assert h["red"] == 1 and h["checks"][1] == {"name": "DNS resolves", "ok": False,
+                                                "detail": "check the pihole container"}
+
+
+def test_health_counts_red_itself_and_only_true_is_ok(fake_pi_up):
+    fake_pi_up(json.dumps({"checks": [{"name": "A", "ok": "yes"}, {"name": "B", "ok": True}], "red": 0}))
+    h = collect.health()
+    assert h["red"] == 1 and h["checks"][0] == {"name": "A", "ok": False, "detail": ""}
+
+
+@pytest.mark.parametrize("body", ["", "ALL GREEN", "{}", '{"checks": [{"ok": true}]}'])
+def test_health_unreadable_output_is_an_error_not_a_crash(fake_pi_up, body):
+    fake_pi_up(body)
+    assert "no readable result" in collect.health()["error"]
+
+
+def test_health_missing_pi_up(tmp_path, monkeypatch):
+    monkeypatch.setenv(collect.PI_UP_ENV, str(tmp_path / "nope"))
+    assert collect.health()["error"].startswith("pi-up not found")
+
+
+def test_health_timeout(fake_pi_up, tmp_path, monkeypatch):
+    monkeypatch.setattr(collect, "PI_UP_TIMEOUT", 0.5)
+    fake_pi_up("")
+    (tmp_path / "pi-up").write_text("#!/bin/sh\nexec sleep 5\n")
+    assert "took over" in collect.health()["error"]
+
+
+def test_pi_up_json_mode_is_valid_and_matches_its_exit_code():
+    """The real script's --json output (read-only checks), so the format the page reads can't drift."""
+    out = subprocess.run([str(collect.PI_UP), "--json"], capture_output=True, text=True, timeout=60)
+    data = json.loads(out.stdout)
+    assert data["checks"] and all(set(c) == {"name", "ok", "detail"} for c in data["checks"])
+    assert data["red"] == sum(not c["ok"] for c in data["checks"])
+    assert out.returncode == (1 if data["red"] else 0)
