@@ -125,6 +125,7 @@ alias cld='claude'
 alias clda='cld --dangerously-skip-permissions'
 alias clds='cld --dangerously-skip-permissions --model=sonnet'
 alias cldo='cld --dangerously-skip-permissions --model="opus"'
+alias agya='agy --dangerously-skip-permissions'
 alias killClaudes='pkill -9 -f claude'
 
 # Show machine name in prompt

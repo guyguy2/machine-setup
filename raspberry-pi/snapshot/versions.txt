@@ -1,4 +1,4 @@
 os: Debian GNU/Linux 13 (trixie)
-tailscale: 1.104.6
+tailscale: 1.104.7
 openclaw: 2026.10.9
 hermes: 0.23.1
