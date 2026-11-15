@@ -168,6 +168,26 @@ Temporarily keeps the Mac awake with the lid closed (even on battery with no ext
 ./keep-awake.zsh --off          # Turn off immediately (e.g. if previously force-killed)
 ```
 
+### claude-resume.py
+Types `continue` + Enter into the tmux pane of a Claude Code session after its 5-hour usage limit resets. Stdlib-only Python.
+
+**How it works:**
+- `record` (statusline hook): `~/.claude/statusline-eastwood.sh` pipes its JSON to `claude-resume.py record` in the background; this saves `rate_limits.five_hour.resets_at` per session under `~/.local/state/claude-resume/`
+- `hook` (StopFailure hook, no matcher, in `~/.claude/settings.json`): returns instantly and starts a detached waiter that sleeps until the reset + 45s, then runs `tmux send-keys` against `$TMUX_PANE`
+- Only the 5-hour window is acted on; weekly and per-model limits are skipped, as are resets more than 5.5h away
+- Before sending it skips if the transcript shows new user/assistant activity since scheduling (you or Claude's built-in `autoContinueAtUsageLimit` got there first), if the pane is gone, if the Claude process recorded at hook time is no longer running in that pane (pane reused for vim, a new session, etc.), if a newer waiter owns the pane, or if it sent to that pane in the last 5 minutes. If the Claude PID or transcript is unavailable it requires the "Usage limit reached" footer on screen instead. The built-in feature can stay on; this is the backup.
+- Every StopFailure is logged to `~/.local/state/claude-resume/log` (error, error_details, last_assistant_message). It is not yet verified that a subscription usage limit arrives as `error: "rate_limit"`; check the log after the first real limit hit.
+- Untested against a real limit: whether the TUI shows a menu that would swallow the typed text.
+
+**Usage:**
+```bash
+./claude-resume.py status                       # list scheduled waiters
+./claude-resume.py send --pane %8 "text"        # type text + Enter into a pane now (no state checks)
+./claude-resume.py hook --dry-run               # (as the hook command) log instead of sending
+./claude-resume.py hook --caffeinate            # keep the Mac from idle-sleeping while waiting
+uv run --with pytest pytest tests/ -q           # tests (start a private tmux server)
+```
+
 ## Raspberry Pi (raspberry-pi/)
 
 Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a blank card. Not macOS.

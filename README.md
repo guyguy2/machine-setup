@@ -29,6 +29,7 @@ The agent launchers live in `raspberry-pi/bin/` and the status web page in `rasp
 - **google-voice-call.zsh** - Enhanced Google Voice call launcher with contacts and call history
 - **install-homebrew-new-mac.zsh** - Comprehensive Mac setup script with Homebrew installation and app configuration
 - **keep-awake.zsh** - Temporarily prevents the Mac from sleeping when the lid is closed (even on battery with no display) using `pmset disablesleep`
+- **claude-resume.py** - Types `continue` + Enter into a Claude Code tmux pane after its 5-hour usage limit resets (wired in through the statusline and a StopFailure hook; see CLAUDE.md)
 
 Each macOS script is executable and includes a `--help` option for detailed usage information:
 
