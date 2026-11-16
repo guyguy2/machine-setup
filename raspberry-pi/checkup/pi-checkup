@@ -253,6 +253,21 @@ listener_scope() {
 }
 # host_firewall_drops < `nft list table inet host`: true when it has an input-hook chain with policy drop
 host_firewall_drops() { grep -E 'hook input' | grep -q 'policy drop'; }
+# fw_accepts_port <tcp|udp> <port> < `nft list table inet host`: true when some rule accepts that destination port
+# (a single port, a { a, b } set or a lo-hi range), i.e. the port is reachable from somewhere despite the drop policy.
+# Rules that accept a whole interface (tailscale0, lo, docker) have no dport and don't count: that is the point.
+fw_accepts_port() {
+  local proto=$1 port=$2 line spec tok lo hi
+  while IFS= read -r line; do
+    [[ $line == *"$proto dport "* && $line == *accept* ]] || continue
+    spec=${line#*"$proto dport "}; spec=${spec%%accept*}; spec=${spec//[\{\},]/ }
+    for tok in $spec; do
+      lo=${tok%-*}; hi=${tok#*-}
+      if [[ $lo =~ ^[0-9]+$ && $hi =~ ^[0-9]+$ ]] && (( port >= lo && port <= hi )); then return 0; fi
+    done
+  done
+  return 1
+}
 # root_exec_paths < `systemctl show -p Id,User,ExecStart,...` for many units: "unit path" for every absolute path in
 # the commands of units that run as root (User= empty or root). Arguments count too (bash /path/script.sh).
 root_exec_paths() {
@@ -741,7 +756,13 @@ check_packages() {
 # ---------- security: exposure, firewall, ssh, secrets, tailnet ----------
 check_security() {
   # Listeners (TCP and UDP) on every interface (or the LAN address) that aren't meant for the LAN.
-  local proto addr port proc scope allowed seen=" " v6open=" "
+  local proto addr port proc scope allowed seen=" " v6open=" " warned=0 fwtext="" fw_on=0
+  local -a fw_blocked=()
+  # A wildcard listener whose port the host firewall doesn't accept is only reachable over loopback/tailnet: not a finding.
+  if can_sudo; then
+    fwtext=$(S nft list table inet host)
+    host_firewall_drops <<<"$fwtext" && fw_on=1
+  fi
   while read -r proto addr port proc; do
     scope=$(listener_scope "$addr")
     [[ $scope == local || $scope == tailnet ]] && continue
@@ -752,9 +773,14 @@ check_security() {
     [[ $allowed == *" $port "* || $seen == *" $proto/$port "* ]] && continue
     seen+="$proto/$port "
     [[ $proc == - ]] && proc="unknown process"
+    if (( fw_on )) && ! fw_accepts_port "$proto" "$port" <<<"$fwtext"; then
+      fw_blocked+=("$proto/$port (${proc%% *})"); continue
+    fi
+    warned=1
     warn security.listener "$proto port $port ($proc) listens on ${addr/#\*/all interfaces}, not just localhost/tailnet"
   done < <({ S ss -ltunHp || ss -ltunH; } | parse_listeners)
-  [[ $seen == " " ]] && ok "only TCP ${LAN_PORTS[*]} and UDP ${LAN_UDP_PORTS[*]} are open to the LAN"
+  (( warned )) || ok "only TCP ${LAN_PORTS[*]} and UDP ${LAN_UDP_PORTS[*]} are open to the LAN"
+  (( ${#fw_blocked[@]} )) && info "listening on all interfaces but dropped by the host firewall (reachable only over loopback/tailnet): ${fw_blocked[*]}"
 
   # Ad-hoc file servers left behind by earlier sessions.
   local pid

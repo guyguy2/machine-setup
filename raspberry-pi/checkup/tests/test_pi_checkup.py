@@ -177,6 +177,24 @@ def test_host_firewall_needs_input_drop_in_its_table():
         assert sh("host_firewall_drops && echo yes || echo no", stdin=text) == want + "\n", text
 
 
+NFT_TABLE = (
+    "table inet host {\n\tchain input {\n\t\ttype filter hook input priority filter + 10; policy drop;\n"
+    "\t\tiifname \"tailscale0\" accept\n\t\tudp dport 41641 accept\n\t\tudp sport 67 udp dport 68 accept\n"
+    "\t\tip saddr @lan4 jump lan\n\t\tcounter packets 1 bytes 2 drop comment \"everything else\"\n\t}\n"
+    "\tchain lan {\n\t\ttcp dport { 22, 53, 8090, 8091 } accept\n\t\tudp dport { 53, 5353, 8091 } accept\n"
+    "\t\ttcp dport 9000-9010 accept\n\t}\n}\n"
+)
+
+
+def test_fw_accepts_port_reads_ports_sets_and_ranges():
+    cases = [("tcp", 22, "yes"), ("tcp", 8091, "yes"), ("udp", 5353, "yes"), ("udp", 41641, "yes"),
+             ("tcp", 9005, "yes"), ("tcp", 5900, "no"), ("udp", 22, "no"), ("tcp", 41641, "no"), ("tcp", 9011, "no")]
+    for proto, port, want in cases:
+        got = sh(f'fw_accepts_port {proto} {port} && echo yes || echo no', stdin=NFT_TABLE)
+        assert got == want + "\n", (proto, port)
+    assert sh("fw_accepts_port tcp 22 && echo yes || echo no", stdin="") == "no\n"
+
+
 # ---------- R-008: root units running code a non-root user can change ----------
 
 SYSTEMCTL_SHOW = (
