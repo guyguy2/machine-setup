@@ -825,8 +825,8 @@ if (( drill )); then
 else
   note "- Tailscale: sudo tailscale up --ssh   (a restored Pi joins the tailnet as a new node)"
   if [[ $host != "$own_host" ]]; then
-    note "- Hermes on this Pi needs its own Anthropic API key (one per Pi): create one for $own_host and replace"
-    note "  ANTHROPIC_API_KEY in $hermes_home/.env (the restored one is $host's)"
+    note "- Hermes on this Pi needs its own Claude subscription login (OAuth refresh tokens are single-use, so two Pis"
+    note "  can't share $host's): hermes auth remove anthropic claude-subscription; hermes auth add anthropic --type oauth --priority 0 --label claude-subscription"
   fi
   if want hermes && [[ $host != "$own_host" ]]; then
     note "- $host's Hermes cron jobs came along (hermes cron list): remove the ones this Pi shouldn't run before its"

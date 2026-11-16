@@ -137,6 +137,7 @@ expiry_check() {
 # env_value <file> <KEY>: KEY's value from a dotenv file, quotes stripped. Only ever piped into a probe, never printed.
 env_value() { sed -nE "s/^[[:space:]]*(export[[:space:]]+)?$2=[\"']?([^\"']*)[\"']?[[:space:]]*$/\2/p" "$1" 2>/dev/null | tail -1; }
 # curl_k <curl args...>: curl with its URL and headers read from stdin (-K -), so a token never shows in argv (ps).
+# shellcheck disable=SC2120  # extra args are optional; today only the Telegram probe calls it, with none
 curl_k() { curl -s -m 10 -K - "$@"; }
 # npm_upgrades < `npm outdated -g --json`: "name current->latest" for each package whose latest is newer than what's
 # installed. npm also lists a package whose installed version is newer than the newest one min-release-age allows
@@ -910,7 +911,7 @@ check_agents() {
   fi
   if have claude; then
     out=$(timeout 20 claude auth status 2>/dev/null)
-    if [[ $(jq -r '.loggedIn // empty' <<<"$out" 2>/dev/null) == false ]]; then warn agents.claude-login "Claude Code is signed out (Hermes borrows its login)"
+    if [[ $(jq -r '.loggedIn // empty' <<<"$out" 2>/dev/null) == false ]]; then warn agents.claude-login "Claude Code is signed out (the claude CLI only; Hermes has its own login, checked separately)"
     else
       exp=$(jq -r '.loginExpiresAt // empty' <<<"$out" 2>/dev/null)
       [[ -n $exp ]] && expiry_check agents.claude-expiry "Claude Code login" "$exp" 3 "sign in again: claude, then /login"
@@ -927,9 +928,9 @@ check_credentials() {
   p=$(mktemp -d); trap 'rm -rf "$p"; trap - RETURN' RETURN
   have gh && { timeout 15 gh api -i /user 2>/dev/null | tr -d '\r' \
     | sed -nE 's/^github-authentication-token-expiration: *//Ip' | head -1 > "$p/gh"; } &
+  # Hermes's Claude login is the subscription (OAuth) credential; status prints only "<provider>: logged in/out".
+  have hermes && { timeout 20 hermes auth status anthropic > "$p/anthropic" 2>/dev/null; } &
   if [[ -r $henv ]]; then
-    { tok=$(env_value "$henv" ANTHROPIC_API_KEY); [[ -n $tok ]] && printf 'url = "https://api.anthropic.com/v1/models?limit=1"\nheader = "x-api-key: %s"\nheader = "anthropic-version: 2023-06-01"\n' "$tok" \
-        | curl_k -o /dev/null -w '%{http_code}' > "$p/anthropic"; } &
     [[ $role == main ]] && { tok=$(env_value "$henv" TELEGRAM_BOT_TOKEN); [[ -n $tok ]] && printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$tok" \
         | curl_k > "$p/telegram"; } &
   fi
@@ -949,12 +950,8 @@ check_credentials() {
     else info "Tailscale node key: no expiry (disabled) or not signed in"; fi
   fi
   if [[ -f $p/anthropic ]]; then
-    code=$(<"$p/anthropic")
-    case $code in
-      200) ok "Anthropic API key (Hermes) works" ;;
-      401|403) warn agents.anthropic-key "Anthropic API key in ~/.hermes/.env is rejected (HTTP $code): revoked or wrong; make a new one in the console" ;;
-      *) warn agents.anthropic-key "Anthropic API key probe failed (HTTP ${code:-none}; network or API trouble)" ;;
-    esac
+    if grep -qi 'anthropic: logged in' "$p/anthropic"; then ok "Hermes Claude login (subscription OAuth) is signed in"
+    else warn agents.anthropic-login "Hermes Claude login isn't signed in (hermes auth status anthropic): replies fall back to Codex; sign in again with: hermes auth add anthropic --type oauth --priority 0 --label claude-subscription"; fi
   fi
   if [[ -f $p/telegram ]]; then
     out=$(<"$p/telegram")
