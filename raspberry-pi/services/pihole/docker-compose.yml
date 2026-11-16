@@ -6,7 +6,7 @@ services:
   pihole:
     # Pinned (agent-lab/reviews R-084): bump the tag on purpose; upd pulls it, waits for healthy, else rolls back.
     # pi-checkup warns when Pi-hole reports newer components. Tags: https://hub.docker.com/r/pihole/pihole/tags
-    image: pihole/pihole:2026.10.1
+    image: pihole/pihole:2026.11.0
     container_name: pihole
     hostname: pihole
     restart: unless-stopped
