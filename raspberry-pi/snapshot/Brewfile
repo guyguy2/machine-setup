@@ -32,4 +32,5 @@ brew "zoxide"
 brew "openclaw/tap/wacli", trusted: true
 cask "antigravity-cli"
 cask "claude-code@latest"
+cask "codex"
 cask "gcloud-cli"
