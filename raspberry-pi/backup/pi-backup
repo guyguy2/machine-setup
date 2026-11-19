@@ -805,7 +805,7 @@ classify() {
 # Restic's errors go to the journal; its stdout (file lists, progress) never does.
 show_err() { [[ -s $errf ]] && tail -n 20 "$errf" | sed 's/^/  restic: /' >&2; return 0; }
 
-retention=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+retention=(--keep-daily 5)
 # Group by host+tags, not the default host+paths: an include appearing or vanishing changes the path set, which
 # would start a new group (full re-read, and old groups that forget never thins out).
 grouping=(--host "$host" --tag pi-backup --group-by "host,tags")

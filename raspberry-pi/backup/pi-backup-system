@@ -61,7 +61,7 @@ last=$state/last.json
 mac_repo_file=${PI_BACKUP_MAC_REPO_FILE:-/root/.config/pi-backup/mac-repo}
 copy_state=$state/copy.json
 rclone_conf=/root/.config/rclone/rclone.conf
-keep=(--keep-daily 7 --keep-weekly 4 --keep-monthly 6)
+keep=(--keep-daily 5)
 # One retention group per host: grouping by paths (restic's default) would start a new group, never thinned,
 # whenever a glob in system-includes.txt matches one more or one fewer file.
 scope=(--host "$host" --tag pi-backup --group-by "host,tags")

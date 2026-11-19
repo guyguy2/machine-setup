@@ -33,7 +33,7 @@ its `systemd` step) and the Hermes install. They deliberately skip everything be
 | 2 | Passphrase | Master copies in the user's password manager; each Pi keeps owner-only password files for the nightly runs | Without it the backup can't be opened by anyone | |
 | 3 | Drive access | New rclone remote **`gdrive-backup:`**, scope **`drive.file`**, on **the user's own Google OAuth client from day one** | `gdrive:` stays `drive.readonly`. `drive.file` only sees files created by the same OAuth client, so switching clients later would hide the repo || ✅ code 2026-11-06: pi-status Overview Backup strip + attention items (`/api/backup`), `pi-checkup backup` domain, `upd` step, README "Nightly backup"; shows real data after the first run |
 | 4 | Scope | **Everything**: Hermes incl. secrets, sign-ins, `me` store, app data | Restore without re-teaching or re-signing in | ✅ 2026-11-06 (worker skips `rei`, `mail`, DreamBase; `save.sh --push` refuses on a worker) |
-| 5 | Schedule | **Nightly ~03:00** (systemd timers); keep 7 daily / 4 weekly / 6 monthly; `restic check` weekly; failures in pi-status and pi-checkup | restic stores only changes, so nightly is cheap | |
+| 5 | Schedule | **Nightly ~03:00** (systemd timers); keep the last 5 daily (changed 2026-11-19, was 7 daily / 4 weekly / 6 monthly); `restic check` weekly; failures in pi-status and pi-checkup | restic stores only changes, so nightly is cheap | |
 | 6 | Setting up a Pi | **`restore.sh --role main\|worker`**; Ansible only if the Pis drift | Builds on the tested script | |
 | 7 | Talking to agents | **One front door**: the main Pi's Hermes on Telegram. It hands work to workers with **`hermes peer run`/`peer status`** (wrapped in an agent-lab command it runs from the terminal). **Each Pi keeps its own kanban board** | One bot, one chat. Hermes kanban is single-host by design (`kanban.md`, "Out of scope"); two gateways can't share one bot token | |
 | 8 | Model keys | **A separate Anthropic API key per Pi**, same account | Per-Pi usage; revoke one Pi alone | |
@@ -177,7 +177,7 @@ incomplete (restic exit 3, or a staging item failed).
 - `init`: create the repo if it doesn't exist (`restic cat config` first), then link and enable the timer
   (`pi-backup-system`: enable the system timer). Idempotent. `--dry-run` prints what it would do.
 - `run [--dry-run]`: lock, `restic unlock` (stale locks only), stage, `restic backup --json --ignore-inode
-  --ignore-ctime --files-from … --exclude-file …`, `restic forget --keep-daily 7 --keep-weekly 4 --keep-monthly 6`
+  --ignore-ctime --files-from … --exclude-file …`, `restic forget --keep-daily 5`
   (no prune), write `last.json`, remove staging. If a snapshot was made (exit 0 or 4) and the check is due
   (`last_check` missing, `ok` false, or older than 6.5 days), then `forget --prune` and `check` (fills `last_check`;
   an unreachable repo, exit 3, leaves the previous `last_check` alone). `--dry-run`: stage, `restic backup
