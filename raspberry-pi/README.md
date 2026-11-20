@@ -448,3 +448,5 @@ code on disk is newer than the running server. It doesn't poll. Tests: `cd ~/dev
 `mac/` holds scripts that run on the Mac and talk to the Pi over `ssh pi`. Keep them out of `bin/`, which is on the Pi.
 
 `mac/pi-paste` sends the clipboard image to `~/screenshots` on the Pi and prints its remote path. Ctrl+Opt+V in Ghostty runs it through `~/.hammerspoon/init.lua` and types that path into the terminal.
+
+`mac/pull-statements` copies new manager statement PDFs from the Pi's inbox (`~/.local/share/rei/statements/<portal>/`, filled by `reidash.portals` in `~/dev/rei`) into the Obsidian vault on the Mac. Dry run by default, `--yes` to copy; it only adds files and never overwrites. The Pi gets no write access to the vault. Put it on the Mac with `scp pi:dev/machine-setup/raspberry-pi/mac/pull-statements ~/bin/` (or `git pull` this repo there).

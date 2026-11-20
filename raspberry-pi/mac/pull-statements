@@ -1,0 +1,70 @@
+#!/bin/zsh
+# pull-statements: copy new manager statement PDFs from the Pi's inbox into the Obsidian vault, from the Mac.
+#
+#   pull-statements          dry run: say what would be copied
+#   pull-statements --yes    copy it
+#
+# The Pi downloads statements with `uv run python -m reidash.portals <portal> --write` (in ~/dev/rei) into
+# ~/.local/share/rei/statements/<portal>/ as <owner>_<doc>_<YYYY-MM-DD>_<YYYY-MM-DD>.pdf. This script runs on the
+# Mac, so the Pi never needs write access to the vault or Drive. The Mac reaches the Pi with `ssh pi`.
+#
+# It only adds files: a statement whose vault file already exists is skipped, never overwritten. Each PDF is copied
+# to a temporary file, checked (starts with %PDF-, has %%EOF, is not tiny) and only then moved into place under the
+# vault's own name, Owner_Statement_(MM_DD_YYYY_-_MM_DD_YYYY).pdf. It never opens or reads a PDF's contents.
+#
+# Portals and where their statements go in the vault (one line each in PORTALS below). Marshall Reddick's AppFolio
+# packets are not here yet: the vault has no folder for them.
+#
+# Test without a Pi or vault: PULL_PI_RUN="sh -c" PULL_VAULT=/tmp/vault pull-statements
+set -euo pipefail
+
+VAULT="${PULL_VAULT:-$HOME/Google Drive/My Drive/ObsidianVault}"
+PI_RUN=(${(z)${PULL_PI_RUN:-/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=5 pi}})
+INBOX='$HOME/.local/share/rei/statements'
+typeset -A PORTALS
+PORTALS=(
+  propertyware "05-References/REI/MD/financials"
+)
+
+apply=0
+case "${1:-}" in
+  "") ;;
+  --yes) apply=1 ;;
+  *) print -u2 "usage: pull-statements [--yes]"; exit 2 ;;
+esac
+
+[[ -d "$VAULT" ]] || { print -u2 "pull-statements: vault not found at $VAULT (is Google Drive running?)"; exit 1; }
+
+copied=0 skipped=0 problems=0
+for portal dest in ${(kv)PORTALS}; do
+  folder="$VAULT/$dest"
+  [[ -d "$folder" ]] || { print -u2 "pull-statements: no folder $dest in the vault; not creating it"; problems=$((problems + 1)); continue }
+  names=$("${PI_RUN[@]}" "ls $INBOX/$portal 2>/dev/null" || true)
+  [[ -n "$names" ]] || { print "$portal: nothing in the Pi's inbox"; continue }
+  for f in ${(f)names}; do
+    if [[ ! "$f" =~ '^[0-9]+_[0-9]+_([0-9]{4})-([0-9]{2})-([0-9]{2})_([0-9]{4})-([0-9]{2})-([0-9]{2})\.pdf$' ]]; then
+      print -u2 "$portal: skipping an unexpected name in the inbox"; problems=$((problems + 1)); continue
+    fi
+    m=("${match[@]}")
+    name="Owner_Statement_(${m[2]}_${m[3]}_${m[1]}_-_${m[5]}_${m[6]}_${m[4]}).pdf"
+    if [[ -e "$folder/$name" ]]; then
+      print "already in the vault: $name"; skipped=$((skipped + 1)); continue
+    fi
+    if (( ! apply )); then
+      print "would copy: $name  ->  $dest/"; copied=$((copied + 1)); continue
+    fi
+    tmp=$(mktemp "${TMPDIR:-/tmp}/pull-statement.XXXXXX")
+    "${PI_RUN[@]}" "cat $INBOX/$portal/$f" > "$tmp"
+    size=$(wc -c < "$tmp" | tr -d " ")
+    if (( size < 5000 )) || [[ "$(head -c 5 "$tmp")" != "%PDF-" ]] || ! tail -c 2048 "$tmp" | grep -q '%%EOF'; then
+      rm -f "$tmp"; print -u2 "$portal: $f isn't a complete PDF; not copied"; problems=$((problems + 1)); continue
+    fi
+    mv -n "$tmp" "$folder/$name"
+    [[ ! -e "$tmp" ]] || { rm -f "$tmp"; print -u2 "$name appeared meanwhile; left as is"; continue }
+    print "copied: $name  ->  $dest/  (${size} bytes)"; copied=$((copied + 1))
+  done
+done
+
+(( apply )) || print "dry run: nothing copied. Run with --yes to copy."
+print "$copied to copy or copied, $skipped already there, $problems problems"
+(( problems == 0 ))
