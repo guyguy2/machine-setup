@@ -26,6 +26,14 @@ def read(path: str) -> str:
         return f.read()
 
 
+def read_optional(path: str) -> str:
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
 def run(*cmd: str, timeout: int = 3) -> str:
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -76,6 +84,22 @@ def throttled() -> list[str]:
     return [msg for bit, msg in THROTTLE_BITS.items() if value >> bit & 1]
 
 
+def _uptime_seconds() -> int:
+    parts = read_optional("/proc/uptime").split()
+    try:
+        return int(float(parts[0])) if parts else 0
+    except ValueError:
+        return 0
+
+
+def _temp_c() -> float | None:
+    raw = read_optional("/sys/class/thermal/thermal_zone0/temp").strip()
+    try:
+        return round(int(raw) / 1000, 1) if raw else None
+    except ValueError:
+        return None
+
+
 def status() -> dict:
     mem = meminfo()
     disk = shutil.disk_usage("/")
@@ -86,11 +110,11 @@ def status() -> dict:
         "model": model,
         "os": run("sh", "-c", ". /etc/os-release && echo $PRETTY_NAME"),
         "kernel": platform.release(),
-        "uptime_s": int(float(read("/proc/uptime").split()[0])),
+        "uptime_s": _uptime_seconds(),
         "load": [round(x, 2) for x in os.getloadavg()],
         "cpus": os.cpu_count(),
         "cpu_percent": cpu_percent(),
-        "temp_c": round(int(read("/sys/class/thermal/thermal_zone0/temp")) / 1000, 1),
+        "temp_c": _temp_c(),
         "mem_total": mem["MemTotal"],
         "mem_used": mem["MemTotal"] - mem["MemAvailable"],
         "disk_total": disk.total,
@@ -119,15 +143,17 @@ def redact(cmd: str) -> str:
 
 
 _users: dict[int, str] = {}
+_users_lock = threading.Lock()
 
 
 def username(uid: int) -> str:
-    if uid not in _users:
-        try:
-            _users[uid] = pwd.getpwuid(uid).pw_name
-        except KeyError:
-            _users[uid] = str(uid)
-    return _users[uid]
+    with _users_lock:
+        if uid not in _users:
+            try:
+                _users[uid] = pwd.getpwuid(uid).pw_name
+            except KeyError:
+                _users[uid] = str(uid)
+        return _users[uid]
 
 
 def sample() -> dict[int, dict]:
@@ -1153,7 +1179,8 @@ def network() -> dict:
         "local_ip": route.get("prefsrc", ""),
         "gateway": route.get("gateway", ""),
         "device": route.get("dev", ""),
-        "dns": [l.split()[1] for l in read("/etc/resolv.conf").splitlines() if l.startswith("nameserver")],
+        "dns": [parts[1] for line in read_optional("/etc/resolv.conf").splitlines()
+                if (parts := line.split()) and parts[0] == "nameserver" and len(parts) > 1],
         "interfaces": interfaces,
         "tailscale": ts,
         "sessions": sessions(),

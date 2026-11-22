@@ -337,8 +337,8 @@ fi
 # when Pi-hole has no local DNS records at all; any other list is left alone and reported. pi-checkup checks it too.
 pihole_local_dns() {
   local toml=$1 lan name want cur
-  lan=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p')
-  name=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' 2>/dev/null | sed 's/\.$//')
+  lan=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' || true)
+  name=$(tailscale status --json 2>/dev/null | jq -r '.Self.DNSName // empty' 2>/dev/null | sed 's/\.$//' || true)
   if [[ -z $lan || -z $name ]]; then
     echo "  local DNS record: no LAN address or Tailscale isn't signed in yet; after 'sudo tailscale up' re-run ./restore.sh --only pihole"
     return 0
@@ -367,10 +367,13 @@ PI_DNS="127.0.0.1 8.8.8.8 8.8.4.4"
 pi_dns_fallback() {
   local dev con cur
   have nmcli || { echo "  Pi's DNS fallback: no NetworkManager (nmcli), skipped"; return 0; }
-  dev=$(ip -4 route show default 2>/dev/null | sed -nE 's/.* dev ([^ ]+).*/\1/p' | head -1)
-  con=$(nmcli -g GENERAL.CONNECTION dev show "$dev" 2>/dev/null)
+  dev=$(ip -4 route show default 2>/dev/null | sed -nE 's/.* dev ([^ ]+).*/\1/p' | head -1 || true)
+  con=""
+  if [[ -n $dev ]]; then
+    con=$(nmcli -g GENERAL.CONNECTION dev show "$dev" 2>/dev/null || true)
+  fi
   [[ -n $dev && -n $con ]] || { echo "  Pi's DNS fallback: no default-route connection found, skipped"; return 0; }
-  cur=$(nmcli -g ipv4.dns,ipv4.ignore-auto-dns,ipv6.ignore-auto-dns con show "$con" 2>/dev/null | paste -sd'|')
+  cur=$(nmcli -g ipv4.dns,ipv4.ignore-auto-dns,ipv6.ignore-auto-dns con show "$con" 2>/dev/null | paste -sd'|' || true)
   if [[ $cur == "${PI_DNS// /,}|yes|yes" ]]; then echo "  Pi's DNS already Pi-hole + Google fallback ($con)"; return 0; fi
   if would "nmcli con mod '$con' ipv4.dns '$PI_DNS' ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes; nmcli dev reapply $dev"; then
     sudo nmcli con mod "$con" ipv4.dns "$PI_DNS" ipv4.ignore-auto-dns yes ipv6.ignore-auto-dns yes \

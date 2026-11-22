@@ -56,8 +56,29 @@ def test_pane_limit_kind_uses_latest_message():
     assert cr.pane_limit_kind(LIMIT_MSG) == "session"
     assert cr.pane_limit_kind("You've hit your weekly limit · resets Mon 12:00am") == "weekly"
     assert cr.pane_limit_kind("You've hit your Opus limit") == "model"
+    assert cr.pane_limit_kind("You've hit your Claude 3.7 Sonnet-2 limit") == "model"
+    assert cr.pane_limit_kind("You've hit your Opus 4.5 limit") == "model"
+    assert cr.pane_limit_kind("hit your weekly limit wait now hit your session limit") == "session"
     assert cr.pane_limit_kind("hit your weekly limit ... later ... hit your session limit") == "session"
     assert cr.pane_limit_kind("just a prompt") is None
+
+
+def test_trim_log_preserves_utf8_and_line_boundaries(tmp_path):
+    p = tmp_path / "log"
+    line1 = "2026-01-01 первый café " + ("x" * 40) + "\n"
+    line2 = "2026-01-01 вторая café\n"
+    p.write_text(line1 + line2, encoding="utf-8")
+    cr.trim_log(p, len(line2.encode("utf-8")) + 5)
+    assert p.read_text(encoding="utf-8") == line2
+
+
+def test_parse_waiter_rejects_corrupt_fields():
+    assert cr.parse_waiter({}) is None
+    assert cr.parse_waiter({"pid": None, "wake": 100}) is None
+    assert cr.parse_waiter({"pid": True, "wake": 100}) is None
+    assert cr.parse_waiter({"pid": "abc", "wake": 100}) is None
+    assert cr.parse_waiter({"pid": 123, "wake": "bad"}) is None
+    assert cr.parse_waiter({"pid": 123, "wake": 456.5}) == (123, 456.5)
 
 
 def test_footer_present_only_checks_bottom_lines():

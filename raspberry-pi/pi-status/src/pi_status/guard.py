@@ -33,16 +33,17 @@ def owner_logins() -> set[str]:
     """The tailnet login(s) allowed to POST: the owner of this node (cached once known)."""
     if os.environ.get(LOGINS_ENV):
         return {x.strip().lower() for x in os.environ[LOGINS_ENV].split(",") if x.strip()}
-    if not _owner:
-        try:
-            data = json.loads(collect.run("tailscale", "status", "--json") or "{}")
-        except ValueError:
-            data = {}
-        uid = str((data.get("Self") or {}).get("UserID", ""))
-        login = ((data.get("User") or {}).get(uid) or {}).get("LoginName", "")
-        if login:
-            _owner.add(login.lower())
-    return set(_owner)
+    with _lock:
+        if not _owner:
+            try:
+                data = json.loads(collect.run("tailscale", "status", "--json") or "{}")
+            except ValueError:
+                data = {}
+            uid = str((data.get("Self") or {}).get("UserID", ""))
+            login = ((data.get("User") or {}).get(uid) or {}).get("LoginName", "")
+            if login:
+                _owner.add(login.lower())
+        return set(_owner)
 
 
 def header_login(value: str | None) -> str:

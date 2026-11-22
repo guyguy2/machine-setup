@@ -23,7 +23,7 @@ STATE=${PI_ALERT_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/pi-alert}
 API_HOST=api.telegram.org
 HOST=$(hostname -s 2>/dev/null || echo pi)
 # Units whose failures aren't worth a message: desktop-session helpers on a headless Pi (globs).
-IGNORE_UNITS=('xdg-desktop-portal*' 'ssh-agent.service' 'pi-alert@*')
+IGNORE_UNITS=('xdg-desktop-portal*' 'ssh-agent.service' 'pi-alert@*' 'pi-alert-watch.service' 'pi-alert-digest.service')
 FAILED_ID=d9b373ed55a64feb8242e02dbe79a49c  # journal MESSAGE_ID of "<unit>: Failed with result ..."
 MAX_UNSENT=20
 dry=${PI_ALERT_DRY:-0}
@@ -53,14 +53,17 @@ backoff_window() {
 rate_check() {
   local f="$STATE/keys/$1" now=$2 last=0 n=0 held=0
   mkdir -p "$STATE/keys"
-  [[ -f $f ]] && read -r last n held < "$f"
-  last=${last:-0} n=${n:-0} held=${held:-0}
-  (( now - last > 172800 )) && n=0
-  if (( now - last >= $(backoff_window "$n") )); then
-    echo "$now $((n + 1)) 0" > "$f"; echo "send $held"
-  else
-    echo "$last $n $((held + 1))" > "$f"; echo hold
-  fi
+  (
+    flock -w 10 8 || true
+    [[ -f $f ]] && read -r last n held < "$f"
+    last=${last:-0} n=${n:-0} held=${held:-0}
+    (( now - last > 172800 )) && n=0
+    if (( now - last >= $(backoff_window "$n") )); then
+      echo "$now $((n + 1)) 0" > "$f"; echo "send $held"
+    else
+      echo "$last $n $((held + 1))" > "$f"; echo hold
+    fi
+  ) 8>"$STATE/keys.lock"
 }
 
 # keyname <text>: a file-safe key

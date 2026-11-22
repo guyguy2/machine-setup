@@ -32,9 +32,12 @@ Exit codes: 0 success, 1 general error, 2 invalid input.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -69,6 +72,20 @@ def state_dir() -> Path:
     return Path(base) / "claude-resume"
 
 
+def trim_log(path: Path, keep_bytes: int) -> None:
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    kept: list[str] = []
+    size = 0
+    for ln in reversed(lines):
+        b = len(ln.encode("utf-8"))
+        if kept and size + b > keep_bytes:
+            break
+        kept.append(ln)
+        size += b
+    kept.reverse()
+    path.write_text("".join(kept), encoding="utf-8")
+
+
 def log(msg: str) -> None:
     line = f"[{datetime.now():%Y-%m-%d %H:%M:%S}] [{os.getpid()}] {msg}"
     if VERBOSE:
@@ -78,7 +95,7 @@ def log(msg: str) -> None:
         d.mkdir(parents=True, exist_ok=True)
         path = d / "log"
         if path.exists() and path.stat().st_size > LOG_MAX_BYTES:
-            path.write_bytes(path.read_bytes()[-LOG_MAX_BYTES // 2:])
+            trim_log(path, LOG_MAX_BYTES // 2)
         with path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:
@@ -98,6 +115,29 @@ def read_json(path: Path) -> dict:
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+@contextlib.contextmanager
+def waiter_lock(path: Path):
+    lock_path = path.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def parse_waiter(data: dict) -> tuple[int, float] | None:
+    if isinstance(data.get("pid"), bool) or isinstance(data.get("wake"), bool):
+        return None
+    try:
+        pid = int(data["pid"])
+        wake = float(data["wake"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return (pid, wake) if pid > 0 else None
 
 
 def safe_name(value: str) -> str:
@@ -130,7 +170,9 @@ def parse_limits(statusline: dict) -> dict:
 
 def pane_limit_kind(text: str) -> str | None:
     """Classify the most recent 'You've hit your X limit' message: session, weekly or model."""
-    matches = re.findall(r"hit your ([A-Za-z]+(?: [A-Za-z]+)?) limit", text, re.I)
+    matches = re.findall(
+        r"hit your ((?!\blimit\b)[A-Za-z0-9][A-Za-z0-9._-]*(?: (?!\blimit\b)[A-Za-z0-9][A-Za-z0-9._-]*){0,3}) limit",
+        text, re.I)
     if not matches:
         return None
     word = matches[-1].lower()
@@ -397,26 +439,36 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     baseline = transcript_activity(transcript)
     wake = reset + args.buffer
     path = waiter_path(pane)
-    old = read_json(path)
-    if old and is_our_process(int(old.get("pid", 0))) and old["pid"] != os.getpid():
-        if abs(old.get("wake", 0) - wake) < 120:
-            log(f"skip: waiter {old['pid']} already scheduled for {pane}")
-            return EXIT_OK
-        os.kill(int(old["pid"]), signal.SIGTERM)
-        log(f"replaced waiter {old['pid']} for {pane}")
-    write_json_atomic(path, {"pid": os.getpid(), "wake": wake, "session_id": sid})
+    with waiter_lock(path):
+        old = parse_waiter(read_json(path))
+        if old and is_our_process(old[0]) and old[0] != os.getpid():
+            if abs(old[1] - wake) < 120:
+                log(f"skip: waiter {old[0]} already scheduled for {pane}")
+                return EXIT_OK
+            try:
+                os.kill(old[0], signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            log(f"replaced waiter {old[0]} for {pane}")
+        write_json_atomic(path, {"pid": os.getpid(), "wake": wake, "session_id": sid})
     log(f"scheduled {pane}: {reason}, wake at {datetime.fromtimestamp(wake):%H:%M:%S} "
         f"(in {int(wake - now)}s), baseline={baseline}")
 
     if args.caffeinate:
-        subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        caf = shutil.which("caffeinate")
+        if caf:
+            subprocess.Popen([caf, "-i", "-w", str(os.getpid())],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            log("caffeinate unavailable on this platform; skipping")
     try:
         sleep_until(wake)
         return wake_and_send(args, pane, transcript, baseline, payload.get("claude_pid"))
     finally:
-        if read_json(path).get("pid") == os.getpid():
-            path.unlink(missing_ok=True)
+        with waiter_lock(path):
+            cur = parse_waiter(read_json(path))
+            if cur and cur[0] == os.getpid():
+                path.unlink(missing_ok=True)
 
 
 def wake_and_send(args: argparse.Namespace, pane: str, transcript: str | None,
@@ -468,10 +520,10 @@ def cmd_send(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     found = False
     for f in sorted((state_dir() / "waiters").glob("*.json")):
-        w = read_json(f)
-        if w and is_our_process(int(w.get("pid", 0))):
+        w = parse_waiter(read_json(f))
+        if w and is_our_process(w[0]):
             found = True
-            print(f"pane {f.stem}: pid {w['pid']}, wakes at {datetime.fromtimestamp(w['wake']):%Y-%m-%d %H:%M:%S}")
+            print(f"pane {f.stem}: pid {w[0]}, wakes at {datetime.fromtimestamp(w[1]):%Y-%m-%d %H:%M:%S}")
     if not found:
         print("no waiters scheduled")
     return EXIT_OK

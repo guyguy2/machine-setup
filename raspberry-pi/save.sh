@@ -82,11 +82,12 @@ say "apt: manual packages + third-party sources"
 apt-mark showmanual | LC_ALL=C sort > "$snap/apt-manual.txt"
 # Everything except the stock Debian and Raspberry Pi lists (the image supplies those).
 for f in /etc/apt/sources.list.d/*; do
+  [[ -e $f ]] || continue
   case ${f##*/} in debian.sources|raspi.sources|raspi.list) continue ;; esac
   cp "$f" "$snap/apt-sources/"
   # Public signing keys the source refers to.
-  grep -ho '/usr/share/keyrings/[^] ]*' "$f" 2>/dev/null | sort -u | while read -r k; do
-    [[ -f $k ]] && cp "$k" "$snap/apt-sources/"
+  { grep -ho '/usr/share/keyrings/[^] ]*' "$f" 2>/dev/null || true; } | sort -u | while read -r k; do
+    if [[ -f $k ]]; then cp "$k" "$snap/apt-sources/"; fi
   done
 done
 

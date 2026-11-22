@@ -1053,3 +1053,23 @@ def test_pi_up_json_mode_is_valid_and_matches_its_exit_code():
     assert data["checks"] and all(set(c) == {"name", "ok", "detail"} for c in data["checks"])
     assert data["red"] == sum(not c["ok"] for c in data["checks"])
     assert out.returncode == (1 if data["red"] else 0)
+
+
+def test_uptime_temp_and_resolv_tolerate_missing_or_malformed(monkeypatch):
+    monkeypatch.setattr(collect, "read_optional", lambda p: "")
+    assert collect._uptime_seconds() == 0
+    assert collect._temp_c() is None
+    monkeypatch.setattr(collect, "read_optional", lambda p: "nameserver\nnameserver 1.1.1.1\nnameserverfoo 9.9.9.9\n")
+    monkeypatch.setattr(collect, "run", lambda *cmd, **kw: "")
+    monkeypatch.setattr(collect, "default_route", lambda: {})
+    monkeypatch.setattr(collect, "tailscale_info", lambda: {})
+    monkeypatch.setattr(collect, "wifi", lambda: {})
+    monkeypatch.setattr(collect, "sessions", lambda: [])
+    assert collect.network()["dns"] == ["1.1.1.1"]
+
+
+def test_non_loopback_host_refused_without_allow_remote():
+    import pi_status
+    with pytest.raises(SystemExit) as exc:
+        pi_status.main(["--host", "0.0.0.0"])
+    assert "non-loopback" in str(exc.value)

@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -114,13 +115,24 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def main() -> None:
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Raspberry Pi status page")
     # Loopback only by default: `tailscale serve` publishes it over HTTPS and adds the identity header POSTs need.
     parser.add_argument("--host", default="127.0.0.1", help="address to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080)
-    args = parser.parse_args()
+    parser.add_argument("--allow-remote", action="store_true",
+                        help="allow non-loopback bind (unsafe unless behind a proxy that strips Tailscale-User-Login)")
+    args = parser.parse_args(argv)
     host = args.host
+    if host not in LOOPBACK_HOSTS:
+        if not args.allow_remote:
+            sys.exit(f"pi-status: refusing non-loopback --host {host!r} without --allow-remote "
+                     "(clients could spoof Tailscale-User-Login)")
+        print(f"pi-status: WARNING: listening on non-loopback {host!r}; ensure a trusted proxy strips "
+              "Tailscale-User-Login", file=sys.stderr, flush=True)
     collect.version()  # remember which code this process loaded, to flag a stale server later
     threading.Thread(target=collect.refresh_auth, daemon=True).start()  # warm the sign-in cache
     print(f"Serving on http://{host}:{args.port}", flush=True)
