@@ -28,11 +28,11 @@ show_help() {
 Usage: $(basename "$0") [OPTIONS]
 
 Orchestrates comprehensive backup of development environment settings including:
-  - Claude & Antigravity settings (via backup-ai-settings.zsh)
+  - Claude, Antigravity (CLI + ~/.gemini/config), and shared ~/.agents skills (via backup-ai-settings.zsh)
   - Shell configuration (.zshrc)
   - Git configuration (.gitconfig)
   - SSH configuration (.ssh/config)
-  - Gemini CLI settings (.gemini, .geminirc)
+  - Remaining Gemini CLI settings (.gemini, .geminirc)
   - Homebrew installed packages list (formulae and casks)
 
 Creates a timestamped zip for AI settings and a plain directory for dotfiles in data/.
@@ -212,10 +212,13 @@ if [[ "$SKIP_DOTFILES" == false ]]; then
             --exclude='user_id' \
             --exclude='installation_id' \
             --exclude='tmp/' \
+            --exclude='sandbox/' \
             --exclude='antigravity/implicit/' \
             --exclude='antigravity/installation_id' \
             --exclude='antigravity/code_tracker/' \
+            --exclude='antigravity-backup/' \
             --exclude='antigravity-cli/' \
+            --exclude='config/' \
             "$HOME/.gemini/" "$DOTFILES_DIR/.gemini/"; then
             DOTFILES_COLLECTED=true
         else

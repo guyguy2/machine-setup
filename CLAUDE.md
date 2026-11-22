@@ -78,14 +78,18 @@ Backs up essential Claude Code and Gemini Antigravity CLI settings to a timestam
   - `~/.claude/agents/` - Custom agents (if present)
   - `~/.claude/plugins/` - Installed plugins and marketplaces (if present)
   - `~/.claude.json` is intentionally excluded - it stores MCP server API keys/tokens in plaintext
-- **Gemini Antigravity CLI:**
-  - `~/.gemini/antigravity-cli/settings.json` - Main configuration
+- **Shared Global Skills (`~/.agents`):**
+  - `~/.agents/skills/` - Canonical cross-agent skills (e.g. `browser-feedback-loop`, `rex`, `android-cli`, `codebase-memory`)
+  - `~/.agents/.skill-lock.json` - Skill lock metadata (if present)
+  - `~/.local/bin/*` symlinks pointing into `~/.agents/skills/` (e.g. `chrome-debug`, `browser-ctl`)
+- **Gemini Antigravity CLI & Global Customizations:**
+  - `~/.gemini/antigravity-cli/settings.json` - Main CLI configuration
   - `~/.gemini/antigravity-cli/keybindings.json` - Custom shortcut keybindings (if present)
-  - `~/.gemini/antigravity-cli/bin/` - Custom scripts including statusline.py
-  - `~/.gemini/antigravity-cli/commands/` - Personal slash commands (if present)
-  - `~/.gemini/antigravity-cli/skills/` - Personal skills (if present)
-  - `~/.gemini/antigravity-cli/agents/` - Custom agents (if present)
-  - `~/.gemini/antigravity-cli/plugins/` - Installed plugins (if present)
+  - `~/.gemini/antigravity-cli/bin/` - Custom scripts including `statusline.py` (excludes `webm_encoder` binary)
+  - `~/.gemini/antigravity-cli/{commands,skills,agents,plugins}/` - CLI-scoped customizations (if present)
+  - `~/.gemini/config/{config,mcp_config,hooks,skills,plugins,rules}.json` - Global Antigravity configuration & MCP servers
+  - `~/.gemini/config/{skills,rules,plugins,sidecars}/` - Global Antigravity skills, rules, plugins, and sidecars
+  - `~/.gemini/GEMINI.md`, `~/.gemini/{agents,commands,skills}/` - Global Gemini/Antigravity user rules, subagents, commands, and skills
 
 **Usage:**
 ```bash
