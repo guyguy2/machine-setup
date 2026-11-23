@@ -9,6 +9,7 @@
     "command": "/home/guy/dev/statusline.sh"
   },
   "trustedWorkspaces": [
-    "/home/guy/dev"
+    "/home/guy/dev",
+    "/home/guy/dev/agent-lab"
   ]
 }
