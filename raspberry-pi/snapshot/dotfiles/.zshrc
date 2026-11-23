@@ -341,7 +341,16 @@ _upd_restic() {
   $bk/setup --check
   case $? in
     0) ;;
-    1) _upd_note "root's backup copies differ from the repo or Homebrew's rclone: review, then sudo $bk/setup" ;;
+    1)
+      # Drift (a repo edit or a new Homebrew rclone). setup shows root's diff and asks you to type yes, so the human
+      # review stays; upd just brings it to you instead of leaving a note. No terminal: leave the note.
+      if [[ -t 0 && -t 1 ]]; then
+        echo "root's backup copies are out of date: review the diff, type yes to install (anything else skips)"
+        sudo $bk/setup && $bk/setup --check >/dev/null \
+          || _upd_note "root's backup copies still differ from the repo or Homebrew's rclone: sudo $bk/setup"
+      else
+        _upd_note "root's backup copies differ from the repo or Homebrew's rclone: review, then sudo $bk/setup"
+      fi ;;
     *) _upd_note "root side of the nightly backup isn't installed: sudo $bk/setup" ;;
   esac
 }
