@@ -167,12 +167,24 @@ if [[ -n "$OLD_HOME" ]]; then
         [[ -f "$ANTIGRAVITY_AGENTAPI_FILE" ]] && FILES_TO_FIX+=("$ANTIGRAVITY_AGENTAPI_FILE")
         [[ -f "$CLAUDE_SETTINGS_FILE" ]] && FILES_TO_FIX+=("$CLAUDE_SETTINGS_FILE")
 
+        esc_old=${OLD_HOME//\\/\\\\}
+        esc_old=${esc_old//|/\\|}
+        esc_old=${esc_old//\./\\.}
+        esc_old=${esc_old//\*/\\*}
+        esc_old=${esc_old//[/\\[}
+        esc_old=${esc_old//]/\\]}
+        esc_old=${esc_old//^/\\^}
+        esc_old=${esc_old//$/\\$}
+        esc_new=${HOME//\\/\\\\}
+        esc_new=${esc_new//|/\\|}
+        esc_new=${esc_new//&/\\&}
         for cfg_file in "${FILES_TO_FIX[@]}"; do
             log_verbose "Fixing paths in ${cfg_file#$TEMP_DIR/}..."
             if [[ "$DRY_RUN" == true ]]; then
-                log_verbose "[DRY-RUN] sed \"s|$OLD_HOME|$HOME|g\" $cfg_file"
+                log_verbose "[DRY-RUN] sed 's|$esc_old|$esc_new|g' $cfg_file"
             else
-                sed -i '' "s|$OLD_HOME|$HOME|g" "$cfg_file" 2>/dev/null || sed -i "s|$OLD_HOME|$HOME|g" "$cfg_file"
+                # Portable in-place sed replacement (BSD sed first, then GNU)
+                sed -i '' "s|$esc_old|$esc_new|g" "$cfg_file" 2>/dev/null || sed -i "s|$esc_old|$esc_new|g" "$cfg_file"
             fi
         done
 

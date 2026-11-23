@@ -108,6 +108,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -o|--output)
+            if [[ $# -lt 2 ]]; then
+                log_error "$1 requires a filename argument"
+                exit 1
+            fi
             OUTPUT_FILE="$2"
             shift 2
             ;;
@@ -241,13 +245,15 @@ if [[ "$FOUND_SETTINGS" == false ]]; then
     exit 2
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # Generate output filename if not provided
 if [[ -z "$OUTPUT_FILE" ]]; then
     TIMESTAMP=$(date +%Y%m%d-%H%M%S)
     OUTPUT_FILE="ai-settings-${TIMESTAMP}.zip"
 
-    # When using default filename, create and use data/ directory
-    DATA_DIR="$(pwd)/data"
+    # When using default filename, create and use data/ directory next to this script
+    DATA_DIR="$SCRIPT_DIR/data"
     if [[ ! -d "$DATA_DIR" ]]; then
         log_verbose "Creating data directory: $DATA_DIR"
         mkdir -p "$DATA_DIR"

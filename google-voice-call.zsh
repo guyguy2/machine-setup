@@ -286,11 +286,11 @@ add_contact() {
     # Create contacts file if it doesn't exist
     touch "$CONTACTS_FILE"
 
-    # Check if contact already exists
-    if grep -q "^${name}:" "$CONTACTS_FILE" 2>/dev/null; then
+    # Check if contact already exists (fixed-string field match, no regex injection)
+    if awk -F: -v n="$name" '$1 == n {found=1} END {exit !found}' "$CONTACTS_FILE" 2>/dev/null; then
         log_warning "Contact '$name' already exists, updating..."
         # Remove existing entry
-        grep -v "^${name}:" "$CONTACTS_FILE" > "${CONTACTS_FILE}.tmp" 2>/dev/null || touch "${CONTACTS_FILE}.tmp"
+        awk -F: -v n="$name" '$1 != n' "$CONTACTS_FILE" > "${CONTACTS_FILE}.tmp"
         mv "${CONTACTS_FILE}.tmp" "$CONTACTS_FILE"
     fi
 
@@ -311,7 +311,7 @@ lookup_contact() {
 
     # Try exact match first
     local number
-    number=$(grep "^${name}:" "$CONTACTS_FILE" 2>/dev/null | cut -d':' -f2)
+    number=$(awk -F: -v n="$name" '$1 == n {print $2; exit}' "$CONTACTS_FILE" 2>/dev/null)
 
     if [[ -n "$number" ]]; then
         echo "$number"
@@ -319,7 +319,7 @@ lookup_contact() {
     fi
 
     # Try case-insensitive match
-    number=$(grep -i "^${name}:" "$CONTACTS_FILE" 2>/dev/null | cut -d':' -f2 | head -1)
+    number=$(awk -F: -v n="$name" 'BEGIN {nl = tolower(n)} tolower($1) == nl {print $2; exit}' "$CONTACTS_FILE" 2>/dev/null)
 
     if [[ -n "$number" ]]; then
         echo "$number"
@@ -394,7 +394,7 @@ parse_args() {
                 shift
                 ;;
             -b|--browser)
-                if [[ -n "$2" ]]; then
+                if [[ $# -ge 2 && -n "$2" ]]; then
                     BROWSER="$2"
                     shift 2
                 else
@@ -403,7 +403,7 @@ parse_args() {
                 fi
                 ;;
             -c|--add-contact)
-                if [[ -n "$2" ]]; then
+                if [[ $# -ge 2 && -n "$2" ]]; then
                     ADD_CONTACT=true
                     CONTACT_NAME="$2"
                     shift 2

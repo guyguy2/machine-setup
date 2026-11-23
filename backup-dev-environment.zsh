@@ -125,8 +125,8 @@ if [[ "$SKIP_SETTINGS" == false ]] && [[ ! -f "$SETTINGS_BACKUP_SCRIPT" ]]; then
     exit 2
 fi
 
-# Use data/ directory in current location
-DATA_DIR="$(pwd)/data"
+# Use data/ directory next to this script
+DATA_DIR="$SCRIPT_DIR/data"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
 log_info "Creating development environment backup..."

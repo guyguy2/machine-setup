@@ -6,6 +6,7 @@
 # Description: Installs Homebrew and various tools/apps on a new Mac with enhanced features
 
 set -euo pipefail  # Exit on error, undefined vars, pipe failures
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Exit codes
 EXIT_SUCCESS=0
@@ -206,7 +207,11 @@ install_homebrew() {
     fi
 
     if [[ -x "$brew_path" ]]; then
-        echo "eval \"\$($brew_path shellenv)\"" >> ~/.zprofile
+        local shellenv_line="eval \"\$($brew_path shellenv)\""
+        touch "$HOME/.zprofile"
+        if ! grep -qxF "$shellenv_line" "$HOME/.zprofile" 2>/dev/null; then
+            echo "$shellenv_line" >> "$HOME/.zprofile"
+        fi
         eval "$($brew_path shellenv)"
         log_success "Homebrew installed and configured successfully"
     else
@@ -249,22 +254,27 @@ install_oh_my_zsh() {
         log_success "Oh My Zsh installed successfully"
         log_info "You can customize your Oh My Zsh configuration in ~/.zshrc"
 
-        # Copy custom .zshrc if it exists in the current directory
-        if [[ -f ".zshrc" ]]; then
-            log_info "Found .zshrc in current directory, copying to home directory..."
+        # Copy custom .zshrc if it exists alongside this script
+        if [[ -f "$SCRIPT_DIR/.zshrc" ]]; then
+            log_info "Found .zshrc in $SCRIPT_DIR, copying to home directory..."
 
             if [[ "$DRY_RUN" == true ]]; then
-                log_info "[DRY RUN] Would copy .zshrc to ~/.zshrc"
+                log_info "[DRY RUN] Would back up ~/.zshrc (if present) and copy $SCRIPT_DIR/.zshrc to ~/.zshrc"
             else
-                log_verbose "Copying .zshrc to $HOME/.zshrc"
-                if cp ".zshrc" "$HOME/.zshrc"; then
+                if [[ -f "$HOME/.zshrc" ]]; then
+                    local zshrc_backup="$HOME/.zshrc.backup.$(date +%Y%m%d-%H%M%S)"
+                    log_verbose "Backing up existing ~/.zshrc to $zshrc_backup"
+                    cp "$HOME/.zshrc" "$zshrc_backup"
+                fi
+                log_verbose "Copying $SCRIPT_DIR/.zshrc to $HOME/.zshrc"
+                if cp "$SCRIPT_DIR/.zshrc" "$HOME/.zshrc"; then
                     log_success "Custom .zshrc copied successfully"
                 else
                     log_warning "Failed to copy .zshrc, you may need to do this manually"
                 fi
             fi
         else
-            log_verbose "No .zshrc found in current directory, skipping custom configuration"
+            log_verbose "No .zshrc found in $SCRIPT_DIR, skipping custom configuration"
         fi
     else
         log_error "Oh My Zsh installation failed - directory not found"
