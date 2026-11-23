@@ -16,7 +16,7 @@ What comes back automatically:
 |---|---|
 | this folder | scripts, the pi-status website, the Pi-hole compose file, the OpenClaw npm project, agent launchers |
 | `snapshot/` (written by `save.sh`) | apt packages and repos, Brewfile, uv and npm tools, dotfiles (`.zshrc` with `upd`, `.gitconfig`, Claude Code settings and skills, desktop configs), systemd user units, hostname and timezone, the list of `~/dev` repos |
-| `snapshot/repos.txt` | the `~/dev` git repos: `agent-lab` (private: needs the GitHub login), upstream source clones `hermes-agent`, `openclaw` |
+| `snapshot/repos.txt` | the 5 `~/dev` git repos: `agent-lab` (private: needs the GitHub login), `machine-setup`, `mail`, `rei`, `websites` |
 
 ---
 
@@ -123,7 +123,7 @@ If you're already on the Pi with this repo cloned: `cd ~/dev/machine-setup/raspb
 | `systemctl --user is-active pi-status` | `active`; `curl -s localhost:8080 \| head -1` prints HTML |
 | `docker ps` | `pihole` Up (healthy); `getent hosts example.com` resolves |
 | `tailscale serve status` | `/` → 8080, `:8443/hermes` → 9120 (Caddy) → 9119, `:8444/openclaw` → 18789, `:8445/pihole` → 8081, `:8446` → 8421 (REI's Caddy) |
-| `ls ~/dev` | agent-lab, hermes-agent, machine-setup, openclaw, rei, websites; symlinks openclaw_node, pihole, pi-status, scripts |
+| `ls ~/dev` | agent-lab, machine-setup, mail, rei, websites; symlinks hermes-proxy, openclaw_node, pihole, pi-status, scripts |
 | `curl -s 127.0.0.1:8080/api/rei` | `"unit_state": "active"` and `"health": {"reachable": true, ...}` once `inputs/` is in place and it's started |
 | `whence -a hermes claude gh uv` | each found once |
 | pi-status page → Agents → Sign-ins | gcloud, gws, gh, claude, Tailscale signed in |

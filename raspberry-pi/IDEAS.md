@@ -1,16 +1,17 @@
 # Ideas: more uses for this Pi
 
-A backlog of things this Pi could do next, written 2026-10-23 after reviewing `~/dev` and what's running. Nothing
-here is set up yet. When one gets done, move it into the runbook (`README.md`, `restore.sh`) and delete it here.
+A backlog of things this Pi could do next, originally written 2026-10-23 after reviewing `~/dev` and what's running. Several
+items below are now live (alerts via `alert/`, nightly encrypted restic backup via `backup/`, scheduled mail sync via
+`mail-sync.timer`, and local Caddy reverse proxies for Hermes/REI/DreamBase); see `README.md` for current state.
 
-## Where things stood
+## Where things stood (2026-10-23 snapshot)
 
-| Area | State on 2026-10-23 |
+| Area | State on 2026-10-23 (historical) |
 |---|---|
 | Hardware | Pi 5, 8 GB RAM, 119 GB SD card only (no SSD, nothing on USB), ethernet |
 | Running | Pi-hole (Docker, LAN only), pi-status, Tailscale Serve on 443/8443/8444/8445, desktop via VNC |
 | Agents | OpenClaw, Hermes: started by hand, one at a time (peak RSS 1–1.8 GB each) |
-| Gaps | no cron jobs or timers, no alerts, no exit node or subnet routes, no backup disk |
+| Gaps | (now filled: systemd timers, Telegram `pi-alert`, restic backup `backup/`) no exit node or subnet routes, no local SSD |
 
 ## Quick wins with what's already here
 

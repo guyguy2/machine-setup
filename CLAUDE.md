@@ -204,7 +204,7 @@ Bash scripts that rebuild a Raspberry Pi 5 (Raspberry Pi OS / Debian) from a bla
 - `raspberry-pi/save.sh [--push]`: rewrites `raspberry-pi/snapshot/` (dotfiles, apt/Homebrew/uv/npm lists, units,
   `system.txt`, `repos.txt`) and commits only `snapshot/`; then warns about unpushed work in `~/dev`. `upd` runs it.
 - No secrets in git (public repo). Agent state, sign-ins, secrets and app data go in the nightly encrypted restic
-  backup on Google Drive (`raspberry-pi/backup/`, being built; plan in `raspberry-pi/MULTI-PI.md`), restored with
+  backup on Google Drive (`raspberry-pi/backup/`, design in `raspberry-pi/MULTI-PI.md`), restored with
   `pi-restore-state` (dry run first, `--yes` to write). New secret or data file to keep → `raspberry-pi/backup/includes.txt`.
   Never put secrets, SSH private keys, history or files over 100 KB in `snapshot/` (`save.sh` enforces this). Add
   paths to the `dotfiles` list at the top of `save.sh`.

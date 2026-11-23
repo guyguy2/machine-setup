@@ -20,7 +20,7 @@ usage: pi-backup-system <command> [options]     (as root: sudo /usr/local/lib/pi
   init [--dry-run] [--fresh]
                       create the system restic repo if missing, enable pi-backup-system.timer
   run [--dry-run] [--fresh]
-                      back up system-includes.txt, apply retention (7 daily, 4 weekly, 6 monthly), write
+                      back up system-includes.txt, apply retention (last 5 daily snapshots), write
                       /var/lib/pi-backup/last.json; prune + check when the last check is over 6.5 days old.
                       --dry-run: what and how much, writes nothing (runs as any user; problems are warnings)
   status [--json]     show last.json; exit 0 if the last good backup is under 36 h old and the last check passed

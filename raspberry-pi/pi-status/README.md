@@ -96,7 +96,7 @@ JSON endpoints (all GET except restart): `/api/status`, `/api/network`, `/api/ag
 `/api/services`, `/api/processes`, `/api/ports`, `/api/lab`, `/api/websites`, `/api/rei`, `/api/emails`, `/api/version`; `POST /api/restart`, `POST /api/agents/<unit>/start` and `/stop` (only the
 units in `AGENTS`), and `POST /api/emails/decide` `{"thread", "queue"}` (queue action, respond, review, delete or done),
 `/api/emails/undo` `{"thread"}` and `/api/emails/trash` `{"ids": [...]}` (at most 500). Every POST needs the
-`X-Requested-With: pi-status` header and the `Tailscale-User-Login` of this Pi's owner (next section). The email ones accept a JSON body of at most 32 KB, check every thread id
+`X-Requested-With: pi-status` header and the `Tailscale-User-Login` of this Pi's owner (next section). The email ones accept a JSON body of at most 64 KB, check every thread id
 (`[0-9a-f]{10,24}`) and then run the sorter's own command, one at a time, as an argument list with no shell:
 `~/dev/mail/.venv/bin/mail decide|undo|trash --yes ... --via web --json` (60 s timeout; `PI_STATUS_MAIL_BIN` overrides
 the path). They answer with its JSON plus the new `/api/emails` payload under `state`; its exit code becomes the status:
