@@ -1,0 +1,6 @@
+[Unit]
+Description=Remove expired temporary Pi-hole allows (pihole-allow-temp sweep)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pihole-allow-temp sweep

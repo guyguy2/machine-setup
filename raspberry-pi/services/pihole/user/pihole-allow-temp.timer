@@ -1,0 +1,9 @@
+[Unit]
+Description=Every minute, remove expired temporary Pi-hole allows
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

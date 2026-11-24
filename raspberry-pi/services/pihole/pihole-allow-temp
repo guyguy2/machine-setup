@@ -1,0 +1,30 @@
+#!/bin/bash
+# pihole-allow-temp: allow a blocked domain in Pi-hole for a limited time, then remove the allow automatically.
+#   pihole-allow-temp example.com [1h]   allow it (default 1h; units s/m/h/d, e.g. 30m, 2h)
+#   pihole-allow-temp list               show temporary allows and when they expire
+#   pihole-allow-temp remove example.com end one early
+#   pihole-allow-temp sweep              remove expired ones (run every minute by pihole-allow-temp.timer)
+# The expiry is stored in the allow entry's comment ("temp-allow until <epoch>"), so it survives reboots and
+# container rebuilds. Entries without that comment are never touched.
+set -euo pipefail
+API=localhost:8081/api
+TAG='temp-allow until '
+PW=$(grep '^FTLCONF_webserver_api_password=' ~/dev/pihole/.env | cut -d= -f2-)
+SID=$(curl -fsS -X POST $API/auth -H 'Content-Type: application/json' -d "$(jq -n --arg p "$PW" '{password:$p}')" | jq -r .session.sid)
+trap 'curl -s -X DELETE -H "sid: $SID" $API/auth >/dev/null' EXIT
+call() { curl -fsS -H "sid: $SID" -H 'Content-Type: application/json' "$@"; }
+temps() { call $API/domains/allow/exact | jq -r --arg t "$TAG" '.domains[] | select((.comment // "") | startswith($t)) | "\(.domain)\t\(.comment[($t|length):])"'; }
+secs() { # 30s 15m 1h 2d -> seconds
+  [[ $1 =~ ^([0-9]+)([smhd])$ ]] || { echo "bad duration '$1' (use e.g. 30m, 1h, 2d)" >&2; exit 2; }
+  case ${BASH_REMATCH[2]} in s) echo $((BASH_REMATCH[1]));; m) echo $((BASH_REMATCH[1]*60));; h) echo $((BASH_REMATCH[1]*3600));; d) echo $((BASH_REMATCH[1]*86400));; esac
+}
+del() { call -X DELETE "$API/domains/allow/exact/$1" >/dev/null && echo "removed allow for $1"; }
+case ${1:-} in
+  ''|-h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  list) temps | while IFS=$'\t' read -r d e; do echo "$d  expires $(date -d @"$e" '+%F %T')"; done ;;
+  remove) [ -n "${2:-}" ] || exit 2; del "$2" ;;
+  sweep) now=$(date +%s); temps | while IFS=$'\t' read -r d e; do [ "$e" -le "$now" ] && del "$d"; done; true ;;
+  *) d=${1,,}; exp=$(( $(date +%s) + $(secs "${2:-1h}") ))
+     call -X POST $API/domains/allow/exact -d "$(jq -n --arg d "$d" --arg c "$TAG$exp" '{domain:$d,comment:$c,groups:[0],enabled:true}')" >/dev/null
+     echo "allowed $d until $(date -d @"$exp" '+%F %T') (removed automatically within a minute after that)" ;;
+esac
