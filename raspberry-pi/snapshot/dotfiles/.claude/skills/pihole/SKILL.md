@@ -75,6 +75,23 @@ blocklists, allow/deny entries, groups, clients) can be changed live and is pers
 If the user wants a live-changed setting to survive a container rebuild from scratch, `~/.local/share/pihole` is the state
 that matters. The nightly pi-backup keeps a Teleporter export of it; check that it's recent before recreating or deleting the volume.
 
+## Temporarily allow a blocked site (auto-expires)
+
+Pi-hole can't expire an allow rule itself, so use `pihole-allow-temp` (script in `~/dev/pihole/pihole-allow-temp`,
+linked into `~/.local/bin`). When the user asks to allow a site for a while, run it, don't hand-roll allow + reminder:
+
+```sh
+pihole-allow-temp example.com 1h      # duration optional, default 1h (30m, 2h, 1d ...)
+pihole-allow-temp list                # active temporary allows and expiry times
+pihole-allow-temp remove example.com  # end one early
+```
+
+Run it once per domain (`www.` and the bare domain are separate entries). The expiry is stored in the rule's comment
+and `pihole-allow-temp.timer` (user unit, every minute) runs `pihole-allow-temp sweep` to delete expired ones, so it
+survives reboots. Only rules with the `temp-allow until` comment are ever removed. Allows apply to every device using
+this Pi-hole. Devices may cache the old answer for a few minutes either way. Verify with
+`docker exec pihole dig +short @127.0.0.1 <domain>`. From the Mac: `ssh <pi> pihole-allow-temp example.com 1h`.
+
 ## Safety
 
 - Reads are free. Before changing settings, blocklists or the password, say what you're changing. Blocking
