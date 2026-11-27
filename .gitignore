@@ -44,6 +44,18 @@ id_rsa*
 id_ed25519*
 !*.pub
 
+# Never publish copied agent authentication or runtime databases.
+auth.json*
+.credentials.json*
+dashboard-password.txt*
+vault.key*
+vault.json.enc*
+config.yaml.bak*
+state.db*
+shared-state.db*
+kanban.db*
+projects.db*
+
 # Node, test caches, restore leftovers
 node_modules/
 .pytest_cache/

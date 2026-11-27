@@ -29,6 +29,19 @@ signins ~/.ssh/authorized_keys
 signins ~/.agent-browser
 
 # Data
+# Agent customization sources and installed copies. Keep uncommitted edits too:
+# Git alone only preserves committed/pushed versions. Hermes's live settings,
+# SOUL.md and own skills are also in the staged Hermes export above.
+data ~/.agents/skills
+data ~/.claude/skills
+data ~/dev/agent-lab/skills
+data ~/dev/agent-lab/hermes
+data ~/dev/agent-lab/claude
+data ~/dev/agent-lab/bin/hermes-config
+data ~/dev/agent-lab/bin/agent-customizations
+data ~/dev/machine-setup/raspberry-pi/backup/skill
+data ~/dev/machine-setup/raspberry-pi/checkup/hermes-skill
+data ~/dev/machine-setup/raspberry-pi/services/pihole/skill
 # Claude Code memory and transcripts.
 data ~/.claude/projects
 # agy: conversations, memory (brain), summaries and prompt history. Not bin/ (16 MB downloaded runtime), log/, cache/, updater/.

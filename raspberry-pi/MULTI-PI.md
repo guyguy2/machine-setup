@@ -290,7 +290,8 @@ User repo (live paths unless staged above; resolve symlinks like `~/dev/pihole` 
 | DreamBase | `~/dev/websites/dreambase/dreambase_data.json`, `~/.local/share/dreambase/` | Exclude `photos/` (~2 GB) if `photos_sync.py` re-fetches it |
 | Pi-hole | Teleporter export + `~/dev/pihole/.env` | Never `pihole-FTL.db*` (query log) |
 | Services' secrets | every gitignored `.env` under `~/dev/*/` | Found with `git ls-files --others --ignored --exclude-standard` per repo, not a fixed list |
-| Shared skills | not needed | in the `agent-lab` repo; restore runs `bin/lab skills` |
+| Shared skills | `~/.agents/skills`, `~/dev/agent-lab/skills` | Includes uncommitted source and installed edits; restore can also run `bin/lab skills` |
+| Personal agent customizations | `~/.claude/skills`, `~/dev/agent-lab/{hermes,claude}`, its `bin/{hermes-config,agent-customizations}` helpers, and the machine-setup skill directories `raspberry-pi/{backup/skill,checkup/hermes-skill,services/pihole/skill}` | Group `data`, restored to their original home-relative paths; `agent-lab/bin/agent-customizations check` verifies the installations. Live Hermes settings and skills remain in the Hermes export too. |
 
 System repo: `/var/lib/labvault/`, **`/var/lib/systemd/credential.secret`** (labvault's `systemd-creds` files only
 decrypt with it), `/etc/agent-lab/` (`billers.toml`, `logins.toml`), `/etc/ssh/ssh_host_*`, `/etc/sudoers.d/agent-lab-*`.
